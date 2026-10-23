@@ -1,0 +1,148 @@
+{
+  "packages": [
+    {
+      "name": "arduino",
+      "maintainer": "Arduino",
+      "websiteURL": "https://www.arduino.cc/",
+      "email": "packages@arduino.cc",
+      "help": {
+        "online": "https://www.arduino.cc/en/Reference/HomePage"
+      },
+      "platforms": [],
+      "tools": [
+        {
+          "name": "dfu-util",
+          "version": "0.11.0-arduino5",
+          "systems": [
+            {
+              "host": "i686-mingw32",
+              "url": "https://downloads.arduino.cc/tools/dfu-util-0.11-arduino5-windows_386.tar.gz",
+              "archiveFileName": "dfu-util-0.11-arduino5-windows_386.tar.gz",
+              "checksum": "SHA-256:6451e16bf77600fe2436c8708ab4b75077c49997cf8bedf03221d9d6726bb641",
+              "size": "571340"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "builtin",
+      "maintainer": "Arduino",
+      "websiteURL": "https://www.arduino.cc/",
+      "email": "packages@arduino.cc",
+      "help": {
+        "online": "https://www.arduino.cc/en/Reference/HomePage"
+      },
+      "platforms": [],
+      "tools": [
+        {
+          "name": "ctags",
+          "version": "5.8-arduino11",
+          "systems": [
+            {
+              "host": "i686-mingw32",
+              "url": "https://downloads.arduino.cc/tools/ctags-5.8-arduino11-pm-i686-mingw32.zip",
+              "archiveFileName": "ctags-5.8-arduino11-pm-i686-mingw32.zip",
+              "checksum": "SHA-256:106c9f074a3e2ec55bd8a461c1522bb4c90488275f061c3d51942862c99b8ba7",
+              "size": 116455
+            }
+          ]
+        },
+        {
+          "name": "dfu-discovery",
+          "version": "0.1.2",
+          "systems": [
+            {
+              "host": "i686-mingw32",
+              "url": "https://downloads.arduino.cc/discovery/dfu-discovery/dfu-discovery_v0.1.2_Windows_32bit.zip",
+              "archiveFileName": "dfu-discovery_v0.1.2_Windows_32bit.zip",
+              "checksum": "SHA-256:eac23fa581431161ddfbbd66a911d1e30b6f582eeb70f5165f2b92ad92a18a93",
+              "size": 2235781
+            },
+            {
+              "host": "x86_64-mingw32",
+              "url": "https://downloads.arduino.cc/discovery/dfu-discovery/dfu-discovery_v0.1.2_Windows_64bit.zip",
+              "archiveFileName": "dfu-discovery_v0.1.2_Windows_64bit.zip",
+              "checksum": "SHA-256:5ef334c4d566b0033c229c28b2b401bc98bad70d5c25e3027c038aa3cde0d10f",
+              "size": 2282491
+            }
+          ]
+        },
+        {
+          "name": "mdns-discovery",
+          "version": "1.1.0",
+          "systems": [
+            {
+              "host": "arm64-mingw32",
+              "url": "https://downloads.arduino.cc/discovery/mdns-discovery/mdns-discovery_v1.1.0_Windows_ARM64.zip",
+              "archiveFileName": "mdns-discovery_v1.1.0_Windows_ARM64.zip",
+              "checksum": "SHA-256:40ca3beb4b8ebd4ebc48614b8462ff853324ab31444b4f640b6b172c7177a3ef",
+              "size": 3063623
+            },
+            {
+              "host": "i686-mingw32",
+              "url": "https://downloads.arduino.cc/discovery/mdns-discovery/mdns-discovery_v1.1.0_Windows_32bit.zip",
+              "archiveFileName": "mdns-discovery_v1.1.0_Windows_32bit.zip",
+              "checksum": "SHA-256:59600b17e8ecfb6bb69118a50af2773bce0303557f76cf0f4c01a98ac22f079a",
+              "size": 3307305
+            },
+            {
+              "host": "x86_64-mingw32",
+              "url": "https://downloads.arduino.cc/discovery/mdns-discovery/mdns-discovery_v1.1.0_Windows_64bit.zip",
+              "archiveFileName": "mdns-discovery_v1.1.0_Windows_64bit.zip",
+              "checksum": "SHA-256:20a96d21dbc711710a23bc36ec86f906df172f66b0f8d23d9e4f72ebea44a24d",
+              "size": 3322320
+            }
+          ]
+        },
+        {
+          "name": "serial-discovery",
+          "version": "1.5.2",
+          "systems": [
+            {
+              "host": "arm64-mingw32",
+              "url": "https://downloads.arduino.cc/discovery/serial-discovery/serial-discovery_v1.5.2_Windows_ARM64.zip",
+              "archiveFileName": "serial-discovery_v1.5.2_Windows_ARM64.zip",
+              "checksum": "SHA-256:bef4e3dca6190f7915cc77ddd4b145038620aeebcbc2dddccb300fa68b5b7e74",
+              "size": 2117428
+            },
+            {
+              "host": "i686-mingw32",
+              "url": "https://downloads.arduino.cc/discovery/serial-discovery/serial-discovery_v1.5.2_Windows_32bit.zip",
+              "archiveFileName": "serial-discovery_v1.5.2_Windows_32bit.zip",
+              "checksum": "SHA-256:092a79abd00e0b7203e09c8a2c5132901f3f1365467dd91150b127ad69764c73",
+              "size": 2212537
+            },
+            {
+              "host": "x86_64-mingw32",
+              "url": "https://downloads.arduino.cc/discovery/serial-discovery/serial-discovery_v1.5.2_Windows_64bit.zip",
+              "archiveFileName": "serial-discovery_v1.5.2_Windows_64bit.zip",
+              "checksum": "SHA-256:53173e898c3bb1b548e1dd6fae663771c9d0b68c91eee9ea8b75f395048c0511",
+              "size": 2302288
+            }
+          ]
+        },
+        {
+          "name": "serial-monitor",
+          "version": "0.15.0",
+          "systems": [
+            {
+              "host": "i686-mingw32",
+              "url": "https://downloads.arduino.cc/monitor/serial-monitor/serial-monitor_v0.15.0_Windows_32bit.zip",
+              "archiveFileName": "serial-monitor_v0.15.0_Windows_32bit.zip",
+              "checksum": "SHA-256:124eaf213e839c1621d0692f90ad4a1791ab26d5f65b63c6e38446b052f4492a",
+              "size": 2447701
+            },
+            {
+              "host": "x86_64-mingw32",
+              "url": "https://downloads.arduino.cc/monitor/serial-monitor/serial-monitor_v0.15.0_Windows_64bit.zip",
+              "archiveFileName": "serial-monitor_v0.15.0_Windows_64bit.zip",
+              "checksum": "SHA-256:005202ade1bcc5fd4b3c721a4b865f8608eef4d58518a82d43c67abfc52cdf4f",
+              "size": 2564561
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

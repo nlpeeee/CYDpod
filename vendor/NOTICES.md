@@ -1,0 +1,46 @@
+# Pinned third-party source and build dependencies
+
+`CYD-MP3-Player/` is an unmodified source snapshot of
+[Garionhk/CYD-MP3-Player](https://github.com/Garionhk/CYD-MP3-Player), commit
+`404332e93974f4f70392b613c9f3dfb25e1b89b8` (upstream version 1.2.0).
+Archive SHA256: `b5e37def64bf1b71d243b8d270908c65343439bec03e5da08656db8f1cd7550a`.
+The snapshot contains no nested Git metadata. Original notices and licenses are
+retained, including `LICENSE-2.0.txt` and BitBank's AnimatedGIF Apache-2.0
+license in each vendored copy. AnimatedGIF was already modified by upstream
+(width limit / include filename); CYDpod does not replace it with a new version.
+`tools/upstream-files.sha256.json` inventories every original archive file.
+
+The full reproducibility lock is `../dependencies.lock.json`; package-index
+extracts in `../tools/package*_index.json` preserve the official download URLs,
+versions and SHA256 values of every Windows core/tool artifact. Archives and
+installed tools are local ignored build inputs, not part of this source import.
+
+| Component | Version/provenance | Notices and scope |
+| --- | --- | --- |
+| CYD-MP3-Player | Commit above | Apache-2.0; separate bundled notices retained |
+| AnimatedGIF | Exact files in pinned shell | BitBank Software Apache-2.0, retained in source |
+| ESP32-A2DP | 1.8.11, `b6da4744286ca15b6f1dee607c077a4747294dd4` | Library Apache-2.0; examples can have GPL headers; stock build uses library sources |
+| arduino-libhelix | 0.9.4, `6183305de92c6c8e445aa95116319b64963a6ad3` | GPLv3 wrapper and Helix codec RPSL/RCSL terms; retain codec file headers |
+| TFT_eSPI | Arduino library archive 2.5.43 | FreeBSD/BSD two-clause text, MIT ancestry, individual font notices retained |
+| Arduino-ESP32 | Core archive 3.3.10 | Package declares LGPL-2.1-or-later; individual files and bundled components have other terms |
+| ESP-IDF binary SDK | 5.5.4, `735507283d`, ESP32 libs archive 3.3.10 | Espressif/third-party SDK notices apply; archive hash pinned; not represented as wholly LGPL |
+| Xtensa/RISC-V toolchains | esp-x32/esp-rv32 2601, GCC 14.2.0, build 20260121 | Toolchain GPL and runtime/component exceptions/notices retained in installed packages |
+| Arduino CLI | 1.5.1, executable commit `01f3d4f2b` | GPLv3; license copied to `notices/` |
+| Package tools | Exact lock/index versions (esptool, GDB, OpenOCD, filesystem tools, dfu-util, Arduino builtins) | Separate upstream licenses in installed packages; pinning is not a relicensing claim |
+
+Copies of the principal library and Helix license texts are in `notices/` so
+they remain available without the ignored dependency directories. The codec
+source retains its RealNetworks copyright and license headers. This inventory
+does not label the combined firmware Apache/MIT, and is not a redistribution
+clearance or an exhaustive SDK/toolchain legal audit.
+
+Local build configuration changes are explicit: `tools/tft/User_Setup.h` copies
+the upstream ST7789 template into the isolated TFT library; the Helix
+`ConfigHelix.h` patch adds the opt-in `CYDPOD_AAC_LC_ONLY` guard to disable SBR
+for the AAC probe while preserving stock behavior when the flag is absent.
+`tools/bootstrap.py` contains the exact replacement and the lock records its
+resulting file hash. No other third-party source changes are intended.
+
+No generated CJK font or user media is supplied. Hardware compatibility,
+AAC patents, codec licensing obligations for a distribution, and the actual
+AirPods/DAC requirements remain separate from compile-only reproduction.

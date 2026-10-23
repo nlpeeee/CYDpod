@@ -1,0 +1,6 @@
+.tools/
+.deps/
+debug.log
+__pycache__/
+*.pyc
+tests/out/

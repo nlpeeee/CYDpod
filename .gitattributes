@@ -1,0 +1,11 @@
+* text=auto
+
+# These files are verified byte-for-byte against pinned source/config hashes.
+vendor/** -text
+tools/tft/User_Setup.h -text
+tools/package_index.json -text
+tools/package_esp32_index.json -text
+
+# Generated original audio fixtures must retain their exact bytes.
+fixtures/*.aac -text
+fixtures/*.m4a -text

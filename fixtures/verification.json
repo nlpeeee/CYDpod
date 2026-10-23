@@ -1,0 +1,134 @@
+{
+  "ffmpeg": "ffmpeg version 8.1.1-essentials_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+  "decoder": "arduino-libhelix v0.9.4, CYDPOD_AAC_LC_ONLY, MSVC x86",
+  "scope": "generated synthetic files only; no target or user-media evidence",
+  "files": [
+    {
+      "file": "stereo-128.aac",
+      "sha256": "dc8a8ffc0b48c8d8fbeefaec4c051dc17a015297a21017fca1c36a6fc646ca3c",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "sample_rate": "44100",
+            "channels": 2,
+            "bit_rate": "127428"
+          }
+        ],
+        "format": {
+          "format_name": "aac",
+          "duration": "3.076938",
+          "bit_rate": "127427"
+        }
+      },
+      "result": "PASS Helix AAC-LC 44100 stereo frames=131 samples_per_channel=134144 peak_decoder_heap=20656",
+      "samples_per_channel": 134144,
+      "snr_db": 59.58,
+      "max_sample_error": 190,
+      "left_tone_separation_db": 71.6,
+      "right_tone_separation_db": 75.72
+    },
+    {
+      "file": "stereo-192.aac",
+      "sha256": "28f4a1a562f15cea4744881df9677f02eb54e0553a045ef7805c11993b1a6921",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "sample_rate": "44100",
+            "channels": 2,
+            "bit_rate": "190509"
+          }
+        ],
+        "format": {
+          "format_name": "aac",
+          "duration": "3.079624",
+          "bit_rate": "190508"
+        }
+      },
+      "result": "PASS Helix AAC-LC 44100 stereo frames=131 samples_per_channel=134144 peak_decoder_heap=20656",
+      "samples_per_channel": 134144,
+      "snr_db": 59.81,
+      "max_sample_error": 188,
+      "left_tone_separation_db": 72.25,
+      "right_tone_separation_db": 76.13
+    },
+    {
+      "file": "stereo-256.aac",
+      "sha256": "3ecf8479dc8f56700af181265b9128165765d7e6ffd2b19a51ee2f6a4f44516f",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "sample_rate": "44100",
+            "channels": 2,
+            "bit_rate": "225881"
+          }
+        ],
+        "format": {
+          "format_name": "aac",
+          "duration": "3.048118",
+          "bit_rate": "225881"
+        }
+      },
+      "result": "PASS Helix AAC-LC 44100 stereo frames=131 samples_per_channel=134144 peak_decoder_heap=20656",
+      "samples_per_channel": 134144,
+      "snr_db": 71.67,
+      "max_sample_error": 54,
+      "left_tone_separation_db": 71.91,
+      "right_tone_separation_db": 76.32
+    },
+    {
+      "file": "reject-48k.aac",
+      "sha256": "eb3b084e3c0618bab5ca7fde6aaa55685971fa28a8b8b30796e19bd586b71f0b",
+      "result": "FAIL requires AAC-LC 44100 stereo, one block, frame <=2048 bytes helix=0 after 0 frames",
+      "expected_rejection": true
+    },
+    {
+      "file": "reject-main.aac",
+      "sha256": "c9f392d312523a3305f1a3acd038267e8733cc676c7954ca17fbfdc4c56bf7a4",
+      "result": "FAIL requires AAC-LC 44100 stereo, one block, frame <=2048 bytes helix=0 after 0 frames",
+      "expected_rejection": true
+    },
+    {
+      "file": "reject-malformed.aac",
+      "sha256": "389aa5236e978832d52f9912c2f058cfd7316b949995298bb080fe790a7f2690",
+      "result": "FAIL invalid ADTS header (M4A/ID3/ADIF unsupported) helix=0 after 0 frames",
+      "expected_rejection": true
+    },
+    {
+      "file": "reject-mono.aac",
+      "sha256": "634eb522fef64de737dd28960595cc559bc764a116f2358283272e2a554d3ac6",
+      "result": "FAIL requires AAC-LC 44100 stereo, one block, frame <=2048 bytes helix=0 after 0 frames",
+      "expected_rejection": true
+    },
+    {
+      "file": "reject-truncated.aac",
+      "sha256": "bb99b07b770f121b1b0c8630bae416c3fb905aacf89e77e5f2754fd190c1b264",
+      "result": "FAIL truncated ADTS frame helix=0 after 130 frames",
+      "expected_rejection": true
+    },
+    {
+      "file": "stereo-faststart.m4a",
+      "sha256": "0ab23a4d38059929a29c433c6aec6102077b9a6bb787f0812bbb11b0c9e1e372",
+      "result": "FAIL invalid ADTS header (M4A/ID3/ADIF unsupported) helix=0 after 0 frames",
+      "expected_rejection": true
+    },
+    {
+      "file": "stereo-moov-last.m4a",
+      "sha256": "31ec880a9589d2e7d8725937f0d3e9e93cf0c62f65173225b48b4c8020d029af",
+      "result": "FAIL invalid ADTS header (M4A/ID3/ADIF unsupported) helix=0 after 0 frames",
+      "expected_rejection": true
+    }
+  ],
+  "allocation_test": "PASS AAC allocation failures 1/2 and 100 begin/end cycles, peak_decoder_heap=20656 live=0"
+}

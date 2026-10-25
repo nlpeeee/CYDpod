@@ -1,0 +1,42 @@
+# CY-9b only: real /Music names captured by CY-10d on 2026-10-25.
+# Prepared offline, not executed by CY-10d; never write to the SD.
+# Assumes AirPods are already paired/connected; perform pairing separately.
+ls /Music
+WAIT 5
+mute
+output bt
+volume 3
+WAIT 5
+stats
+play /Music/07-20 - Daft Punk - Get Lucky.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+stop
+play /Music/07-21 - Cassius - Cassius 1999.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+stop
+play /Music/07-22 - Basement Jaxx - Red Alert.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+stop
+play /Music/07-23 - Basement Jaxx - Romeo.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+stop
+play /Music/07-24 - The Supermen Lovers - Starlight.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+mute
+stop
+

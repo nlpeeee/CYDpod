@@ -1,6 +1,11 @@
 #pragma once
 #include "audio_core.h"
 #include <libhelix-aac/aacdec.h>
+#include <ConfigHelix.h>
+
+#if !defined(CYDPOD_AAC_LC_ONLY) || defined(HELIX_FEATURE_AUDIO_CODEC_AAC_SBR)
+#error CY-17 PCM bound requires the pinned LC-only Helix build
+#endif
 
 // Keep strict format diagnostics local to probe code, after dependency includes.
 #if defined(__GNUC__)
@@ -24,6 +29,10 @@ inline const char* resultName(DecodeResult r) {
 }
 class AdtsDecoder {
  public:
+  static constexpr int kPcmShorts=2048;
+  static_assert(AAC_MAX_NCHANS==2 && AAC_MAX_NSAMPS*AAC_MAX_NCHANS==kPcmShorts,
+                "CY-17 buffer and accepted outputSamps must match the Helix LC bound");
+  static_assert(sizeof(short)==2, "16-bit PCM shorts");
   ~AdtsDecoder() { end(); }
   bool begin() { end(); decoder_ = AACInitDecoder(); return decoder_ != nullptr; }
   void end() { if(decoder_) AACFreeDecoder(decoder_); decoder_=nullptr; }
@@ -43,7 +52,7 @@ class AdtsDecoder {
     if(lastError || remaining!=0) return DecodeResult::codec_error;
     AACGetLastFrameInfo(decoder_, &info);
     if(info.profile!=AAC_PROFILE_LC || info.nChans!=2 || info.sampRateCore!=44100 ||
-       info.sampRateOut!=44100 || info.bitsPerSample!=16 || info.outputSamps!=2048)
+       info.sampRateOut!=44100 || info.bitsPerSample!=16 || info.outputSamps!=kPcmShorts)
       return DecodeResult::codec_error;
     return DecodeResult::frame;
   }
@@ -53,8 +62,8 @@ class AdtsDecoder {
  private:
   HAACDecoder decoder_=nullptr;
   uint8_t encoded_[2048]{};
-  // Sized for Helix's maximum stereo SBR output as a defensive bound; SBR is disabled in the build.
-  alignas(4) short pcm_[4096]{};
+  // CY-17: LC-only stereo output bound, including mismatched elements; see cy17-pcm-buffer.md.
+  alignas(4) short pcm_[kPcmShorts]{};
 };
 }
 

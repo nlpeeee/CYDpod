@@ -91,3 +91,9 @@ need_largest = 8,720 + 16,392 + 20,560         = 45,672   vs 45,044 largest     
 ```
 
 The arena is one contiguous block and the largest-block requirement includes it as a single request between the feed and Helix's 20,560 B request. With a zero margin the demand is 45,792 B, still 304 B above the free heap. Derivation of the 16,384 B, the sweep that proves failure handling, and the ways to close the gap (ring to 1,024 frames alone is enough; others combined): `cy10b-alloc-failure.md`, section CY-10b3. The older numbers above (14,336 B, 41,456 B) describe the CY-11b/CY-13a model and are history.
+
+## CY-17 update: LC PCM buffer halved; largest-block result remains unmeasured
+
+[The LC output proof](cy17-pcm-buffer.md) permits `pcm_[2048]`, saving **4,096 B `.bss`** (static RAM 61,560 -> **57,464 B**). Ring and stacks remain unchanged: the ring must hold at least two whole 1,024-frame producer blocks, so shrinking it to 1,024 is not a usable option despite the historical suggestion above. No margin or admission constant changed.
+
+Predicted post-open free = 45,488 + 4,096 = **49,584 B**; unchanged need_free = 20,680 + 20,736 + 4,376 + 2,048 = **47,840 B**; slack = **1,744 B** beyond the provisional 2,048 B margin. The saving enlarges the first free region at boot; the fragmented post-Bluetooth largest-block effect is **unmeasured**. Best case largest = 45,044 + 4,096 = **49,140 B**, **3,468 B above** unchanged need_largest **45,672 B**; conservative worst case = **45,044 B**, **628 B short**, still rejected. These predictions are compile/host evidence, not hardware admission or playback evidence.

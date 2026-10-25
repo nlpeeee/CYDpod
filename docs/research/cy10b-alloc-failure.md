@@ -308,7 +308,7 @@ The margin is unchanged at 2,048 B; nothing was tuned. Before CY-10b3 the same s
 
 Ways to close the gap, none applied (each needs a decision or a measurement the host cannot give):
 
-1. **Ring 2,048 -> 1,024 frames** (`PcmRing`, a `.bss` object): +4,096 B of boot heap, enough alone (free 49,584 B vs 47,840 B). Needs the underrun data CY-11b noted it lacks.
+1. **Ring 2,048 -> 1,024 frames** (`PcmRing`, a `.bss` object): not a usable option: the producer pushes whole 1,024-frame blocks and needs capacity for at least two blocks. Retained at 2,048 frames.
 2. `AdtsDecoder::pcm_` 4,096 -> 2,048 samples: +4,096 B if the LC bound is proven (`cy11b-admission.md`).
 3. Producer stack 8,192 -> 6,144 (+2,048 B): short by 304 B alone; together with sink stack 3,072 -> 2,048 (+1,024 B) it closes the gap.
 4. A frame cap below 2,041 B (an AAC-LC stereo frame cannot exceed 1,536 B) would let the frame buffer and ADTS scratch use a smaller class; it saves roughly 1.5 KiB of main and 0.5 KiB of reserve and is a caps/policy change; not enough alone.
@@ -331,3 +331,9 @@ All host suites pass: `tests/build_m4a_{host,caps,reject,sequence,r1r5,filetable
 | CY-10b3 probe | 1,226,960 (+432) | 61,560 (+0) | `8da289bc871781f3ac4bebee37fea63a0dbc175d0229b87172e942b880690071` |
 
 62.4% of the 1,966,080 B slot. Compile only; nothing was flashed. **Do not flash this image expecting an `.m4a` to play:** the guard will answer `ERR m4a low_memory` at the CY-12a heap state until the 2,352 B are found.
+
+### CY-17 update: decoder PCM saving (compile/host only)
+
+The proven LC-only output bound now permits 2,048 shorts instead of 4,096, returning 4,096 B of global `.bss` to boot heap; see [proof and validation](cy17-pcm-buffer.md). Static RAM is 57,464 B (was 61,560). No admission constants changed. Predicted post-open free: 45,488 + 4,096 = **49,584 B** versus need_free **47,840 B**, **1,744 B spare** beyond the unchanged 2,048 B margin.
+
+The saving enlarges the first free region at boot, but the largest block after Bluetooth/file open is **unmeasured**. Best case: 45,044 + 4,096 = **49,140 B**, **3,468 B spare** against need_largest **45,672 B**. Conservative worst case: still **45,044 B**, **628 B short**, still rejected. This supersedes the historical free-heap shortfall above; it does not establish hardware admission or playback.

@@ -49,6 +49,14 @@
       "url": "https://downloads.arduino.cc/libraries/github.com/Bodmer/TFT_eSPI-2.5.43.zip",
       "sha256": "277a05b523f839e37309fc4de4dfcf0910d4eb0895b7335d10f4940aaf8e17fc",
       "license": "FreeBSD/BSD-2-Clause; per-file fonts retain notices"
+    },
+    {
+      "name": "audio-tools",
+      "version": "1.2.6",
+      "commit": "e42af0513a2273730431e8c45ac17a5fd9f38487",
+      "url": "https://codeload.github.com/pschatzmann/arduino-audio-tools/zip/e42af0513a2273730431e8c45ac17a5fd9f38487",
+      "sha256": "1187a17837211722f4996dda53579f018e19cd4a5fab74eec383b74b1ea8c7fe",
+      "license": "GPL-3.0; vendored at vendor/arduino-audio-tools (src, library.properties, License.txt only; not on any build path)"
     }
   ],
   "indexes": [

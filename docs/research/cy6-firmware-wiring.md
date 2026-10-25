@@ -84,3 +84,38 @@ PASS: compile-only checks completed; no device commands were run.
 Image delta **+624 bytes**, fitting the 1,966,080-byte slot; static RAM delta **+8 bytes**, below the 2 KiB stop threshold. Actual binary SHA256 agrees with `.tools/logs/build-results.json`; player/uploader image identities are unchanged.
 
 All five `wsl.exe -d Debian -- sh tests/build_m4a_{host,caps,reject,sequence,r1r5}.sh` suites exited **0**; individual outputs are `.tools/logs/cy10c1-{host,caps,reject,sequence,r1r5}.txt`. Results: identical PCM/counts, malformed cases within caps, all 105 rejection runs, every sequence track matching a fresh reader, and R1/R5 zero failures. Native 32-bit multilib was unavailable; that suite used its explicit uint32_t truncation assertion. `git diff --check` passed for the assigned files. These checks do not execute firmware concurrency or heap admission on target; hardware, serial, SD and flashing were not accessed.
+
+## CY-10c2 AudioTools inventory check (review R7, 2026-10-25)
+
+Before compiling, `tools/check.ps1` now checks all 518 paths and SHA256 values in
+`tools/audiotools-files.sha256.json` against `vendor/arduino-audio-tools/`, then
+compares every discovered file (including hidden files) with the exact listed
+set. Missing files, changed bytes and extra files stop the check with the first
+offending relative path and a distinct diagnostic. This also runs with
+`-SkipProbe`; source integrity is required for every normal check invocation.
+
+Scratch-copy tests extracted `Test-AudioToolsInventory` directly from the script's
+PowerShell AST and copied both the vendor tree and inventory under `.tools/tmp/`.
+Windows PowerShell **5.1.26100.9711** and PowerShell **7.6.6** each accepted the
+intact copy (exit 0) and rejected each of these changes (exit 1):
+
+| Scratch mutation | Diagnostic | Output under `.tools/logs/` |
+| --- | --- | --- |
+| Flip one byte in `library.properties` | `AudioTools inventory SHA256 mismatch: library.properties` | `cy10c2-inventory-changed.txt` |
+| Delete `library.properties` | `AudioTools inventory missing file: library.properties` | `cy10c2-inventory-missing.txt` |
+| Add `.r7-extra.txt` | `AudioTools inventory unexpected file: .r7-extra.txt` | `cy10c2-inventory-extra.txt` |
+
+The local runner is `.tools/logs/cy10c2-inventory-test.ps1`; repeat with either
+`powershell` or `pwsh`, `-NoProfile -File .tools/logs/cy10c2-inventory-test.ps1
+-Case valid|changed|missing|extra` (choose one case). Runner, scratch copies and
+raw logs are ignored build evidence; no real vendor files were modified.
+
+`powershell -NoProfile -File tools/check.ps1` exited **0**; full output is
+`.tools/logs/cy10c2-check.txt`. All three builds passed, followed by
+`PASS synthetic fixture matrix: 3 positive, 7 negative` and
+`PASS: compile-only checks completed; no device commands were run.` All three
+image sizes and hashes equal the saved CY-10c1 build results; `aac-probe` remains
+**1,223,712 bytes**, SHA256
+`0e0f02ceb782ef9e958dc34f60e9dd0de7724c206320eb3924f9094a9b097aff`.
+`git diff --check` passed for the two assigned files, and `git status --short --
+vendor lib firmware` was empty. No hardware, serial, SD or flashing access occurred.

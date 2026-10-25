@@ -2,6 +2,29 @@
 [CmdletBinding()]
 param([switch]$SkipProbe, [switch]$SkipHostMedia)
 $ErrorActionPreference = 'Stop'
+
+function Test-AudioToolsInventory {
+    param([string]$SourceRoot, [string]$InventoryPath)
+    $expected = Get-Content -LiteralPath $InventoryPath -Raw | ConvertFrom-Json
+    $expectedNames = @($expected.PSObject.Properties.Name)
+    foreach ($item in ($expected.PSObject.Properties | Sort-Object Name)) {
+        $path = Join-Path $SourceRoot $item.Name
+        if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "AudioTools inventory missing file: $($item.Name)"
+        }
+        if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item.Value) {
+            throw "AudioTools inventory SHA256 mismatch: $($item.Name)"
+        }
+    }
+    $source = (Resolve-Path -LiteralPath $SourceRoot).Path.TrimEnd([char]92, [char]47)
+    foreach ($file in (Get-ChildItem -LiteralPath $source -Recurse -File -Force | Sort-Object FullName)) {
+        $relative = $file.FullName.Substring($source.Length + 1).Replace([char]92, [char]47)
+        if ($expectedNames -cnotcontains $relative) {
+            throw "AudioTools inventory unexpected file: $relative"
+        }
+    }
+}
+
 $root = Split-Path $PSScriptRoot -Parent
 $cli = Join-Path $root '.tools/arduino-cli/arduino-cli.exe'
 $config = Join-Path $root '.tools/arduino-cli.yaml'
@@ -25,6 +48,8 @@ try {
     if ($sourceFiles.Count -ne @($expected.PSObject.Properties).Count) {
         throw 'Unexpected files in vendored source snapshot.'
     }
+    Test-AudioToolsInventory -SourceRoot (Join-Path $root 'vendor/arduino-audio-tools') `
+        -InventoryPath (Join-Path $root 'tools/audiotools-files.sha256.json')
     if ((Get-FileHash $cli).Hash.ToLowerInvariant() -ne $lock.cli.executableSha256) { throw 'Arduino CLI executable differs from lock.' }
     if ((Get-FileHash .deps/sketchbook/libraries/arduino-libhelix/src/ConfigHelix.h).Hash.ToLowerInvariant() -ne $lock.patches[0].sha256) {
         throw 'Helix config differs from lock; run setup.ps1.'

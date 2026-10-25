@@ -1,0 +1,7 @@
+mute
+ls /Music
+stats
+WAIT 10
+stats
+WAIT 8
+stats

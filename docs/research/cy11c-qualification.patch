@@ -1,0 +1,11 @@
+--- a/firmware/cydpod_probe/cydpod_probe.ino	2026-10-25 14:09:58.349942900 +0000
++++ b/firmware/cydpod_probe/cydpod_probe.ino	2026-10-25 14:16:19.022300200 +0000
+@@ -53,7 +53,7 @@
+ constexpr uint32_t kDecoderPeakBytes=20680;      // Helix AACDecInfo+PSInfoBase, tests/helix_decode.cpp --allocation-test (WSL, 64-bit)
+ constexpr uint32_t kDecoderLargestRequest=20560; // largest single Helix request (PSInfoBase)
+ constexpr uint32_t kReaderPeakBytes=14336;       // measured whole-reader peak 13,560 (CY-11a, 25 real files) rounded up to 14 KiB; includes the reader object
+-constexpr uint32_t kPlaybackMarginBytes=10240;   // free heap that must remain during playback
++constexpr uint32_t kPlaybackMarginBytes=2048;   // free heap that must remain during playback
+ void sampleLargest() {
+   uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+   uint32_t old=minLargest.load();

@@ -1,0 +1,13 @@
+mute
+output bt
+volume 3
+stats
+HOST USER ACTION: put the Xiaomi Sound Pocket in pairing mode again now
+WAIT 20
+pair Xiaomi Sound Pocket
+WAIT 40
+stats
+WAIT 10
+stats
+mute
+stats

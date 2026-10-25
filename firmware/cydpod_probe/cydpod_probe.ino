@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
+#include <ff.h> // FatFs directory attributes (hidden/system are not exposed by File).
 #include <Preferences.h>
 #include <BluetoothA2DPSource.h>
 #include <driver/i2s_std.h>
@@ -15,7 +16,7 @@
 
 using namespace cydpod;
 enum class Output : uint8_t { bluetooth, line, headphone };
-enum class Op : uint8_t { play, stop, output, pair };
+enum class Op : uint8_t { play, stop, output, pair, ls };
 struct Command { Op op; Output output; uint32_t epoch; char text[128]; };
 PcmRing<2048> pcmRing; // exactly 8192 bytes of PCM
 AdtsDecoder decoder;
@@ -157,6 +158,27 @@ bool openOutput(Output output) {
   }
   i2sConsume.store(true); return true;
 }
+// Producer only, idle only. SD is the probe's first and only FAT volume (0:).
+// FatFs directory operations read metadata only; no files are opened for writing.
+void listDirectory(const char* path) {
+  char fatPath[132]; snprintf(fatPath,sizeof(fatPath),"0:%s",path);
+  FF_DIR dir{}; FILINFO entry{};
+  if(f_opendir(&dir,fatPath)!=FR_OK) { Serial.println("ERR ls open"); return; }
+  unsigned count=0; bool truncated=false;
+  for(;;) {
+    FRESULT result=f_readdir(&dir,&entry);
+    if(result!=FR_OK) { Serial.println("ERR ls read"); truncated=true; break; }
+    if(!entry.fname[0]) break;
+    if(entry.fname[0]=='.' || (entry.fattrib&(AM_HID|AM_SYS))) continue;
+    if(count==64) { truncated=true; break; }
+    if(strlen(entry.fname)>96) truncated=true;
+    Serial.printf("LS name=%.96s size=%llu kind=%s\n",entry.fname,
+      static_cast<unsigned long long>(entry.fsize),(entry.fattrib&AM_DIR)?"dir":"file");
+    ++count;
+  }
+  f_closedir(&dir);
+  Serial.printf("LS done count=%u truncated=%u\n",count,unsigned(truncated));
+}
 void producerTask(void*) {
   Output output=Output::bluetooth; Command command{};
   for(;;) {
@@ -166,6 +188,7 @@ void producerTask(void*) {
       }
       continue;
     }
+    if(command.op==Op::ls) { listDirectory(command.text); continue; }
     stopConsumers(); decoder.end();
     if(command.op==Op::stop) { track[0]=0; continue; }
     if(command.op==Op::output || command.op==Op::pair) {
@@ -233,9 +256,11 @@ bool submit(Op op,const char* text=nullptr,Output output=Output::bluetooth) {
   if(text) strlcpy(c.text,text,sizeof(c.text));
   // Increment only once a slot is available; loop is the sole queue writer.
   if(!uxQueueSpacesAvailable(commands)) { queueRejected.fetch_add(1); Serial.println("ERR command queue full"); return false; }
-  c.epoch=epoch.fetch_add(1)+1;
+  // Listing waits in the same queue until playback ends/stops; it must not
+  // cancel playback or mute it. Only the producer may access the SD card.
+  c.epoch=op==Op::ls ? epoch.load() : epoch.fetch_add(1)+1;
   if(xQueueSend(commands,&c,0)!=pdTRUE) { queueRejected.fetch_add(1); return false; }
-  muted.store(true);
+  if(op!=Op::ls) muted.store(true);
   return true;
 }
 void serialCommand(const char* s) {
@@ -243,6 +268,8 @@ void serialCommand(const char* s) {
   if(!strcmp(s,"mute")) { muted.store(true); return; }
   if(!strcmp(s,"unmute")) { muted.store(false); return; }
   if(!strcmp(s,"stop")) { submit(Op::stop); return; }
+  if(!strcmp(s,"ls")) { submit(Op::ls,"/Music"); return; }
+  if(!strncmp(s,"ls /",4)) { submit(Op::ls,s+3); return; }
   if(!strncmp(s,"play /",6)) { submit(Op::play,s+5); return; }
   if(!strncmp(s,"pair ",5) && strlen(s+5)>0 && strlen(s+5)<sizeof(peer)) {
     if(submit(Op::pair,s+5,Output::bluetooth)) {
@@ -265,7 +292,7 @@ void serialCommand(const char* s) {
     levels[unsigned(selected)]=unsigned(value); targetLevel.store(unsigned(value));
     const char* keys[]={"bt","line","hp"}; prefs.putUChar(keys[unsigned(selected)],uint8_t(value)); return;
   }
-  Serial.println("Commands: pair NAME | output bt|line|hp | play /path.aac|.m4a | stop | mute | unmute | volume 0..25 | stats");
+  Serial.println("Commands: pair NAME | output bt|line|hp | play /path.aac|.m4a | ls [/dir] | stop | mute | unmute | volume 0..25 | stats");
 }
 void setup() {
   Serial.begin(115200); delay(300);

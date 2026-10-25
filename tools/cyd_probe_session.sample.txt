@@ -1,5 +1,8 @@
-# Edit peer and all five filenames to exact existing names; never write to the SD.
+# First run ls /Music interactively while stopped, then copy five exact file
+# names from LS lines into the play paths below; never write to the SD.
 # Assumes AirPods are already paired/connected; perform pairing separately.
+ls /Music
+WAIT 5
 mute
 output bt
 volume 3

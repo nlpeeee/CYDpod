@@ -13,6 +13,13 @@ Only the `aac-probe` job changed: flags `-DCYDPOD_AAC_LC_ONLY -I<repo>/vendor/ar
 - No Bluetooth, I2S or UI changes.
 
 ## Serial format
+Read-only directory listing (`ls` defaults to `/Music`, or `ls /dir`):
+```
+LS name=<name> size=<bytes> kind=file|dir
+LS done count=<n> truncated=0|1
+```
+The producer lists only when idle; a queued listing waits for the track to stop or end without interrupting or muting it. Send `stop` first for immediate listing. It reads FatFs metadata on the probe's sole FAT volume (`0:`), skips dot-prefixed and FAT hidden/system entries, prints at most 64 entries and 96 bytes per name, and sets `truncated=1` for either cap (or a read error, also logged as `ERR ls read`). `ERR ls open` means the directory could not be opened. Names are basenames; append an untruncated file name to the listed directory for `play`. The summariser selects only `TRACK`/`METRIC`/`ERR` lines, so `LS` needs no parser or fixture changes.
+
 Per track (start, end on EOF, skip on error):
 ```
 TRACK ev=start|end|skip name=<path> m4a=<status|na> heap=<free> largest=<block> min_heap=<since boot> min_sampled_largest=<min>
@@ -27,3 +34,11 @@ Periodic (every 5 s and on `stats`): the existing `METRIC ...` line, now startin
 | new probe | 1,222,320 | 62.2% | 61,528 | `90b74d03c7b273dbcb394b5f3ebe3c19d11c01434d640ac31dac6ed6dd3d02f3` |
 
 Delta: +32,384 bytes of image, +304 bytes of static RAM (well under the 20 KB stop threshold; image fits the slot). The M4A reader's ~9.2 KB plus table (up to 32 KiB, see `cy5-state-reset.md`) is heap, not static, and still needs on-target measurement of `largest`/`min_heap` with a no-PSRAM Bluetooth session.
+
+## CY-8b listing verification (2026-10-25, offline only)
+
+`powershell -NoProfile -File tools/check.ps1` exited 0, including player, uploader, probe and host media checks: `PASS synthetic fixture matrix: 3 positive, 7 negative` and `PASS: compile-only checks completed; no device commands were run.` Full output: `.tools/logs/cy8b-check.txt`; compiler output: `.tools/logs/aac-probe.log`; image metadata: `.tools/logs/build-results.json`.
+
+The new probe binary is **1,222,880 bytes**, SHA256 `9a57cb67d323030de1e4e796c0b9ff440f06981393a66ad320de258d05154b4c`: +560 bytes against CY-6/CY-8, within the 1,966,080-byte slot. Compiler reports code 1,222,730 bytes and static RAM **61,528 bytes** (+0). Player/uploader image sizes and hashes are unchanged.
+
+All four `wsl.exe -d Debian -- sh tests/build_m4a_{host,caps,reject,sequence}.sh` invocations exited 0: identical PCM/counts, malformed inputs within caps, all 105 rejection runs passed, and every sequence track equalled its fresh-reader result. Both Windows PowerShell 5.1 and `pwsh` session dry-runs with `-Port COM10 -Script tools/cyd_probe_session.sample.txt -LogPath .tools/logs/cy8b-dryrun.txt -DryRun` exited 0, scheduled `ls /Music` first at 2 seconds and final `stop` at 362 seconds, and created no log. Both `-SummaryLog tests/fixtures-log/probe-session.txt` runs exited 0 and retained the documented ranges, status counts (na=2, ok=2, moov_after_mdat=1), and two ERR lines. Source inspection confirms `LS` lines are excluded from the summariser's anchored telemetry selection. No hardware, port, card or flashing access occurred; on-device listing remains unverified.

@@ -1,0 +1,26 @@
+# filename	expected_status	emitted_frames (stsz count for accepted files; rejected before emission)
+07-01 - Deee-Lite - Groove Is in the Heart.m4a	ok	9985
+07-02 - Moloko - Sing It Back.m4a	ok	11975
+07-03 - Moloko - The Time Is Now.m4a	ok	9573
+07-04 - Spiller - Groovejet (If This Ain't Love).m4a	ok	9805
+07-05 - Madison Avenue - Don't Call Me Baby.m4a	ok	9828
+07-06 - Room 5 - Make Luv.m4a	ok	9150
+07-07 - Junior Senior - Move Your Feet.m4a	ok	7833
+07-08 - Jamiroquai - Cosmic Girl.m4a	ok	10517
+07-09 - Jamiroquai - Canned Heat.m4a	ok	8580
+07-10 - Groove Armada - Superstylin'.m4a	ok	15525
+07-11 - The Chemical Brothers - Hey Boy Hey Girl.m4a	ok	9146
+07-12 - The Chemical Brothers - Galvanize.m4a	too_many_samples	0
+07-13 - The Prodigy - Out of Space.m4a	ok	13013
+07-14 - The Prodigy - Everybody in the Place.m4a	ok	9174
+07-15 - Primal Scream - Loaded.m4a	too_many_samples	0
+07-16 - Primal Scream - Movin' on Up.m4a	ok	9833
+07-17 - Cornershop - Brimful of Asha.m4a	ok	10355
+07-18 - Fatboy Slim - Weapon of Choice.m4a	ok	9493
+07-19 - Daft Punk - Around the World.m4a	ok	10402
+07-20 - Daft Punk - Get Lucky.m4a	ok	10667
+07-21 - Cassius - Cassius 1999.m4a	ok	9552
+07-22 - Basement Jaxx - Red Alert.m4a	ok	11088
+07-23 - Basement Jaxx - Romeo.m4a	ok	9369
+07-24 - The Supermen Lovers - Starlight.m4a	ok	10097
+07-25 - Justice - D.A.N.C.E.m4a	ok	9127

@@ -9,3 +9,6 @@ tools/package_esp32_index.json -text
 # Generated original audio fixtures must retain their exact bytes.
 fixtures/*.aac -text
 fixtures/*.m4a -text
+
+# WSL shell scripts break with CRLF.
+*.sh text eol=lf

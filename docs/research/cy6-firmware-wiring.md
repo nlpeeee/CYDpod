@@ -9,7 +9,7 @@ Only the `aac-probe` job changed: flags `-DCYDPOD_AAC_LC_ONLY -I<repo>/vendor/ar
 - A track whose name ends in `.m4a` (case-insensitive) is opened read-only; a fresh `M4aFeed` (one `M4aGuardedReader` + 4 KiB ADTS queue + 256 B chunk, heap allocated) is created per track and deleted at track end. The file is read in 256-byte chunks into `M4aGuardedReader::write()`; its ADTS frames are queued and handed to the unchanged `AdtsDecoder` → PCM ring path.
 - `.aac` tracks take the original path (`file.read` straight into the decoder).
 - On any `M4aStatus` error (or an ADTS queue overflow, state `adts_queue_overflow`) the track is skipped, `ERR m4a <status>` is printed and the producer waits for the next command. Error/skip cleanup uses `stopConsumers()` to mute, disable and quiesce both consumers before clearing the PCM ring; only that path resets the ring. The probe has no playlist, so "next track" is the next `play` command.
-- Before allocating a `.m4a` reader, internal 8-bit free heap must be at least 96 KiB (`kM4aMinFreeHeap`) and its largest free block at least 64 KiB (`kM4aMinLargestBlock`). Otherwise the track is skipped with `m4a=low_memory` and `ERR m4a low_memory heap=<n> largest=<n>`. This interim admission guard cannot guarantee later allocations succeed; recoverable allocation throughout the reader remains follow-up work. `.aac` admission is unchanged.
+- CY-11b: the reader uses the file-backed 1 KiB sample-size table (`SdSource`, save/restore position on the same `File`; `source_*` statuses end the track via the existing skip path, `sourceReads` counts refills). After the file is open and before the reader/decoder are allocated, internal 8-bit free heap must be at least `m4aNeedFree()` = 20,680 + 14,336 + feed extra (<= 4,392) + 10,240 = 49,648 B and the largest block at least `m4aNeedLargest()` = sizeof(M4aFeed) + 20,560 = 29,704 B (derivation: `cy11b-admission.md`). Otherwise the track is skipped with `m4a=low_memory` and `ERR m4a low_memory heap=<n> largest=<n> need=<n> need_largest=<n>`. On the CY-12a state (45,488 free after open) this rejects. This admission guard cannot guarantee later allocations succeed; recoverable allocation throughout the reader remains follow-up work. `.aac` admission is unchanged.
 - Producer task stack raised 6144 → 8192 bytes (the demux callback chain runs on it). Not measured; check `producer_stack` in `stats` on hardware.
 - No Bluetooth, I2S or UI changes.
 
@@ -23,14 +23,15 @@ The producer lists only when idle; a queued listing waits for the track to stop 
 
 Per track (start, end on EOF, skip on error):
 ```
-TRACK ev=start|end|skip name=<path> m4a=<status|na> heap=<free> largest=<block> min_heap=<since boot> min_sampled_largest=<min>
+TRACK ev=live|start|end|skip name=<path> m4a=<status|na> heap=<free> largest=<block> min_heap=<since boot> min_sampled_largest=<min> producer_stack=<bytes> source_reads=<n>
 ```
+`ev=live` (CY-11b) is logged once per track right after reader and decoder are allocated, immediately before `ev=start`; its `heap`/`largest` are the post-allocation figures. `producer_stack` is the producer high-water mark in bytes; `source_reads` is the number of sample-size window refills this track.
 `m4a` is a `m4aStatusName()` string (`ok`, `moov_after_mdat`, `too_many_samples`, ...), `na` for `.aac`, `alloc` if the reader allocation failed. `heap`/`largest` are current free / largest free block and `min_heap` the minimum free since boot (`heap_caps_get_minimum_free_size`, internal 8-bit); all use `MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT`. `min_sampled_largest` is the existing `minLargest` sampler.
 Periodic (every 5 s and on `stats`; corrected by CY-9c):
 ```
-METRIC m4a=<status|na> heap=<free> min_heap=<since boot> largest=<block> min_sampled_largest=<min> producer_stack=<bytes> sink_stack=<bytes> loop_stack=<bytes> ring=<frames> decoded=<frames> underrun_frames=<frames> underrun_calls=<calls> queue_rejected=<count> connected=0|1 muted=0|1 level=<percent>
+METRIC m4a=<status|na> heap=<free> min_heap=<since boot> largest=<block> min_sampled_largest=<min> producer_stack=<bytes> sink_stack=<bytes> loop_stack=<bytes> ring=<frames> decoded=<frames> underrun_frames=<frames> underrun_calls=<calls> queue_rejected=<count> connected=0|1 muted=0|1 level=<percent> source_reads=<n>
 ```
-The format has one string followed by 15 unsigned fields. CY-9c restored the missing `m4aState` argument; the earlier image panicked in this call before producing telemetry (see `cy9a-smoke-test.md`).
+The format has one string followed by 16 unsigned fields (`source_reads` added by CY-11b). CY-9c restored the missing `m4aState` argument; the earlier image panicked in this call before producing telemetry (see `cy9a-smoke-test.md`).
 Status is now published as an atomic pointer to static-lifetime text, with one snapshot loaded per `TRACK`, `METRIC` or status-error line; existing log text is preserved.
 
 ## Image size, static RAM, hash

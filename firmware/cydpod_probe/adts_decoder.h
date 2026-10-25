@@ -2,6 +2,13 @@
 #include "audio_core.h"
 #include <libhelix-aac/aacdec.h>
 
+// Keep strict format diagnostics local to probe code, after dependency includes.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wformat"
+#pragma GCC diagnostic error "-Wformat-security"
+#endif
+
 namespace cydpod {
 enum class DecodeResult { frame, eof, truncated, unsupported, malformed, allocation, codec_error };
 inline const char* resultName(DecodeResult r) {
@@ -50,3 +57,7 @@ class AdtsDecoder {
   alignas(4) short pcm_[4096]{};
 };
 }
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif

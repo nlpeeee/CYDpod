@@ -67,8 +67,11 @@ try {
                 Copy-Item -LiteralPath $_.FullName -Destination $dest
             }
         }
+        # GCC -w suppresses even local diagnostic-error pragmas. Keep it for
+        # stock builds only; the probe enables format errors in its own files.
+        $warnings = if ($job.Name -eq 'aac-probe') { 'default' } else { 'none' }
         $arguments = @('--config-file', $config, 'compile', '--fqbn', $lock.core.fqbn,
-            '--warnings', 'none', '--build-path', (Join-Path $root ".tools/build/$($job.Name)"),
+            '--warnings', $warnings, '--build-path', (Join-Path $root ".tools/build/$($job.Name)"),
             '--output-dir', (Join-Path $root ".tools/images/$($job.Name)"))
         if ($job.Flags) {
             $arguments += @('--build-property', "compiler.cpp.extra_flags=$($job.Flags)",

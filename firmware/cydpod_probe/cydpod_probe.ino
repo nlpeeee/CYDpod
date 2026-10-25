@@ -14,6 +14,13 @@
 #error This probe requires original ESP32 and global CYDPOD_AAC_LC_ONLY
 #endif
 
+// Keep strict format diagnostics local to probe code, after dependency includes.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wformat"
+#pragma GCC diagnostic error "-Wformat-security"
+#endif
+
 using namespace cydpod;
 enum class Output : uint8_t { bluetooth, line, headphone };
 enum class Op : uint8_t { play, stop, output, pair, ls };
@@ -54,8 +61,8 @@ bool endsWithNoCase(const char* s,const char* suffix) {
 void logTrack(const char* ev) {
   sampleLargest();
   Serial.printf("TRACK ev=%s name=%s m4a=%s heap=%u largest=%u min_heap=%u min_sampled_largest=%u\n",ev,track,m4aState,
-    heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
-    heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),minLargest.load());
+    unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
+    unsigned(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(minLargest.load()));
 }
 // Pull adapter: file bytes -> guarded M4A reader -> ADTS frames queued here -> AdtsDecoder reads them like an .aac file.
 struct M4aFeed {
@@ -247,9 +254,9 @@ void metrics() {
   uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
   sampleLargest();
   Serial.printf("METRIC m4a=%s heap=%u min_heap=%u largest=%u min_sampled_largest=%u producer_stack=%u sink_stack=%u loop_stack=%u ring=%u decoded=%u underrun_frames=%u underrun_calls=%u queue_rejected=%u connected=%u muted=%u level=%u\n",
-    heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),largest,minLargest.load(),
-    producerHandle?uxTaskGetStackHighWaterMark(producerHandle):0,sinkHandle?uxTaskGetStackHighWaterMark(sinkHandle):0,uxTaskGetStackHighWaterMark(nullptr),
-    unsigned(pcmRing.size()),decodedFrames.load(),underrunFrames.load(),underrunCalls.load(),queueRejected.load(),connected.load(),muted.load(),targetLevel.load());
+    m4aState,unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(largest),unsigned(minLargest.load()),
+    unsigned(producerHandle?uxTaskGetStackHighWaterMark(producerHandle):0),unsigned(sinkHandle?uxTaskGetStackHighWaterMark(sinkHandle):0),unsigned(uxTaskGetStackHighWaterMark(nullptr)),
+    unsigned(pcmRing.size()),unsigned(decodedFrames.load()),unsigned(underrunFrames.load()),unsigned(underrunCalls.load()),unsigned(queueRejected.load()),unsigned(connected.load()),unsigned(muted.load()),targetLevel.load());
 }
 bool submit(Op op,const char* text=nullptr,Output output=Output::bluetooth) {
   Command c{}; c.op=op; c.output=output;
@@ -296,7 +303,7 @@ void serialCommand(const char* s) {
 }
 void setup() {
   Serial.begin(115200); delay(300);
-  Serial.printf("CYDpod AAC probe chip=%s psram=%u; provisional I2S 22/27/17; outputs unverified\n",ESP.getChipModel(),ESP.getPsramSize());
+  Serial.printf("CYDpod AAC probe chip=%s psram=%u; provisional I2S 22/27/17; outputs unverified\n",ESP.getChipModel(),unsigned(ESP.getPsramSize()));
   prefs.begin("cydpod-probe",false);
   const char* keys[]={"bt","line","hp"};
   for(unsigned i=0;i<3;++i) levels[i]=safeSavedLevel(prefs.getUChar(keys[i],i==2?5:10),10);
@@ -318,3 +325,7 @@ void loop() {
   if(millis()-last>=5000) { last=millis(); metrics(); }
   delay(2);
 }
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif

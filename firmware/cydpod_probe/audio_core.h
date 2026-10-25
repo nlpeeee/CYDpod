@@ -5,6 +5,13 @@
 #include <cstring>
 #include <algorithm>
 
+// Keep strict format diagnostics local to probe code, after dependency includes.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wformat"
+#pragma GCC diagnostic error "-Wformat-security"
+#endif
+
 namespace cydpod {
 struct Stereo { int16_t left, right; };
 static_assert(sizeof(Stereo) == 4, "packed stereo PCM");
@@ -90,3 +97,7 @@ template <size_t N> class LineBuffer {
   char bytes_[N]{}; size_t used_ = 0; bool overflow_ = false;
 };
 }
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif

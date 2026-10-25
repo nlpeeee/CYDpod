@@ -29,7 +29,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Restore verification failed.' }
 
 ## 2. Flash and verify the probe
 
-Check `.tools/logs/build-results.json`: CY-8b aac-probe must be 1,222,880 bytes, SHA256 `9a57cb67d323030de1e4e796c0b9ff440f06981393a66ad320de258d05154b4c`; confirm the actual `.ino.bin` hash too. Locked FQBN is `esp32:esp32:esp32:PartitionScheme=min_spiffs,PSRAM=disabled,FlashSize=4M`. Offsets/flash settings below come from `.tools/build/aac-probe/flash_args`; boot_app0 is in the build directory, other binaries in images. No erase-all command is needed. NVS remains but OTA selection at 0xe000 is overwritten; full backup is the recovery authority.
+Check `.tools/logs/build-results.json`: CY-9c corrected aac-probe must be 1,222,880 bytes, SHA256 `480441396eb43594b6a0a25760a081b81080cd3c803a11a172de961b7037a79b`; confirm the actual `.ino.bin` hash too. Locked FQBN is `esp32:esp32:esp32:PartitionScheme=min_spiffs,PSRAM=disabled,FlashSize=4M`. Offsets/flash settings below come from `.tools/build/aac-probe/flash_args`; boot_app0 is in the build directory, other binaries in images. No erase-all command is needed. NVS remains but OTA selection at 0xe000 is overwritten; full backup is the recovery authority.
 
 ```powershell
 $flashFiles = @('0x1000','.tools/images/aac-probe/cydpod_probe.ino.bootloader.bin',

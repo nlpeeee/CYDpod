@@ -40,7 +40,9 @@ try {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
             throw 'Required AAC probe is missing. Use -SkipProbe only for an explicit stock-baseline check.'
         }
-        $jobs += @{ Name = 'aac-probe'; Sketch = 'firmware/cydpod_probe'; Flags = '-DCYDPOD_AAC_LC_ONLY' }
+        $m4aInclude = (Join-Path $root 'lib/cydpod_m4a').Replace([string][char]92, '/')
+        $toolsInclude = (Join-Path $root 'vendor/arduino-audio-tools/src').Replace([string][char]92, '/')
+        $jobs += @{ Name = 'aac-probe'; Sketch = 'firmware/cydpod_probe'; Flags = "-DCYDPOD_AAC_LC_ONLY -I$toolsInclude -I$m4aInclude" }
     }
     $results = @()
     foreach ($job in $jobs) {

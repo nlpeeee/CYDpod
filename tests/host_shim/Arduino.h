@@ -19,6 +19,10 @@ class Print {
   virtual int availableForWrite() { return 1024; }
   virtual void flush() {}
   size_t print(const char* s) { return write((const uint8_t*)s, strlen(s)); }
+  // Without these the vendor logger's print(line) converted the int to a const char* and crashed on the first LOGE (CY-11a).
+  size_t print(int v) { char b[16]; return print((snprintf(b, sizeof b, "%d", v), b)); }
+  size_t print(unsigned v) { char b[16]; return print((snprintf(b, sizeof b, "%u", v), b)); }
+  size_t print(long v) { char b[24]; return print((snprintf(b, sizeof b, "%ld", v), b)); }
   size_t println(const char* s = "") { print(s); return write('\n'); }
 };
 class Stream : public Print {

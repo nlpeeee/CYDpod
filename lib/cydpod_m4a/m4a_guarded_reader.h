@@ -5,6 +5,7 @@
 #include <functional>
 #include "AudioTools/AudioCodecs/M4AAudioDemuxer.h"
 #include "m4a_caps.h"
+#include "m4a_file_sizes.h"
 #include "m4a_state_reset.h"
 #include <new>
 
@@ -12,27 +13,17 @@ namespace cydpod {
 enum class M4aStatus : uint8_t {
   ok, badBoxHeader, tooDeep, stsdTooLarge, badStsd, notMp4a, badStsz, tooManySamples, badFrameSize,
   moovAfterMdat, duplicateTrack, truncated, noSampleTable, tableOverflow, tooManyBoxes,
-  firstTrackNotAudio, notAacLc, badSampleRate, badChannels, noAudioTrack, boxTooLarge, offsetOverflow
+  firstTrackNotAudio, notAacLc, badSampleRate, badChannels, noAudioTrack, boxTooLarge, offsetOverflow,
+  sourceReadError, sourceShortRead, sourceSeekError  // CY-11a: file-backed table source failures
 };
 inline const char* m4aStatusName(M4aStatus s) {
   static const char* n[] = {"ok", "bad_box_header", "too_deep", "stsd_too_large", "bad_stsd", "not_mp4a", "bad_stsz",
                             "too_many_samples", "bad_frame_size", "moov_after_mdat", "duplicate_track", "truncated",
                             "no_sample_table", "table_overflow", "too_many_boxes", "first_track_not_audio", "not_aac_lc",
-                            "bad_sample_rate", "bad_channels", "no_audio_track", "box_too_large", "offset_overflow"};
+                            "bad_sample_rate", "bad_channels", "no_audio_track", "box_too_large", "offset_overflow",
+                            "source_read_error", "source_short_read", "source_seek_error"};
   return n[static_cast<uint8_t>(s)];
 }
-
-// Backstop for the reader's sample-size table: refuses to grow past the cap and swallows further writes (the reader
-// wraps write() in assert) after latching the overflow.
-class M4aCappedSizes : public audio_tools::SingleBuffer<audio_tools::stsz_sample_size_t> {
- public:
-  bool overflow = false;
-  bool resize(size_t n) override {
-    if (n > kM4aMaxTableEntries) { overflow = true; return false; }
-    return SingleBuffer::resize(n);
-  }
-  bool write(audio_tools::stsz_sample_size_t v) override { return overflow ? true : SingleBuffer::write(v); }
-};
 
 class M4aGuardedReader {
  public:
@@ -43,12 +34,15 @@ class M4aGuardedReader {
   // begin() starts a new track and is a full reset: the vendored demuxer and the size table are rebuilt in place (the vendored
   // M4AAudioDemuxer::begin() alone does not make a used instance safe to reuse), the guard state is cleared, and the vendored
   // function-static sample-size cache is primed (m4a_state_reset.h). A new instance per track is equivalent.
-  void begin(AdtsCallback cb) {
+  // With a source the sample-size table stays in the file (1 KiB window, m4a_file_sizes.h); the source must serve the same stream
+  // offsets that are fed to write() and stay valid until the next begin(). Without one the table is resident (<= kM4aResidentEntries).
+  void begin(AdtsCallback cb, M4aSeekableSource* source = nullptr) {
 #ifndef CYDPOD_NO_STATE_RESET  // test-only switch that restores the pre-CY-5 behaviour for before/after evidence
     demux.~M4AAudioDemuxer(); sizes.~M4aCappedSizes();
     new (&sizes) M4aCappedSizes; new (&demux) audio_tools::M4AAudioDemuxer;
     m4aPrimeSampleSizeCache();
 #endif
+    sizes.source(source);
     onFrame = cb; st = M4aStatus::ok; sc = Scan(); nz = 0; heldLen = 0;
     demux.setSampleSizesBuffer(sizes);
     demux.setReference(this);  // setReference must precede setCallback
@@ -85,10 +79,12 @@ class M4aGuardedReader {
     }
     if (c < n) demux.write(d + c, n - c);
     if (sizes.overflow) st = M4aStatus::tableOverflow;
+    else if (sizes.error != M4aSourceResult::ok) st = sourceStatus();
     return st;
   }
   M4aStatus finish() {
     if (st != M4aStatus::ok) return st;
+    if (sizes.error != M4aSourceResult::ok) return st = sourceStatus();
     popLevels();
     bool mdatOpen = sc.mode == Mode::skip && sc.isMdat && !sc.depth;  // payload may legitimately end early
     if (!mdatOpen && (sc.mode != Mode::header || sc.hdrLen || sc.depth)) st = M4aStatus::truncated;
@@ -118,6 +114,14 @@ class M4aGuardedReader {
   M4aStatus st = M4aStatus::ok;
 
   static uint32_t u32(const uint8_t* p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+  M4aStatus sourceStatus() const {
+    switch (sizes.error) {
+      case M4aSourceResult::shortRead: return M4aStatus::sourceShortRead;
+      case M4aSourceResult::seekError: return M4aStatus::sourceSeekError;
+      case M4aSourceResult::badEntry: return M4aStatus::badFrameSize;  // an entry the scan accepted now reads back out of range
+      default: return M4aStatus::sourceReadError;
+    }
+  }
   bool fail(M4aStatus s) { st = s; return false; }
   static bool is(const uint8_t* p, const char* t) { return !memcmp(p, t, 4); }
   static bool isKeepContainer(const uint8_t* t) {
@@ -180,6 +184,7 @@ class M4aGuardedReader {
       if (sc.payload < 12) return fail(M4aStatus::badStsz);
       if (sc.stszSeen) return fail(M4aStatus::duplicateTrack);
       sc.stszSeen = true; sc.mode = Mode::stsz; need += 13;  // header words + first entry
+      sizes.tableOffset(sc.pos + 12);  // first raw entry; version/flags, sample size and count precede it (hl == 8 here)
     } else if (mdat) {
       if (sc.depth == 0 && !sc.moovDone) return fail(M4aStatus::moovAfterMdat);  // the reader needs the sample tables first; moov-last is not supported
       if (sc.depth == 0 && !sc.stsdSeen) return fail(M4aStatus::noAudioTrack);

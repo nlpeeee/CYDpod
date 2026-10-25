@@ -8,6 +8,7 @@
 #include <map>
 #include <sstream>
 #include "../lib/cydpod_m4a/m4a_guarded_reader.h"
+#include "m4a_file_source.h"
 using namespace cydpod;
 namespace fs = std::filesystem;
 struct Expected { std::string status; size_t frames; };
@@ -89,8 +90,9 @@ int main(int argc, char** argv) {
         continue;
       }
       M4aGuardedReader reader;
+      FileSource source(f);  // CY-11a: file-backed table, 1 KiB window, shared streaming handle
       size_t frames = 0;
-      reader.begin([&](const uint8_t*, size_t) { ++frames; });
+      reader.begin([&](const uint8_t*, size_t) { ++frames; }, &source);
       M4aStatus st = M4aStatus::ok;
       uint8_t buffer[1024];
       size_t n;

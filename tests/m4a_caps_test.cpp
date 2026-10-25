@@ -87,10 +87,13 @@ static void expect(const char* name, const Bytes& in, M4aStatus want, size_t wan
 
 int main() {
   expect("valid synthetic", valid(), M4aStatus::ok, 4);
-  { std::vector<uint32_t> e(kM4aMaxTableEntries, 8);
-    expect("table exactly at cap", cat({ftyp(), moov(stsd(), stsz(0, kM4aMaxTableEntries, e)), box("mdat", Bytes())}), M4aStatus::ok, 0);
+  // CY-11a: without a source the table is resident and capped at kM4aResidentEntries (tableOverflow above it); the
+  // file-backed cap kM4aMaxTableEntries (tooManySamples above it) is exercised in m4a_filetable_test.
+  { std::vector<uint32_t> e(kM4aResidentEntries, 8);
+    expect("resident table exactly at cap", cat({ftyp(), moov(stsd(), stsz(0, kM4aResidentEntries, e)), box("mdat", Bytes())}), M4aStatus::ok, 0);
     e.push_back(8);
-    expect("table cap+1", cat({ftyp(), moov(stsd(), stsz(0, kM4aMaxTableEntries + 1, e)), box("mdat", Bytes())}), M4aStatus::tooManySamples); }
+    expect("resident table cap+1", cat({ftyp(), moov(stsd(), stsz(0, kM4aResidentEntries + 1, e)), box("mdat", Bytes())}), M4aStatus::tableOverflow); }
+  expect("file table count cap+1", cat({ftyp(), moov(stsd(), stsz(0, kM4aMaxTableEntries + 1, {100}))}), M4aStatus::tooManySamples);
   expect("stsz count 0xFFFFFFFF", cat({ftyp(), moov(stsd(), stsz(0, 0xFFFFFFFF, {100}))}), M4aStatus::tooManySamples);
   expect("stsz count 0", cat({ftyp(), moov(stsd(), stsz(0, 0, {}))}), M4aStatus::badStsz);
   expect("stsz table shorter than count", cat({ftyp(), moov(stsd(), stsz(0, 100, {100, 100}))}), M4aStatus::badStsz);

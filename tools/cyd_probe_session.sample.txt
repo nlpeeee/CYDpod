@@ -1,0 +1,38 @@
+# Edit peer and all five filenames to exact existing names; never write to the SD.
+# Assumes AirPods are already paired/connected; perform pairing separately.
+mute
+output bt
+volume 3
+WAIT 5
+stats
+play /Music/track1.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+stop
+play /Music/track2.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+stop
+play /Music/track3.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+stop
+play /Music/track4.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+stop
+play /Music/track5.m4a
+WAIT 5
+unmute
+WAIT 60
+stats
+mute
+stop

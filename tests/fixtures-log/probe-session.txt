@@ -1,0 +1,8 @@
+# Fabricated telemetry only; not hardware evidence. Includes a counter reset.
+2026-10-25T10:00:00.0000000Z RX METRIC m4a=na heap=80000 largest=50000 min_heap=70000 producer_stack=2048 sink_stack=1536 loop_stack=2048 underrun_frames=0 underrun_calls=0
+2026-10-25T10:00:05.0000000Z RX TRACK ev=start name=/Music/one.m4a m4a=ok heap=60000 largest=32000 min_heap=55000
+2026-10-25T10:00:10.0000000Z RX METRIC m4a=ok heap=62000 largest=34000 min_heap=54000 producer_stack=1400 sink_stack=1200 loop_stack=1800 underrun_frames=12 underrun_calls=2
+2026-10-25T10:00:15.0000000Z RX TRACK ev=skip name=/Music/bad.m4a m4a=moov_after_mdat heap=61000 largest=33000 min_heap=54000
+2026-10-25T10:00:15.1000000Z RX ERR m4a moov_after_mdat
+2026-10-25T10:00:20.0000000Z RX ERR Bluetooth timeout; pair again
+2026-10-25T10:00:25.0000000Z RX METRIC m4a=na heap=80000 largest=50000 min_heap=70000 producer_stack=2048 sink_stack=1536 loop_stack=2048 underrun_frames=0 underrun_calls=0

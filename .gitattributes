@@ -12,3 +12,5 @@ fixtures/*.m4a -text
 
 # WSL shell scripts break with CRLF.
 *.sh text eol=lf
+patches/**/*.patch -text
+*.sh text eol=lf

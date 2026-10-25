@@ -12,13 +12,13 @@ namespace cydpod {
 enum class M4aStatus : uint8_t {
   ok, badBoxHeader, tooDeep, stsdTooLarge, badStsd, notMp4a, badStsz, tooManySamples, badFrameSize,
   moovAfterMdat, duplicateTrack, truncated, noSampleTable, tableOverflow, tooManyBoxes,
-  firstTrackNotAudio, notAacLc, badSampleRate, badChannels, noAudioTrack
+  firstTrackNotAudio, notAacLc, badSampleRate, badChannels, noAudioTrack, boxTooLarge, offsetOverflow
 };
 inline const char* m4aStatusName(M4aStatus s) {
   static const char* n[] = {"ok", "bad_box_header", "too_deep", "stsd_too_large", "bad_stsd", "not_mp4a", "bad_stsz",
                             "too_many_samples", "bad_frame_size", "moov_after_mdat", "duplicate_track", "truncated",
                             "no_sample_table", "table_overflow", "too_many_boxes", "first_track_not_audio", "not_aac_lc",
-                            "bad_sample_rate", "bad_channels", "no_audio_track"};
+                            "bad_sample_rate", "bad_channels", "no_audio_track", "box_too_large", "offset_overflow"};
   return n[static_cast<uint8_t>(s)];
 }
 
@@ -130,6 +130,9 @@ class M4aGuardedReader {
     for (const char* x : c) if (is(t, x)) return true;
     return false;
   }
+  static bool isCodecCallback(const uint8_t* t) {
+    return is(t, "alac") || is(t, "mp4a") || is(t, "esds") || is(t, "ac-3");
+  }
   void popLevels() {
     while (sc.depth && sc.pos >= sc.ends[sc.depth - 1]) {
       if (--sc.depth == 0 && sc.openedMoov) sc.moovDone = true;
@@ -146,7 +149,11 @@ class M4aGuardedReader {
     bool mdat = is(h + 4, "mdat");
     if ((open || hsz == 16) && !(mdat && sc.depth == 0)) return fail(M4aStatus::badBoxHeader);
     if (!open && size < hsz) return fail(M4aStatus::badBoxHeader);
-    uint64_t start = sc.pos - hl, end = open ? UINT64_MAX : start + size;
+    uint64_t start = sc.pos - hl;
+    if (!open && size > UINT64_MAX - start) return fail(M4aStatus::offsetOverflow);
+    // Bound the full declared size explicitly to the ESP32 width on every host.
+    if (!open && size > uint64_t(UINT32_MAX)) return fail(M4aStatus::boxTooLarge);
+    uint64_t end = open ? UINT64_MAX : start + size;
     if (sc.depth && end > sc.ends[sc.depth - 1]) return fail(M4aStatus::badBoxHeader);
     sc.hdrLen = 0;
     bool alnum = isalnum(h[4]) && isalnum(h[5]) && isalnum(h[6]) && isalnum(h[7]);
@@ -160,7 +167,9 @@ class M4aGuardedReader {
     }
     sc.payload = sc.remaining = open ? UINT64_MAX : size - hsz;
     sc.isMdat = mdat; sc.mode = Mode::skip;
-    if (!alnum || isKnownContainer(h + 4)) {
+    // stsd payload is scanned in Mode::stsd and validated as a whole before delivery.
+    // Any codec header reaching this branch is outside that validated payload.
+    if (!alnum || isKnownContainer(h + 4) || isCodecCallback(h + 4)) {
       rewrite = true;  // neutralized: the reader sees a "free" box of the same size
     } else if (is(h + 4, "stsd")) {
       if (sc.payload > kM4aMaxStsdBytes) return fail(M4aStatus::stsdTooLarge);
@@ -184,6 +193,7 @@ class M4aGuardedReader {
 
   // Registers (or finalizes the pending-header zone of) a box whose first `need` bytes must be delivered together.
   bool holdHeader(size_t idx, unsigned hl, uint64_t start, uint64_t need, bool rewrite) {
+    if (need > UINT64_MAX - start) return fail(M4aStatus::offsetOverflow);
     if (sc.zoneOpen) { sc.zoneEnd = start + need; zones[nz - 1].rewrite = rewrite; return true; }
     if (need == hl && !rewrite) return true;  // plain header inside this write: nothing to hold
     if (nz >= kZones) return fail(M4aStatus::tooManyBoxes);
@@ -241,6 +251,7 @@ class M4aGuardedReader {
   }
 
   bool scan(const uint8_t* d, size_t n) {
+    if (uint64_t(n) > UINT64_MAX - sc.pos) return fail(M4aStatus::offsetOverflow);
     size_t i = 0;
     for (;; ) {
       if (sc.zoneOpen && sc.pos >= sc.zoneEnd) { zones[nz - 1].end = i - (size_t)(sc.pos - sc.zoneEnd); sc.zoneOpen = false; }

@@ -7,6 +7,7 @@
 #include "m4a_caps.h"
 #include "m4a_file_sizes.h"
 #include "m4a_state_reset.h"
+#include "m4a_arena.h"
 #include <new>
 
 namespace cydpod {
@@ -14,36 +15,73 @@ enum class M4aStatus : uint8_t {
   ok, badBoxHeader, tooDeep, stsdTooLarge, badStsd, notMp4a, badStsz, tooManySamples, badFrameSize,
   moovAfterMdat, duplicateTrack, truncated, noSampleTable, tableOverflow, tooManyBoxes,
   firstTrackNotAudio, notAacLc, badSampleRate, badChannels, noAudioTrack, boxTooLarge, offsetOverflow,
-  sourceReadError, sourceShortRead, sourceSeekError  // CY-11a: file-backed table source failures
+  sourceReadError, sourceShortRead, sourceSeekError,  // CY-11a: file-backed table source failures
+  noMemory  // CY-10b2: the reader arena could not be acquired, or a vendor call outgrew it (sticky exhaustion flag)
 };
 inline const char* m4aStatusName(M4aStatus s) {
   static const char* n[] = {"ok", "bad_box_header", "too_deep", "stsd_too_large", "bad_stsd", "not_mp4a", "bad_stsz",
                             "too_many_samples", "bad_frame_size", "moov_after_mdat", "duplicate_track", "truncated",
                             "no_sample_table", "table_overflow", "too_many_boxes", "first_track_not_audio", "not_aac_lc",
                             "bad_sample_rate", "bad_channels", "no_audio_track", "box_too_large", "offset_overflow",
-                            "source_read_error", "source_short_read", "source_seek_error"};
+                            "source_read_error", "source_short_read", "source_seek_error", "no_memory"};
   return n[static_cast<uint8_t>(s)];
 }
 
 class M4aGuardedReader {
  public:
   using AdtsCallback = std::function<void(const uint8_t* adts, size_t size)>;
-  M4aCappedSizes& sizeTable() { return sizes; }
-  audio_tools::M4AAudioDemuxer& reader() { return demux; }  // test access only
+  M4aGuardedReader() = default;
+  M4aGuardedReader(const M4aGuardedReader&) = delete;
+  M4aGuardedReader& operator=(const M4aGuardedReader&) = delete;
+  ~M4aGuardedReader() { destroyVendor(); }  // vendor objects die under the hook, before the arena memory is released
 
-  // begin() starts a new track and is a full reset: the vendored demuxer and the size table are rebuilt in place (the vendored
-  // M4AAudioDemuxer::begin() alone does not make a used instance safe to reuse), the guard state is cleared, and the vendored
-  // function-static sample-size cache is primed (m4a_state_reset.h). A new instance per track is equivalent.
+  // Valid after a successful begin(): the vendored objects are constructed there, not at construction (CY-10b2).
+  M4aCappedSizes& sizeTable() { return *sizesPtr(); }
+  audio_tools::M4AAudioDemuxer& reader() { return *demuxPtr(); }  // test access only
+  const M4aArena& arenaState() const { return arena; }
+  size_t maxCallRequests() const { return callMaxRequests; }  // evidence: largest request count / byte total of one vendor call
+  size_t maxCallBytes() const { return callMaxBytes; }
+
+  // Arena memory source (default: new (std::nothrow)); nullptr selects the legacy mode in which the vendor allocates from the heap
+  // directly (unprotected; host baselines only). Only effective when the allocator-hook overlay is applied (CYDPOD_ALLOCATOR_HOOK).
+  // Call before begin(); it ends any running track. Sizes default to kM4aArenaMainBytes / kM4aArenaReserveBytes (tests shrink them).
+  void setArenaMemory(const M4aArenaMemory* m) { destroyVendor(); arena.close(); mem = m; }
+  void setArenaSizes(size_t mainBytes, size_t reserveBytes) { destroyVendor(); arena.close(); mainB = mainBytes; resB = reserveBytes; }
+  // Gives the arena memory back (the vendor objects are destroyed first). The next begin() acquires it again.
+  void end() { destroyVendor(); arena.close(); }
+
+  // begin() starts a new track and is a full reset: the vendored demuxer and the size table are destroyed and rebuilt (the vendored
+  // M4AAudioDemuxer::begin() alone does not make a used instance safe to reuse), the arena is reset as a whole, the guard state is
+  // cleared, and the vendored function-static sample-size cache is primed (m4a_state_reset.h). A new instance per track is equivalent.
+  // With the overlay, the first begin() makes the one fallible allocation (the arena); failure returns M4aStatus::noMemory and nothing
+  // else is constructed. The vendored objects are constructed only after the arena exists and the hook is installed.
   // With a source the sample-size table stays in the file (1 KiB window, m4a_file_sizes.h); the source must serve the same stream
-  // offsets that are fed to write() and stay valid until the next begin(). Without one the table is resident (<= kM4aResidentEntries).
-  void begin(AdtsCallback cb, M4aSeekableSource* source = nullptr) {
-#ifndef CYDPOD_NO_STATE_RESET  // test-only switch that restores the pre-CY-5 behaviour for before/after evidence
-    demux.~M4AAudioDemuxer(); sizes.~M4aCappedSizes();
-    new (&sizes) M4aCappedSizes; new (&demux) audio_tools::M4AAudioDemuxer;
-    m4aPrimeSampleSizeCache();
-#endif
-    sizes.source(source);
+  // offsets that are fed to write() and stay valid until the next begin(). Without one the table is resident (<= kM4aResidentEntries;
+  // <= kM4aArenaResidentEntries in arena mode).
+  M4aStatus begin(AdtsCallback cb, M4aSeekableSource* source = nullptr) {
     onFrame = cb; st = M4aStatus::ok; sc = Scan(); nz = 0; heldLen = 0;
+    bool fresh = !built;
+#ifndef CYDPOD_NO_STATE_RESET  // test-only switch that restores the pre-CY-5 behaviour for before/after evidence
+    destroyVendor(); fresh = true;
+#endif
+    if (fresh) {
+      if (arenaMode()) {
+        if (!arena.isOpen()) { if (!arena.open(mem, mainB, resB)) return st = M4aStatus::noMemory; }
+        else arena.reset();
+      }
+      Scope hook(*this);
+      arena.clearCallCounters();
+      new (sizesBuf) M4aCappedSizes; new (demuxBuf) audio_tools::M4AAudioDemuxer; built = true;
+      if (!vendorDone()) return abortBuild();
+#ifndef CYDPOD_NO_STATE_RESET
+      m4aPrimeSampleSizeCache();
+      if (!vendorDone()) return abortBuild();
+#endif
+    }
+    Scope hook(*this);
+    M4aCappedSizes& sizes = *sizesPtr(); audio_tools::M4AAudioDemuxer& demux = *demuxPtr();
+    if (arenaMode()) sizes.hardLimit(kM4aArenaResidentEntries);
+    sizes.source(source);
     demux.setSampleSizesBuffer(sizes);
     demux.setReference(this);  // setReference must precede setCallback
     demux.setCallback([](const audio_tools::M4ACommonDemuxer::Frame& f, void* r) {
@@ -51,6 +89,8 @@ class M4aGuardedReader {
       if (self->onFrame) self->onFrame(f.data, f.size);
     });
     demux.begin();
+    if (!vendorDone()) return abortBuild();
+    return st;
   }
   M4aStatus status() const { return st; }
   uint64_t offset() const { return sc.pos; }  // stream offset the guard had reached (for error reports)
@@ -63,28 +103,29 @@ class M4aGuardedReader {
   // reader skips it by size and never descends into attacker-controlled metadata.
   M4aStatus write(const uint8_t* d, size_t n) {
     if (st != M4aStatus::ok) return st;
-    nz = 0;
+    nz = 0; const uint64_t base = sc.pos;
     if (sc.zoneOpen) zones[nz++] = {0, 0, true, false};
     if (!scan(d, n)) return st;
     size_t c = 0;
     for (unsigned k = 0; k < nz; ++k) {
       Zone& z = zones[k];
       size_t e = z.end ? z.end : n;
-      if (!z.continuing) { if (z.start > c) demux.write(d + c, z.start - c); heldLen = 0; }
+      if (!z.continuing) { if (z.start > c && !feed(d + c, z.start - c, base + c)) return st; heldLen = 0; }
       memcpy(held + heldLen, d + (z.continuing ? 0 : z.start), e - (z.continuing ? 0 : z.start));
       heldLen += e - (z.continuing ? 0 : z.start);
       if (!z.end) { c = n; break; }
       if (z.rewrite) memcpy(held + 4, "free", 4);
-      demux.write(held, heldLen); heldLen = 0; c = e;
+      if (!vendorWrite(held, heldLen)) return st;
+      heldLen = 0; c = e;
     }
-    if (c < n) demux.write(d + c, n - c);
-    if (sizes.overflow) st = M4aStatus::tableOverflow;
-    else if (sizes.error != M4aSourceResult::ok) st = sourceStatus();
+    if (c < n && !feed(d + c, n - c, base + c)) return st;
+    if (sz().overflow) st = M4aStatus::tableOverflow;
+    else if (sz().error != M4aSourceResult::ok) st = sourceStatus();
     return st;
   }
   M4aStatus finish() {
     if (st != M4aStatus::ok) return st;
-    if (sizes.error != M4aSourceResult::ok) return st = sourceStatus();
+    if (sz().error != M4aSourceResult::ok) return st = sourceStatus();
     popLevels();
     bool mdatOpen = sc.mode == Mode::skip && sc.isMdat && !sc.depth;  // payload may legitimately end early
     if (!mdatOpen && (sc.mode != Mode::header || sc.hdrLen || sc.depth)) st = M4aStatus::truncated;
@@ -100,6 +141,7 @@ class M4aGuardedReader {
     uint64_t pos = 0, ends[kM4aMaxBoxDepth], remaining = 0, payload = 0;
     uint32_t word = 0;
     uint64_t zoneEnd = 0;
+    uint64_t payloadFrom = UINT64_MAX, payloadTo = 0;  // top-level mdat payload after its first byte (delivered with the header), sliceable
     bool zoneOpen = false, mdatSeen = false, isMdat = false, openedMoov = false, moovDone = false, stsdSeen = false, stszSeen = false;
     uint8_t stsd[kM4aMaxStsdBytes];
   };
@@ -107,15 +149,82 @@ class M4aGuardedReader {
   static constexpr unsigned kZones = 12;  // stsd, stsz, mdat, one pending header, plus neutralized boxes
   Zone zones[kZones]; unsigned nz = 0;
   uint8_t held[kM4aMaxStsdBytes + 16]; size_t heldLen = 0;
-  audio_tools::M4AAudioDemuxer demux;
-  M4aCappedSizes sizes;
+  // Vendored objects live in raw storage and are constructed in begin(), after the arena exists and the hook is installed.
+  alignas(audio_tools::M4AAudioDemuxer) unsigned char demuxBuf[sizeof(audio_tools::M4AAudioDemuxer)];
+  alignas(M4aCappedSizes) unsigned char sizesBuf[sizeof(M4aCappedSizes)];
+  bool built = false;
+  M4aArena arena; const M4aArenaMemory* mem = m4aNothrowMemory(); size_t mainB = kM4aArenaMainBytes, resB = kM4aArenaReserveBytes;
+#ifdef CYDPOD_ALLOCATOR_HOOK
+  audio_tools::AllocatorHook hook{M4aArena::hookAllocate, M4aArena::hookRelease, &arena};
+#endif
+  size_t callMaxRequests = 0, callMaxBytes = 0;
+
   AdtsCallback onFrame;
   Scan sc;
   M4aStatus st = M4aStatus::ok;
 
+  M4aCappedSizes* sizesPtr() { return reinterpret_cast<M4aCappedSizes*>(sizesBuf); }
+  audio_tools::M4AAudioDemuxer* demuxPtr() { return reinterpret_cast<audio_tools::M4AAudioDemuxer*>(demuxBuf); }
+  M4aCappedSizes& sz() { return *sizesPtr(); }
+  const M4aCappedSizes& sz() const { return *reinterpret_cast<const M4aCappedSizes*>(sizesBuf); }
+#ifdef CYDPOD_ALLOCATOR_HOOK
+  bool arenaMode() const { return mem != nullptr; }
+#else
+  bool arenaMode() const { return false; }
+#endif
+
+  // Installs this reader's hook for exactly one call into the vendored code and restores the previous slot value afterwards. The
+  // slot is a plain global written only here, i.e. only on the task that owns the reader (the producer task); other tasks never run
+  // the vendored Allocator (they use malloc / heap_caps directly), so nothing else can be routed into the arena. Source and frame
+  // callbacks run inside the scope and must not allocate through audio_tools containers.
+  struct Scope {
+#ifdef CYDPOD_ALLOCATOR_HOOK
+    audio_tools::AllocatorHook* prev;
+    explicit Scope(M4aGuardedReader& r) : prev(audio_tools::allocatorHook()) { if (r.arenaMode()) audio_tools::setAllocatorHook(&r.hook); }
+    ~Scope() { audio_tools::setAllocatorHook(prev); }
+#else
+    explicit Scope(M4aGuardedReader&) {}
+#endif
+  };
+  void destroyVendor() {
+    if (!built) return;
+    Scope hook(*this);
+    demuxPtr()->~M4AAudioDemuxer(); sizesPtr()->~M4aCappedSizes();
+    built = false;
+  }
+  // Checked after EVERY call into the vendored code. Exhaustion is sticky; the vendor state after it is junk, so the track is over.
+  bool vendorDone() {
+    if (!arenaMode()) return true;
+    const M4aArena::Stats& s = arena.stat();
+    if (s.callRequests > callMaxRequests) callMaxRequests = s.callRequests;
+    if (s.callBytes > callMaxBytes) callMaxBytes = s.callBytes;
+    arena.clearCallCounters();
+    if (arena.exhausted()) { st = M4aStatus::noMemory; return false; }
+    return true;
+  }
+  M4aStatus abortBuild() { destroyVendor(); return st; }
+  bool vendorWrite(const uint8_t* p, size_t n) {
+    { Scope hook(*this); demuxPtr()->write(p, n); }
+    return vendorDone();
+  }
+  // Hands [p, p+len) (stream offset `pos`) to the vendor. Frame extraction is the only repeating allocator in the vendor (the
+  // frame buffer and ADTS scratch grow to each larger frame), so the top-level mdat payload is delivered in kM4aVendorSliceBytes
+  // slices with an exhaustion check between them; that bounds the requests of one call (see docs/research/cy10b-alloc-failure.md).
+  // Everything else (whole headers/zones, other boxes) is delivered in one piece as before.
+  bool feed(const uint8_t* p, size_t len, uint64_t pos) {
+    while (len) {
+      size_t t = len;
+      if (pos < sc.payloadFrom) t = (size_t)std::min<uint64_t>(t, sc.payloadFrom - pos);
+      else if (pos < sc.payloadTo) t = (size_t)std::min<uint64_t>(std::min<size_t>(t, kM4aVendorSliceBytes), sc.payloadTo - pos);
+      if (!vendorWrite(p, t)) return false;
+      p += t; pos += t; len -= t;
+    }
+    return true;
+  }
+
   static uint32_t u32(const uint8_t* p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
   M4aStatus sourceStatus() const {
-    switch (sizes.error) {
+    switch (sz().error) {
       case M4aSourceResult::shortRead: return M4aStatus::sourceShortRead;
       case M4aSourceResult::seekError: return M4aStatus::sourceSeekError;
       case M4aSourceResult::badEntry: return M4aStatus::badFrameSize;  // an entry the scan accepted now reads back out of range
@@ -184,13 +293,14 @@ class M4aGuardedReader {
       if (sc.payload < 12) return fail(M4aStatus::badStsz);
       if (sc.stszSeen) return fail(M4aStatus::duplicateTrack);
       sc.stszSeen = true; sc.mode = Mode::stsz; need += 13;  // header words + first entry
-      sizes.tableOffset(sc.pos + 12);  // first raw entry; version/flags, sample size and count precede it (hl == 8 here)
+      sz().tableOffset(sc.pos + 12);  // first raw entry; version/flags, sample size and count precede it (hl == 8 here)
     } else if (mdat) {
       if (sc.depth == 0 && !sc.moovDone) return fail(M4aStatus::moovAfterMdat);  // the reader needs the sample tables first; moov-last is not supported
       if (sc.depth == 0 && !sc.stsdSeen) return fail(M4aStatus::noAudioTrack);
       if (sc.depth == 0 && !sc.stszSeen) return fail(M4aStatus::noSampleTable);
       if (sc.mdatSeen) return fail(M4aStatus::duplicateTrack);
       sc.mdatSeen = true; need += sc.payload ? 1 : 0;  // the first payload byte carries the size to the reader
+      if (sc.depth == 0) { sc.payloadFrom = sc.pos + 1; sc.payloadTo = open ? UINT64_MAX : sc.pos + sc.payload; }
     }
     if (!sc.remaining) sc.mode = Mode::header;
     return holdHeader(idx, hl, start, need, rewrite);

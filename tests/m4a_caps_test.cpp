@@ -8,6 +8,13 @@
 #include <vector>
 using namespace cydpod;
 using Bytes = std::vector<uint8_t>;
+#ifdef CYDPOD_ARENA_RUN  // build_m4a_arena.sh: same cases through the arena; peak = peak live arena bytes, held to the documented bound
+#define PEAK_LIMIT kM4aArenaLiveBoundBytes
+#define REQ_LIMIT kM4aArenaLiveBoundBytes
+#else
+#define PEAK_LIMIT kM4aHeapBudgetBytes
+#define REQ_LIMIT kM4aTableBytes
+#endif
 
 extern "C" {
 void* __real_malloc(size_t); void* __real_calloc(size_t, size_t); void* __real_realloc(void*, size_t); void __real_free(void*);
@@ -62,6 +69,9 @@ static Result runInChild(const Bytes& in, size_t slice, bool finish) {
     st = M4aStatus::ok;
     for (size_t i = 0; i < in.size() && st == M4aStatus::ok; i += slice) st = r->write(in.data() + i, std::min(slice, in.size() - i));
     if (st == M4aStatus::ok && finish) st = r->finish();
+    #ifdef CYDPOD_ARENA_RUN
+    g_peak = r->arenaState().stat().peakLive; g_maxReq = r->arenaState().stat().maxRequest;
+    #endif
     delete r;
   }
   return {st, frames, g_peak, g_maxReq};
@@ -79,7 +89,7 @@ static void expect(const char* name, const Bytes& in, M4aStatus want, size_t wan
   if (const char* only = std::getenv("CASE")) if (!std::strstr(name, only)) return;  // CASE=substring runs one case
   for (size_t slice : {(size_t)7, (size_t)1024, in.size() ? in.size() : 1}) {
     Result r = run(in, slice, finish);
-    bool ok = r.st == want && r.peak <= kM4aHeapBudgetBytes && r.maxReq <= kM4aTableBytes && (want != M4aStatus::ok || r.frames == wantFrames);
+    bool ok = r.st == want && r.peak <= PEAK_LIMIT && r.maxReq <= REQ_LIMIT && (want != M4aStatus::ok || r.frames == wantFrames);
     if (!ok || std::getenv("VERBOSE")) std::fprintf(stderr, "%-4s %-28s slice=%-7zu -> %-17s frames=%zu peak=%zu maxReq=%zu\n", ok ? "ok" : "FAIL", name, slice, m4aStatusName(r.st), r.frames, r.peak, r.maxReq);
     failures += !ok;
   }
@@ -90,7 +100,9 @@ int main() {
   // CY-11a: without a source the table is resident and capped at kM4aResidentEntries (tableOverflow above it); the
   // file-backed cap kM4aMaxTableEntries (tooManySamples above it) is exercised in m4a_filetable_test.
   { std::vector<uint32_t> e(kM4aResidentEntries, 8);
+#ifndef CYDPOD_ARENA_RUN  // arena mode caps the resident table at kM4aArenaResidentEntries (m4a_arena_test covers it)
     expect("resident table exactly at cap", cat({ftyp(), moov(stsd(), stsz(0, kM4aResidentEntries, e)), box("mdat", Bytes())}), M4aStatus::ok, 0);
+#endif
     e.push_back(8);
     expect("resident table cap+1", cat({ftyp(), moov(stsd(), stsz(0, kM4aResidentEntries + 1, e)), box("mdat", Bytes())}), M4aStatus::tableOverflow); }
   expect("file table count cap+1", cat({ftyp(), moov(stsd(), stsz(0, kM4aMaxTableEntries + 1, {100}))}), M4aStatus::tooManySamples);

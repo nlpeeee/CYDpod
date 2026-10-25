@@ -9,6 +9,13 @@
 #include <vector>
 using namespace cydpod;
 using Bytes = std::vector<uint8_t>;
+#ifdef CYDPOD_ARENA_RUN  // build_m4a_arena.sh: same cases through the arena; peak = peak live arena bytes, held to the documented bound
+#define PEAK_LIMIT kM4aArenaLiveBoundBytes
+#define REQ_LIMIT kM4aArenaLiveBoundBytes
+#else
+#define PEAK_LIMIT kM4aHeapBudgetBytes
+#define REQ_LIMIT kM4aTableBytes
+#endif
 
 extern "C" {
 void* __real_malloc(size_t); void* __real_calloc(size_t, size_t); void* __real_realloc(void*, size_t); void __real_free(void*);
@@ -86,6 +93,9 @@ static Result runInChild(const Bytes& in, size_t slice) {
     r->begin([&](const uint8_t*, size_t) { ++frames; });
     for (size_t i = 0; i < in.size() && st == M4aStatus::ok; i += slice) st = r->write(in.data() + i, std::min(slice, in.size() - i));
     if (st == M4aStatus::ok) st = r->finish();
+    #ifdef CYDPOD_ARENA_RUN
+    g_peak = r->arenaState().stat().peakLive; g_maxReq = r->arenaState().stat().maxRequest;
+    #endif
     delete r; }
   return {st, frames, g_peak, g_maxReq};
 }
@@ -102,7 +112,7 @@ static int failures, cases;
 static void expect(const char* name, const Bytes& in, M4aStatus want) {
   for (size_t slice : {(size_t)7, (size_t)1024, in.size()}) {
     Result r = run(in, slice);
-    bool ok = r.st == want && r.peak <= kM4aHeapBudgetBytes && r.maxReq <= kM4aTableBytes;
+    bool ok = r.st == want && r.peak <= PEAK_LIMIT && r.maxReq <= REQ_LIMIT;
     ok = ok && (want == M4aStatus::ok ? r.frames > 0 : r.frames == 0);  // a rejected input delivers no audio
     if (slice == 1024 || !ok) std::fprintf(stderr, "%-4s %-46s expected=%-17s actual=%-17s frames=%zu peak=%zu slice=%zu\n", ok ? "ok" : "FAIL", name, m4aStatusName(want), m4aStatusName(r.st), r.frames, r.peak, slice);
     failures += !ok; ++cases;

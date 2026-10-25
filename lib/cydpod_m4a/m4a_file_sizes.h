@@ -27,10 +27,11 @@ class M4aCappedSizes : public audio_tools::SingleBuffer<uint16_t> {
   void source(M4aSeekableSource* s) { src = s; }
   void tableOffset(uint64_t o) { offset = o; }  // stream offset of the first raw 32-bit entry
   void residentLimit(size_t n) { resLimit = n; }  // host comparisons only
+  void hardLimit(size_t n) { hardCap = n; }  // arena mode: the resident table must fit the proven arena bound; residentLimit() cannot exceed it
   bool fileBacked() const { return src != nullptr; }
 
   bool resize(size_t n) override {
-    if (n > (src ? kM4aMaxTableEntries : resLimit)) { overflow = true; return false; }
+    if (n > (src ? kM4aMaxTableEntries : std::min(resLimit, hardCap))) { overflow = true; return false; }
     count = n; index = valid = 0;
     return src ? true : SingleBuffer::resize(n);
   }
@@ -69,7 +70,7 @@ class M4aCappedSizes : public audio_tools::SingleBuffer<uint16_t> {
  private:
   M4aSeekableSource* src = nullptr;
   uint64_t offset = 0;
-  size_t resLimit = kM4aResidentEntries, count = 0, index = 0, start = 0, valid = 0;
+  size_t hardCap = SIZE_MAX, resLimit = kM4aResidentEntries, count = 0, index = 0, start = 0, valid = 0;
   uint8_t window[kM4aWindowBytes];
 };
 }  // namespace cydpod

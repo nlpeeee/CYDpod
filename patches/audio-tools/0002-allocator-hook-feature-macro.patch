@@ -1,0 +1,10 @@
+--- a/src/AudioTools/CoreAudio/AudioBasic/Collections/Allocator.h
++++ b/src/AudioTools/CoreAudio/AudioBasic/Collections/Allocator.h
+@@ -37,5 +37,7 @@
+ }
+ inline void setAllocatorHook(AllocatorHook* hook) { allocatorHookSlot() = hook; }
+ inline AllocatorHook* allocatorHook() { return allocatorHookSlot(); }
++/// Feature marker so CYDpod code can also build against the pristine (hook-less) tree.
++#define CYDPOD_ALLOCATOR_HOOK 1
+ 
+ /**

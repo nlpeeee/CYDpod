@@ -1,11 +1,12 @@
-// CY-10b1: with the allocator-hook overlay (patches/audio-tools/0001) every allocation made while constructing, running and
-// destroying an M4aGuardedReader goes through the hook. A global operator new / malloc-family counter (link with
-// -Wl,--wrap=malloc,calloc,realloc,free) sees what bypasses it; the hook's own backing store calls __real_calloc, so the
-// global counters measure bypass only. Compared with a hook-less run, whose global count must equal the hooked run's hook count.
+// CY-10b1/b2: with the allocator-hook overlay (patches/audio-tools/0001+0002) every allocation made while constructing, running and
+// destroying an M4aGuardedReader goes through the hook -- since CY-10b2 the reader installs its own arena hook for each vendor call.
+// A global operator new / malloc-family counter (link with -Wl,--wrap=malloc,calloc,realloc,free) sees what bypasses it. The hook-less
+// (legacy heap) run is the baseline: its global count must equal the arena's allocation count, and the arena run must show none.
 #include <Arduino.h>
 #include <new>
 #include <vector>
 #include "../lib/cydpod_m4a/m4a_guarded_reader.h"
+#include "m4a_file_source.h"
 using namespace cydpod;
 
 extern "C" {
@@ -20,30 +21,31 @@ void* operator new(size_t n) { void* p = std::malloc(n); if (!p) std::abort(); r
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p, size_t) noexcept { std::free(p); }
 
-struct Counts { size_t allocs = 0, frees = 0, bytes = 0, live = 0; };
-static void* hookAlloc(size_t n, void* ctx) {
-  auto* c = static_cast<Counts*>(ctx); ++c->allocs; c->bytes += n; ++c->live; return __real_calloc(1, n);
-}
-static void hookFree(void* p, void* ctx) { auto* c = static_cast<Counts*>(ctx); ++c->frees; --c->live; __real_free(p); }
+// The arena's one backing block is static storage here, so the arena run makes no global allocation of its own.
+alignas(16) static unsigned char g_arenaMem[kM4aArenaMainBytes + kM4aArenaReserveBytes];
+static const M4aArenaMemory g_staticMem{[](size_t n, void*) -> void* { return n <= sizeof g_arenaMem ? g_arenaMem : nullptr; }, [](void*, void*) {}, nullptr};
 
-struct Run { size_t frames = 0, adtsBytes = 0, global = 0, globalFree = 0; Counts hook; M4aStatus st = M4aStatus::ok; };
+struct Run { size_t frames = 0, adtsBytes = 0, global = 0, globalFree = 0, allocs = 0, frees = 0, live = 0, bytesPeak = 0; M4aStatus st = M4aStatus::ok; bool exhausted = false; };
 alignas(M4aGuardedReader) static unsigned char g_storage[sizeof(M4aGuardedReader)];  // constructed in place: no operator new for the object
 
-static Run run(const std::vector<uint8_t>& file, bool hooked) {
+static Run run(const std::vector<uint8_t>& file, bool arena) {
   static Run out; out = Run();
-  audio_tools::AllocatorHook hook{hookAlloc, hookFree, &out.hook};
-  if (hooked) audio_tools::setAllocatorHook(&hook);
+  MemSource src(file);
   g_global = g_globalFree = 0; g_count = true;
   auto* r = new (g_storage) M4aGuardedReader;
-  r->begin([](const uint8_t*, size_t) {});  // begin() rebuilds the demuxer in place; the second call covers that path too
+  r->setArenaMemory(arena ? &g_staticMem : nullptr);
+  r->begin([](const uint8_t*, size_t) {}, &src);  // begin() rebuilds the demuxer in place; the second call covers that path too
   static Run* cur; cur = &out;
-  r->begin([](const uint8_t*, size_t n) { ++cur->frames; cur->adtsBytes += n; });
+  r->begin([](const uint8_t*, size_t n) { ++cur->frames; cur->adtsBytes += n; }, &src);
   for (size_t i = 0; i < file.size() && out.st == M4aStatus::ok; i += 1024)
     out.st = r->write(file.data() + i, std::min<size_t>(1024, file.size() - i));
   if (out.st == M4aStatus::ok) out.st = r->finish();
+  const M4aArena::Stats s = r->arenaState().stat();
+  r->end();  // vendor objects destroyed under the hook, then the arena released
+  const M4aArena::Stats e = r->arenaState().stat();
+  out.allocs = e.allocs; out.frees = e.frees; out.live = e.live; out.bytesPeak = s.peakLive; out.exhausted = r->arenaState().exhausted();
   r->~M4aGuardedReader();
   g_count = false; out.global = g_global; out.globalFree = g_globalFree;
-  audio_tools::setAllocatorHook(nullptr);
   return out;
 }
 
@@ -51,15 +53,14 @@ int main() {
   std::vector<uint8_t> file;
   FILE* f = std::fopen("fixtures/stereo-faststart.m4a", "rb"); if (!f) { std::fprintf(stderr, "no fixture\n"); return 2; }
   uint8_t b[4096]; size_t n; while ((n = std::fread(b, 1, sizeof b, f)) > 0) file.insert(file.end(), b, b + n); std::fclose(f);
-  Run plain = run(file, false), hooked = run(file, true);
-  std::printf("unhooked: status=%s frames=%zu adts=%zu global allocs=%zu frees=%zu\n", m4aStatusName(plain.st), plain.frames,
+  Run plain = run(file, false), arena = run(file, true);
+  std::printf("heap (no hook): status=%s frames=%zu adts=%zu global allocs=%zu frees=%zu\n", m4aStatusName(plain.st), plain.frames,
               plain.adtsBytes, plain.global, plain.globalFree);
-  std::printf("hooked:   status=%s frames=%zu adts=%zu hook allocs=%zu frees=%zu live=%zu bytes=%zu; bypassing global allocs=%zu frees=%zu\n",
-              m4aStatusName(hooked.st), hooked.frames, hooked.adtsBytes, hooked.hook.allocs, hooked.hook.frees, hooked.hook.live,
-              hooked.hook.bytes, hooked.global, hooked.globalFree);
-  bool ok = plain.st == M4aStatus::ok && hooked.st == M4aStatus::ok && plain.frames > 0 && hooked.frames == plain.frames &&
-            hooked.adtsBytes == plain.adtsBytes && hooked.hook.allocs > 0 && hooked.global == 0 && hooked.globalFree == 0 &&
-            hooked.hook.allocs == plain.global && hooked.hook.frees == plain.globalFree && hooked.hook.live == 0;
-  std::printf("%s\n", ok ? "PASS every reader allocation went through the hook" : "FAIL");
+  std::printf("arena:          status=%s frames=%zu adts=%zu arena allocs=%zu frees=%zu live=%zu peak live=%zu; bypassing global allocs=%zu frees=%zu\n",
+              m4aStatusName(arena.st), arena.frames, arena.adtsBytes, arena.allocs, arena.frees, arena.live, arena.bytesPeak, arena.global, arena.globalFree);
+  bool ok = plain.st == M4aStatus::ok && arena.st == M4aStatus::ok && plain.frames > 0 && arena.frames == plain.frames &&
+            arena.adtsBytes == plain.adtsBytes && arena.allocs > 0 && arena.global == 0 && arena.globalFree == 0 && !arena.exhausted &&
+            arena.allocs == plain.global && arena.frees == plain.globalFree && arena.live == 0;
+  std::printf("%s\n", ok ? "PASS every reader allocation went through the arena hook" : "FAIL");
   return ok ? 0 : 1;
 }

@@ -8,13 +8,15 @@
 
 namespace cydpod {
 enum class M4aStatus : uint8_t {
-  ok, badBoxHeader, tooDeep, stsdTooLarge, badStsd, unsupportedCodec, badStsz, tooManySamples, badFrameSize,
-  mdatBeforeMoov, duplicateTrack, truncated, noSampleTable, tableOverflow, tooManyBoxes
+  ok, badBoxHeader, tooDeep, stsdTooLarge, badStsd, notMp4a, badStsz, tooManySamples, badFrameSize,
+  moovAfterMdat, duplicateTrack, truncated, noSampleTable, tableOverflow, tooManyBoxes,
+  firstTrackNotAudio, notAacLc, badSampleRate, badChannels, noAudioTrack
 };
 inline const char* m4aStatusName(M4aStatus s) {
-  static const char* n[] = {"ok", "bad_box_header", "too_deep", "stsd_too_large", "bad_stsd", "unsupported_codec", "bad_stsz",
-                            "too_many_samples", "bad_frame_size", "mdat_before_moov", "duplicate_track", "truncated",
-                            "no_sample_table", "table_overflow", "too_many_boxes"};
+  static const char* n[] = {"ok", "bad_box_header", "too_deep", "stsd_too_large", "bad_stsd", "not_mp4a", "bad_stsz",
+                            "too_many_samples", "bad_frame_size", "moov_after_mdat", "duplicate_track", "truncated",
+                            "no_sample_table", "table_overflow", "too_many_boxes", "first_track_not_audio", "not_aac_lc",
+                            "bad_sample_rate", "bad_channels", "no_audio_track"};
   return n[static_cast<uint8_t>(s)];
 }
 
@@ -81,7 +83,7 @@ class M4aGuardedReader {
     popLevels();
     bool mdatOpen = sc.mode == Mode::skip && sc.isMdat && !sc.depth;  // payload may legitimately end early
     if (!mdatOpen && (sc.mode != Mode::header || sc.hdrLen || sc.depth)) st = M4aStatus::truncated;
-    else if (!sc.stszSeen) st = M4aStatus::noSampleTable;
+    else if (!sc.stszSeen) st = sc.moovDone && !sc.stsdSeen ? M4aStatus::noAudioTrack : M4aStatus::noSampleTable;
     return st;
   }
 
@@ -153,7 +155,7 @@ class M4aGuardedReader {
       rewrite = true;  // neutralized: the reader sees a "free" box of the same size
     } else if (is(h + 4, "stsd")) {
       if (sc.payload > kM4aMaxStsdBytes) return fail(M4aStatus::stsdTooLarge);
-      if (sc.payload < 52) return fail(M4aStatus::badStsd);
+      if (sc.payload < 16) return fail(M4aStatus::badStsd);  // version/flags, count, first entry header; the rest is checked in onStsdDone
       if (sc.stsdSeen) return fail(M4aStatus::duplicateTrack);
       sc.stsdSeen = true; sc.mode = Mode::stsd; need += sc.payload;
     } else if (is(h + 4, "stsz")) {
@@ -161,7 +163,9 @@ class M4aGuardedReader {
       if (sc.stszSeen) return fail(M4aStatus::duplicateTrack);
       sc.stszSeen = true; sc.mode = Mode::stsz; need += 13;  // header words + first entry
     } else if (mdat) {
-      if (sc.depth == 0 && !(sc.moovDone && sc.stsdSeen && sc.stszSeen)) return fail(M4aStatus::mdatBeforeMoov);
+      if (sc.depth == 0 && !sc.moovDone) return fail(M4aStatus::moovAfterMdat);  // the reader needs the sample tables first; moov-last is not supported
+      if (sc.depth == 0 && !sc.stsdSeen) return fail(M4aStatus::noAudioTrack);
+      if (sc.depth == 0 && !sc.stszSeen) return fail(M4aStatus::noSampleTable);
       if (sc.mdatSeen) return fail(M4aStatus::duplicateTrack);
       sc.mdatSeen = true; need += sc.payload ? 1 : 0;  // the first payload byte carries the size to the reader
     }
@@ -185,16 +189,35 @@ class M4aGuardedReader {
     if (idx >= len) return true;
     return idx + 8 <= len && !(isalnum(str[idx + 4]) && isalnum(str[idx + 5]) && isalnum(str[idx + 6]) && isalnum(str[idx + 7]));
   }
+  static bool isVideoEntry(const uint8_t* t) {
+    static const char* v[] = {"avc1", "avc3", "hvc1", "hev1", "mp4v", "vp08", "vp09", "av01", "encv", "s263", "jpeg", "dvh1"};
+    for (const char* x : v) if (is(t, x)) return true;
+    return false;
+  }
+  // objectTypeIndication of the esds DecoderConfigDescriptor, found with the same walk as ESDSParser (which skips it); 0 if absent.
+  static uint8_t esdsObjectType(const uint8_t* d, size_t n) {
+    const uint8_t* p = d; const uint8_t* end = d + n;
+    auto skipLen = [&] { for (int i = 0; i < 4 && p < end; ++i) if (!(*p++ & 0x80)) break; };
+    p += 4;
+    if (p >= end || *p++ != 0x03) return 0;
+    skipLen(); p += 3;
+    if (p >= end || *p++ != 0x04) return 0;
+    skipLen();
+    return p < end ? *p : 0;
+  }
   bool onStsdDone() {
     const uint8_t* s = sc.stsd; uint64_t p = sc.payload;
-    if (p < 52 || u32(s + 4) != 1 || u32(s + 8) != p - 8) return fail(M4aStatus::badStsd);
+    if (p < 16 || u32(s + 4) != 1 || u32(s + 8) != p - 8) return fail(M4aStatus::badStsd);
+    if (!is(s + 12, "mp4a")) return fail(isVideoEntry(s + 12) ? M4aStatus::firstTrackNotAudio : M4aStatus::notMp4a);
+    if (p < 52) return fail(M4aStatus::badStsd);
     uint32_t esdsSize = u32(s + 44);
     if (esdsSize < 16 || esdsSize > p - 44 || !is(s + 48, "esds")) return fail(M4aStatus::badStsd);
-    if (!is(s + 12, "mp4a")) return fail(M4aStatus::unsupportedCodec);
     if (!probeEndsWalk(s + 8, p - 8) || !probeEndsWalk(s + 44, p - 44)) return fail(M4aStatus::badStsd);
     audio_tools::M4ACommonDemuxer::ESDSParser e;
     if (!e.parse(s + 52, esdsSize - 8)) return fail(M4aStatus::badStsd);
-    if (e.audioObjectType != 2 || e.samplingRateIndex != 4 || e.channelConfiguration != 2) return fail(M4aStatus::unsupportedCodec);
+    if (esdsObjectType(s + 52, esdsSize - 8) != 0x40 || e.audioObjectType != 2) return fail(M4aStatus::notAacLc);  // HE-AAC (5/29), Main (1), MPEG audio (0x6B) ...
+    if (e.samplingRateIndex != 4) return fail(M4aStatus::badSampleRate);
+    if (e.channelConfiguration != 2) return fail(M4aStatus::badChannels);
     return true;
   }
 

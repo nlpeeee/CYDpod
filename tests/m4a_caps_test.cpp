@@ -108,16 +108,16 @@ int main() {
     expect("stsd 1 GiB declared", cat({ftyp(), box("moov", box("stsd", Bytes(64, 0), 0x40000000))}), M4aStatus::badBoxHeader);
     Bytes sd; put32(sd, 0x20000000); sd.insert(sd.end(), {'s', 't', 's', 'd'});
     expect("stsd 512 MiB top-level", cat({ftyp(), sd}), M4aStatus::stsdTooLarge); }
-  expect("stsd not mp4a (alac)", cat({ftyp(), moov(stsd("alac"), stsz(0, 1, {100}))}), M4aStatus::unsupportedCodec);
+  expect("stsd not mp4a (alac)", cat({ftyp(), moov(stsd("alac"), stsz(0, 1, {100}))}), M4aStatus::notMp4a);
   expect("stsd + btrt child (real files)", cat({ftyp(), moov(stsd("mp4a", 4, box("btrt", Bytes(12, 0))), stsz(0, 4, {100, 100, 100, 100})), box("mdat", frames(4, 100))}), M4aStatus::ok, 4);
   expect("stsd tail looks like size-8 box", cat({ftyp(), moov(stsd("mp4a", 4, Bytes{0, 0, 0, 8, 65, 65, 65, 65}), stsz(0, 1, {100}))}), M4aStatus::badStsd);
-  expect("stsd 48 kHz", cat({ftyp(), moov(stsd("mp4a", 3), stsz(0, 1, {100}))}), M4aStatus::unsupportedCodec);
+  expect("stsd 48 kHz", cat({ftyp(), moov(stsd("mp4a", 3), stsz(0, 1, {100}))}), M4aStatus::badSampleRate);
   expect("stsd truncated entry", cat({ftyp(), box("moov", box("stsd", Bytes(20, 0)))}), M4aStatus::badStsd);
   expect("box size 4 (< header)", cat({ftyp(), Bytes{0, 0, 0, 4, 'f', 'r', 'e', 'e'}}), M4aStatus::badBoxHeader);
   expect("non-alnum box type (neutralized)", cat({ftyp(), Bytes{0, 0, 0, 16, 'a', 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0}}), M4aStatus::noSampleTable);
   expect("child larger than parent", cat({ftyp(), box("moov", box("free", Bytes(8, 0), 100))}), M4aStatus::badBoxHeader);
   expect("largesize on non-mdat", cat({ftyp(), Bytes{0, 0, 0, 1, 'f', 'r', 'e', 'e', 0, 0, 0, 0, 0, 0, 0, 16}}), M4aStatus::badBoxHeader);
-  expect("mdat before moov", cat({ftyp(), box("mdat", frames(2, 100)), moov(stsd(), stsz(0, 2, {100, 100}))}), M4aStatus::mdatBeforeMoov);
+  expect("mdat before moov", cat({ftyp(), box("mdat", frames(2, 100)), moov(stsd(), stsz(0, 2, {100, 100}))}), M4aStatus::moovAfterMdat);
   { Bytes n; for (int i = 0; i < 20000; ++i) { put32(n, 8 * (20000 - i)); n.insert(n.end(), {'m', 'o', 'o', 'v'}); }
     expect("20000 nested moov", n, M4aStatus::tooDeep); }
   { Bytes n = box("free", Bytes()); for (int i = 0; i < kM4aMaxBoxDepth + 1; ++i) n = box(i % 2 ? "mdia" : "trak", n);

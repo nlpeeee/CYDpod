@@ -56,10 +56,10 @@ Error returned / peak live heap / largest single request (whole-buffer slicing; 
 | fixed-size stsz (0xFFFFFFFF, 2,041) | bad_stsz (unsupported) | 9,160 | 3,672 |
 | stsd box size 4 GiB−1 / 1 GiB / 512 MiB | bad_box_header / bad_box_header / stsd_too_large | 9,160 | 3,672 |
 | stsd payload cap+1 | stsd_too_large | 9,160 | 3,672 |
-| stsd alac / 48 kHz | unsupported_codec | 9,160 | 3,672 |
+| stsd alac / 48 kHz | not_mp4a / bad_sample_rate (CY-4) | 9,160 | 3,672 |
 | stsd truncated entry / tail that would loop the reader | bad_stsd | 9,160 | 3,672 |
 | box size 4, child larger than parent, largesize on non-mdat | bad_box_header | 9,160 | 3,672 |
-| mdat before moov (moov-last) | mdat_before_moov | 9,160 | 3,672 |
+| mdat before moov (moov-last) | moov_after_mdat (CY-4) | 9,160 | 3,672 |
 | 20,000 nested moov / depth cap+1 | too_deep | 9,160 | 3,672 |
 | second stsz | duplicate_track | 9,160 | 3,672 |
 | truncated in trak header / in stsz table | truncated | 9,704 | 3,672 |

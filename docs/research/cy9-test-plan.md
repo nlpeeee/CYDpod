@@ -29,7 +29,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Restore verification failed.' }
 
 ## 2. Flash and verify the probe
 
-Check `.tools/logs/build-results.json`: CY-9c corrected aac-probe must be 1,222,880 bytes, SHA256 `480441396eb43594b6a0a25760a081b81080cd3c803a11a172de961b7037a79b`; confirm the actual `.ino.bin` hash too. Locked FQBN is `esp32:esp32:esp32:PartitionScheme=min_spiffs,PSRAM=disabled,FlashSize=4M`. Offsets/flash settings below come from `.tools/build/aac-probe/flash_args`; boot_app0 is in the build directory, other binaries in images. No erase-all command is needed. NVS remains but OTA selection at 0xe000 is overwritten; full backup is the recovery authority.
+Check `.tools/logs/build-results.json`: final CY-10c aac-probe must be 1,223,712 bytes, SHA256 `0e0f02ceb782ef9e958dc34f60e9dd0de7724c206320eb3924f9094a9b097aff`; confirm the actual `.ino.bin` hash too. Static RAM is 61,536 bytes; see [CY-10c integrated verification](cy10c-firmware-fixes.md) for the comparison with CY-9c and CY-10a, review dispositions and remaining R2 allocation work. This offline identity check does not authorise a hardware session. Locked FQBN is `esp32:esp32:esp32:PartitionScheme=min_spiffs,PSRAM=disabled,FlashSize=4M`. Offsets/flash settings below come from `.tools/build/aac-probe/flash_args`; boot_app0 is in the build directory, other binaries in images. No erase-all command is needed. NVS remains but OTA selection at 0xe000 is overwritten; full backup is the recovery authority.
 
 ```powershell
 $flashFiles = @('0x1000','.tools/images/aac-probe/cydpod_probe.ino.bootloader.bin',

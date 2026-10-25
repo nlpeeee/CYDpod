@@ -92,10 +92,10 @@ Verified 2026-10-25 on both `powershell -NoProfile -File tools/cyd_probe_session
 
 ## CY-11c: what hardware qualification checks (from CY-11b)
 
-Needs a connected Bluetooth state and `.m4a` files; hardware access is a separate authorised chunk. Admission currently rejects at the CY-12a state (45,488 free after open vs `need=49,648`, `docs/research/cy11b-admission.md`), so first decide the 4,160 B shortfall: shrink resident static/stack memory with evidence, or accept a measured lower margin. Then check:
+Needs a connected Bluetooth state and `.m4a` files; hardware access is a separate authorised chunk. Since CY-13a the margin is a provisional 2,048 B (`need=41,456` vs 45,488 free after open at the CY-12a state; `docs/research/cy13a-playable-build.md`), so tracks are admitted; the true playback floor is unmeasured and this test must measure it. Then check:
 
 - `ERR m4a low_memory heap=.. largest=.. need=.. need_largest=..` appears only when heap < need, never on an admitted track.
-- `TRACK ev=live` heap/largest versus free heap after open: consumed bytes against the modelled 38,640 (decoder 20,680 + reader live + feed extra); remaining free heap >= 10,240 at `ev=live` and throughout (`min_heap`).
+- `TRACK ev=live` heap/largest versus free heap after open: consumed bytes against the modelled 38,640 (decoder 20,680 + reader live + feed extra); remaining free heap versus the 2,048 B provisional margin (record the real minimum) at `ev=live` and throughout (`min_heap`).
 - `producer_stack` high-water >= 1,024 during a full `.m4a` run (refill seeks run on this task); `source_reads` about frames/256 + 1; no `ERR m4a source_*` on a good card, and a clean skip when the card errors mid-track (fault injection is hardware work).
 - `underrun_frames` stays 0 over a full `.m4a` with the 2,048-frame ring; only then evaluate 1,024.
 - All 25 real files admit and play to EOF; heap/largest do not decline across five tracks.

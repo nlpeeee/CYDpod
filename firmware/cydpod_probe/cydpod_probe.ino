@@ -53,7 +53,10 @@ std::atomic<uint32_t> sourceReads{0}; // sample-size window refills of the curre
 constexpr uint32_t kDecoderPeakBytes=20680;      // Helix AACDecInfo+PSInfoBase, tests/helix_decode.cpp --allocation-test (WSL, 64-bit)
 constexpr uint32_t kDecoderLargestRequest=20560; // largest single Helix request (PSInfoBase)
 constexpr uint32_t kReaderPeakBytes=14336;       // measured whole-reader peak 13,560 (CY-11a, 25 real files) rounded up to 14 KiB; includes the reader object
-constexpr uint32_t kPlaybackMarginBytes=10240;   // free heap that must remain during playback
+// Free heap that must remain after the track's decoder+reader+feed are allocated. PROVISIONAL (CY-13a): the board measured 45,488 B free after the
+// file is open (CY-12a); the model then needs 20,680+14,336+4,392+2,048 = 41,456 B, leaving 4,032 B slack. The true playback floor is NOT measured on
+// hardware (no track was played in CY-11c). If heap runs out during playback the board reboots; the allocation-failure fix (R2) is still open.
+constexpr uint32_t kPlaybackMarginBytes=2048;
 void sampleLargest() {
   uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
   uint32_t old=minLargest.load();

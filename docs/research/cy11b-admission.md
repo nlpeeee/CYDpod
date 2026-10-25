@@ -69,3 +69,14 @@ Log line on rejection: `ERR m4a low_memory heap=<n> largest=<n> need=<free need>
 | CY-11b probe | 1,224,944 | 61,552 (+0) | `b25eec1eaf5d35daebbdb03339235c358d45708187e48627d81acbfb48e91121` |
 
 +416 B image; 62.3% of the 1,966,080 B slot.
+
+## Update CY-13a: provisional margin 2,048 B (status: hardware floor unmeasured)
+
+`kPlaybackMarginBytes` is now **2048** (was 10,240). The rest of this document describes the CY-11b state at 10,240 and is kept as history.
+
+```
+need_free = 20,680 + 14,336 + 4,392 + 2,048 = 41,456   (45,488 measured free after open -> 4,032 B slack, admitted)
+need_largest = 29,704 (unchanged; 45,044 largest -> 15,340 spare)
+```
+
+The 2,048 B is a provisional choice, not a measured floor: no track was played in CY-11c. If heap runs out during playback the board reboots; the allocation-failure fix (R2) is open. Image: `aac-probe` 1,224,944 B, static RAM 61,552 B, sha256 `002f811ffaedf48cee190f9dfb225ad013f8557a1f1bb687034d620d00a20914` (the CY-11b image `b25eec1e...` had the same size). See `cy13a-playable-build.md`.

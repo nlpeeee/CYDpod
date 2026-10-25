@@ -34,6 +34,7 @@ QueueHandle_t commands;
 TaskHandle_t producerHandle=nullptr, sinkHandle=nullptr;
 i2s_chan_handle_t i2sTx=nullptr;
 std::atomic<uint32_t> epoch{0}, btReaders{0}, sinkReaders{0};
+std::atomic<bool> lsPending{false}; // includes a listing currently running on producer
 std::atomic<uint32_t> underrunFrames{0}, underrunCalls{0}, decodedFrames{0}, queueRejected{0};
 std::atomic<bool> btConsume{false}, i2sConsume{false}, ready{false}, muted{true}, connected{false};
 std::atomic<unsigned> targetLevel{5};
@@ -46,7 +47,9 @@ char track[128]=""; // producer only; changing output restarts this path
 bool a2dpStarted=false;
 uint32_t pairStarted=0;
 std::atomic<uint32_t> minLargest{UINT32_MAX};
-const char* m4aState="na"; // producer writes, serial format only; "na" for .aac tracks
+std::atomic<const char*> m4aState{"na"}; // published static-lifetime status strings
+constexpr uint32_t kM4aMinLargestBlock=64*1024;
+constexpr uint32_t kM4aMinFreeHeap=96*1024;
 void sampleLargest() {
   uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
   uint32_t old=minLargest.load();
@@ -60,7 +63,8 @@ bool endsWithNoCase(const char* s,const char* suffix) {
 // One stable line per track event: TRACK ev=start|end|skip name=<path> m4a=<status|na> heap=<free> largest=<block> min_heap=<since boot> min_sampled_largest=<min>
 void logTrack(const char* ev) {
   sampleLargest();
-  Serial.printf("TRACK ev=%s name=%s m4a=%s heap=%u largest=%u min_heap=%u min_sampled_largest=%u\n",ev,track,m4aState,
+  const char* state=m4aState.load();
+  Serial.printf("TRACK ev=%s name=%s m4a=%s heap=%u largest=%u min_heap=%u min_sampled_largest=%u\n",ev,track,state,
     unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
     unsigned(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(minLargest.load()));
 }
@@ -195,7 +199,7 @@ void producerTask(void*) {
       }
       continue;
     }
-    if(command.op==Op::ls) { listDirectory(command.text); continue; }
+    if(command.op==Op::ls) { listDirectory(command.text); lsPending.store(false); continue; }
     stopConsumers(); decoder.end();
     if(command.op==Op::stop) { track[0]=0; continue; }
     if(command.op==Op::output || command.op==Op::pair) {
@@ -210,11 +214,19 @@ void producerTask(void*) {
     if(!file || file.isDirectory()) { Serial.println("ERR track open"); continue; }
     M4aFeed* feed=nullptr; m4aState="na";
     if(endsWithNoCase(track,".m4a")) {
+      const uint32_t heap=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+      const uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+      // Interim admission check only: later allocations can still fail.
+      if(heap<kM4aMinFreeHeap || largest<kM4aMinLargestBlock) {
+        stopConsumers(); m4aState="low_memory"; logTrack("skip");
+        Serial.printf("ERR m4a low_memory heap=%u largest=%u\n",unsigned(heap),unsigned(largest));
+        file.close(); continue;
+      }
       feed=new(std::nothrow) M4aFeed;
-      if(!feed) { m4aState="alloc"; logTrack("skip"); Serial.println("ERR M4A allocation"); file.close(); continue; }
+      if(!feed) { stopConsumers(); m4aState="alloc"; logTrack("skip"); Serial.println("ERR M4A allocation"); file.close(); continue; }
       feed->begin(); m4aState="ok";
     }
-    if(!decoder.begin()) { Serial.println("ERR AAC allocation"); file.close(); delete feed; continue; }
+    if(!decoder.begin()) { stopConsumers(); Serial.println("ERR AAC allocation"); file.close(); delete feed; continue; }
     sampleLargest(); logTrack("start");
     btConsume.store(output==Output::bluetooth); i2sConsume.store(output!=Output::bluetooth);
     DecodeResult result=DecodeResult::frame;
@@ -240,33 +252,51 @@ void producerTask(void*) {
     delete feed; feed=nullptr;
     if(m4aFailed && epoch.load()==command.epoch) {
       // Demux error: drop queued PCM, skip this track, keep serving the next command.
-      pcmRing.clear(); logTrack("skip"); Serial.printf("ERR m4a %s\n",m4aState);
+      stopConsumers(); logTrack("skip"); Serial.printf("ERR m4a %s\n",m4aState.load());
     } else if(epoch.load()==command.epoch && result==DecodeResult::eof) {
       ready.store(true);
       uint32_t until=millis()+2000;
       while(pcmRing.size() && epoch.load()==command.epoch && int32_t(until-millis())>0) vTaskDelay(pdMS_TO_TICKS(1));
       logTrack("end"); Serial.println("EOF");
-    } else if(epoch.load()==command.epoch) Serial.printf("ERR %s helix=%d\n",resultName(result),decoder.lastError);
+    } else if(epoch.load()==command.epoch) {
+      stopConsumers(); Serial.printf("ERR %s helix=%d\n",resultName(result),decoder.lastError);
+    }
     stopConsumers();
   }
 }
 void metrics() {
   uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
   sampleLargest();
+  const char* state=m4aState.load();
   Serial.printf("METRIC m4a=%s heap=%u min_heap=%u largest=%u min_sampled_largest=%u producer_stack=%u sink_stack=%u loop_stack=%u ring=%u decoded=%u underrun_frames=%u underrun_calls=%u queue_rejected=%u connected=%u muted=%u level=%u\n",
-    m4aState,unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(largest),unsigned(minLargest.load()),
+    state,unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(largest),unsigned(minLargest.load()),
     unsigned(producerHandle?uxTaskGetStackHighWaterMark(producerHandle):0),unsigned(sinkHandle?uxTaskGetStackHighWaterMark(sinkHandle):0),unsigned(uxTaskGetStackHighWaterMark(nullptr)),
     unsigned(pcmRing.size()),unsigned(decodedFrames.load()),unsigned(underrunFrames.load()),unsigned(underrunCalls.load()),unsigned(queueRejected.load()),unsigned(connected.load()),unsigned(muted.load()),targetLevel.load());
 }
 bool submit(Op op,const char* text=nullptr,Output output=Output::bluetooth) {
   Command c{}; c.op=op; c.output=output;
   if(text) strlcpy(c.text,text,sizeof(c.text));
-  // Increment only once a slot is available; loop is the sole queue writer.
-  if(!uxQueueSpacesAvailable(commands)) { queueRejected.fetch_add(1); Serial.println("ERR command queue full"); return false; }
-  // Listing waits in the same queue until playback ends/stops; it must not
-  // cancel playback or mute it. Only the producer may access the SD card.
+  // loop is the sole writer. Bound listings to one and reserve a cancel slot.
+  if(op==Op::ls) {
+    if(lsPending.exchange(true)) { queueRejected.fetch_add(1); Serial.println("ERR ls busy"); return false; }
+    if(uxQueueSpacesAvailable(commands)<=1) {
+      lsPending.store(false); queueRejected.fetch_add(1); Serial.println("ERR ls busy"); return false;
+    }
+  } else if(!uxQueueSpacesAvailable(commands)) {
+    // Keep cancellation available even after a burst of track changes.
+    // A producer dequeue racing this only creates more free capacity.
+    Command dropped{};
+    if(xQueueReceive(commands,&dropped,0)==pdTRUE) {
+      if(dropped.op==Op::ls) lsPending.store(false);
+      queueRejected.fetch_add(1); Serial.println("ERR pending command superseded");
+    }
+  }
+  // Listings wait for idle without cancelling or muting; SD stays producer-only.
   c.epoch=op==Op::ls ? epoch.load() : epoch.fetch_add(1)+1;
-  if(xQueueSend(commands,&c,0)!=pdTRUE) { queueRejected.fetch_add(1); return false; }
+  if(xQueueSend(commands,&c,0)!=pdTRUE) {
+    if(op==Op::ls) lsPending.store(false);
+    queueRejected.fetch_add(1); return false;
+  }
   if(op!=Op::ls) muted.store(true);
   return true;
 }

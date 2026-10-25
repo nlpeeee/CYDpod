@@ -8,7 +8,8 @@ Only the `aac-probe` job changed: flags `-DCYDPOD_AAC_LC_ONLY -I<repo>/vendor/ar
 ## Probe behaviour (`firmware/cydpod_probe/cydpod_probe.ino`)
 - A track whose name ends in `.m4a` (case-insensitive) is opened read-only; a fresh `M4aFeed` (one `M4aGuardedReader` + 4 KiB ADTS queue + 256 B chunk, heap allocated) is created per track and deleted at track end. The file is read in 256-byte chunks into `M4aGuardedReader::write()`; its ADTS frames are queued and handed to the unchanged `AdtsDecoder` → PCM ring path.
 - `.aac` tracks take the original path (`file.read` straight into the decoder).
-- On any `M4aStatus` error (or an ADTS queue overflow, state `adts_queue_overflow`) the track is skipped, `ERR m4a <status>` is printed and the producer waits for the next command. The probe has no playlist, so "next track" is the next `play` command.
+- On any `M4aStatus` error (or an ADTS queue overflow, state `adts_queue_overflow`) the track is skipped, `ERR m4a <status>` is printed and the producer waits for the next command. Error/skip cleanup uses `stopConsumers()` to mute, disable and quiesce both consumers before clearing the PCM ring; only that path resets the ring. The probe has no playlist, so "next track" is the next `play` command.
+- Before allocating a `.m4a` reader, internal 8-bit free heap must be at least 96 KiB (`kM4aMinFreeHeap`) and its largest free block at least 64 KiB (`kM4aMinLargestBlock`). Otherwise the track is skipped with `m4a=low_memory` and `ERR m4a low_memory heap=<n> largest=<n>`. This interim admission guard cannot guarantee later allocations succeed; recoverable allocation throughout the reader remains follow-up work. `.aac` admission is unchanged.
 - Producer task stack raised 6144 → 8192 bytes (the demux callback chain runs on it). Not measured; check `producer_stack` in `stats` on hardware.
 - No Bluetooth, I2S or UI changes.
 
@@ -18,7 +19,7 @@ Read-only directory listing (`ls` defaults to `/Music`, or `ls /dir`):
 LS name=<name> size=<bytes> kind=file|dir
 LS done count=<n> truncated=0|1
 ```
-The producer lists only when idle; a queued listing waits for the track to stop or end without interrupting or muting it. Send `stop` first for immediate listing. It reads FatFs metadata on the probe's sole FAT volume (`0:`), skips dot-prefixed and FAT hidden/system entries, prints at most 64 entries and 96 bytes per name, and sets `truncated=1` for either cap (or a read error, also logged as `ERR ls read`). `ERR ls open` means the directory could not be opened. Names are basenames; append an untruncated file name to the listed directory for `play`. The summariser selects only `TRACK`/`METRIC`/`ERR` lines, so `LS` needs no parser or fixture changes.
+The producer lists only when idle; a queued listing waits for the track to stop or end without interrupting or muting it. At most one listing may be queued or running; further listings, or a listing without two free queue slots, return `ERR ls busy`. `stop`, `play`, `output` and `pair` always have admission: if the four-slot queue is full, the oldest pending command is discarded with `ERR pending command superseded` and `queue_rejected` increments. Listing rejection also increments that counter. These commands cancel current playback immediately through the epoch and mute flags; producer cleanup and queued commands then run in order. Send `stop` first for prompt listing. It reads FatFs metadata on the probe's sole FAT volume (`0:`), skips dot-prefixed and FAT hidden/system entries, prints at most 64 entries and 96 bytes per name, and sets `truncated=1` for either cap (or a read error, also logged as `ERR ls read`). `ERR ls open` means the directory could not be opened. Names are basenames; append an untruncated file name to the listed directory for `play`. The summariser selects only `TRACK`/`METRIC`/`ERR` lines, so `LS` needs no parser or fixture changes.
 
 Per track (start, end on EOF, skip on error):
 ```
@@ -30,6 +31,7 @@ Periodic (every 5 s and on `stats`; corrected by CY-9c):
 METRIC m4a=<status|na> heap=<free> min_heap=<since boot> largest=<block> min_sampled_largest=<min> producer_stack=<bytes> sink_stack=<bytes> loop_stack=<bytes> ring=<frames> decoded=<frames> underrun_frames=<frames> underrun_calls=<calls> queue_rejected=<count> connected=0|1 muted=0|1 level=<percent>
 ```
 The format has one string followed by 15 unsigned fields. CY-9c restored the missing `m4aState` argument; the earlier image panicked in this call before producing telemetry (see `cy9a-smoke-test.md`).
+Status is now published as an atomic pointer to static-lifetime text, with one snapshot loaded per `TRACK`, `METRIC` or status-error line; existing log text is preserved.
 
 ## Image size, static RAM, hash
 | | bytes | % of 1,966,080 slot | static RAM | sha256 |
@@ -60,3 +62,25 @@ its 1,966,080-byte app slot; compile evidence does not establish boot or playbac
 The nine format calls, 16 METRIC argument positions, scoped format-error policy,
 negative compile failure and passing checks are recorded in
 [the CY-9c audit](cy9c-format-audit.md). No device operations were performed.
+
+## CY-10c1 review fixes (2026-10-25, compile only)
+
+R3: all PCM resets now use `stopConsumers()`; late reader/ADTS-queue and decoder errors quiesce consumers before dropping buffered audio. R4: one outstanding listing and reserved capacity prevent listing starvation, while full-queue cancellation supersedes the oldest pending command. R6: status uses an atomic pointer and one snapshot per telemetry line. The interim R2 guard checks 96 KiB total / 64 KiB contiguous internal heap before reader allocation; it cannot guarantee subsequent allocations succeed.
+
+`powershell -File tools/check.ps1` exited **0**, retaining output in `.tools/logs/cy10c1-check.txt`:
+
+```text
+Sketch uses 1223566 bytes (62%) of program storage space. Maximum is 1966080 bytes.
+Global variables use 61536 bytes (18%) of dynamic memory, leaving 266144 bytes for local variables. Maximum is 327680 bytes.
+PASS synthetic fixture matrix: 3 positive, 7 negative; report fixtures/verification.json
+PASS: compile-only checks completed; no device commands were run.
+```
+
+| Probe | Image bytes | Static RAM bytes | SHA256 |
+| --- | ---: | ---: | --- |
+| Previous CY-10a | 1,223,088 | 61,528 | `1a40d486f1a15d3a0d59217d64f1db16e6a710a30dd924a33312d624cbe7aa0d` |
+| CY-10c1 | 1,223,712 | 61,536 | `0e0f02ceb782ef9e958dc34f60e9dd0de7724c206320eb3924f9094a9b097aff` |
+
+Image delta **+624 bytes**, fitting the 1,966,080-byte slot; static RAM delta **+8 bytes**, below the 2 KiB stop threshold. Actual binary SHA256 agrees with `.tools/logs/build-results.json`; player/uploader image identities are unchanged.
+
+All five `wsl.exe -d Debian -- sh tests/build_m4a_{host,caps,reject,sequence,r1r5}.sh` suites exited **0**; individual outputs are `.tools/logs/cy10c1-{host,caps,reject,sequence,r1r5}.txt`. Results: identical PCM/counts, malformed cases within caps, all 105 rejection runs, every sequence track matching a fresh reader, and R1/R5 zero failures. Native 32-bit multilib was unavailable; that suite used its explicit uint32_t truncation assertion. `git diff --check` passed for the assigned files. These checks do not execute firmware concurrency or heap admission on target; hardware, serial, SD and flashing were not accessed.

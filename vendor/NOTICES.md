@@ -46,3 +46,7 @@ resulting file hash. No other third-party source changes are intended.
 No generated CJK font or user media is supplied. Hardware compatibility,
 AAC patents, codec licensing obligations for a distribution, and the actual
 AirPods/DAC requirements remain separate from compile-only reproduction.
+
+## Maintained player copy (CY-33)
+
+`firmware/cydpod_player/app/` is a modified copy of the `vendor/CYD-MP3-Player/app` sources (Garionhk/CYD-MP3-Player, Apache-2.0; `firmware/cydpod_player/LICENSE-2.0.txt` and the bundled `app/src/AnimatedGIF/LICENSE` are kept). The pristine snapshot in `vendor/` is untouched. The changes (MiniAAC M4A decoder instead of libhelix MP3, `.m4a` library scan, no seeking) are listed in `firmware/cydpod_player/CYDPOD-CHANGES.md`. It is built with MiniAAC as an Arduino `--library` (same notices as the probe row above), so the same GPL-3.0/Helix notices apply to its binary.

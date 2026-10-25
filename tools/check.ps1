@@ -63,6 +63,9 @@ try {
         @{ Name = 'player'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '' },
         @{ Name = 'uploader'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '-DCYD_UPLOADER' }
     )
+    # CY-33: the maintained touchscreen player copy (M4A via MiniAAC); MiniAAC is passed as a single --library.
+    $jobs += @{ Name = 'cydpod-player'; Sketch = 'firmware/cydpod_player/app'; Flags = ''
+        Library = (Join-Path $root 'vendor/miniaac') }
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
             throw 'Required AAC probe is missing. Use -SkipProbe only for an explicit stock-baseline check.'
@@ -153,7 +156,7 @@ try {
             $imageText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($binary.FullName))
             $isPlayer = $imageText.Contains('heap before audio + bt')
             $isUploader = $imageText.Contains('upload: hotspot')
-            if (($job.Name -eq 'player' -and (!$isPlayer -or $isUploader)) -or
+            if ((($job.Name -eq 'player' -or $job.Name -eq 'cydpod-player') -and (!$isPlayer -or $isUploader)) -or
                 ($job.Name -eq 'uploader' -and (!$isUploader -or $isPlayer))) {
                 throw "Wrong program in $($job.Name) image (upstream marker check)."
             }

@@ -5,6 +5,8 @@
 #include <functional>
 #include "AudioTools/AudioCodecs/M4AAudioDemuxer.h"
 #include "m4a_caps.h"
+#include "m4a_state_reset.h"
+#include <new>
 
 namespace cydpod {
 enum class M4aStatus : uint8_t {
@@ -38,8 +40,15 @@ class M4aGuardedReader {
   M4aCappedSizes& sizeTable() { return sizes; }
   audio_tools::M4AAudioDemuxer& reader() { return demux; }  // test access only
 
-  // A reader instance serves one track; construct a new one (or destroy) per track.
+  // begin() starts a new track and is a full reset: the vendored demuxer and the size table are rebuilt in place (the vendored
+  // M4AAudioDemuxer::begin() alone does not make a used instance safe to reuse), the guard state is cleared, and the vendored
+  // function-static sample-size cache is primed (m4a_state_reset.h). A new instance per track is equivalent.
   void begin(AdtsCallback cb) {
+#ifndef CYDPOD_NO_STATE_RESET  // test-only switch that restores the pre-CY-5 behaviour for before/after evidence
+    demux.~M4AAudioDemuxer(); sizes.~M4aCappedSizes();
+    new (&sizes) M4aCappedSizes; new (&demux) audio_tools::M4AAudioDemuxer;
+    m4aPrimeSampleSizeCache();
+#endif
     onFrame = cb; st = M4aStatus::ok; sc = Scan(); nz = 0; heldLen = 0;
     demux.setSampleSizesBuffer(sizes);
     demux.setReference(this);  // setReference must precede setCallback

@@ -10,7 +10,7 @@ using namespace cydpod;
 using Bytes = std::vector<uint8_t>;
 #ifdef CYDPOD_ARENA_RUN  // build_m4a_arena.sh: same cases through the arena; peak = peak live arena bytes, held to the documented bound
 #define PEAK_LIMIT kM4aArenaLiveBoundBytes
-#define REQ_LIMIT kM4aArenaLiveBoundBytes
+#define REQ_LIMIT kArenaReserveBytes  // maxReq = the most bytes requested during any one vendor call (CY-10b3 mechanical reserve check)
 #else
 #define PEAK_LIMIT kM4aHeapBudgetBytes
 #define REQ_LIMIT kM4aTableBytes
@@ -70,7 +70,7 @@ static Result runInChild(const Bytes& in, size_t slice, bool finish) {
     for (size_t i = 0; i < in.size() && st == M4aStatus::ok; i += slice) st = r->write(in.data() + i, std::min(slice, in.size() - i));
     if (st == M4aStatus::ok && finish) st = r->finish();
     #ifdef CYDPOD_ARENA_RUN
-    g_peak = r->arenaState().stat().peakLive; g_maxReq = r->arenaState().stat().maxRequest;
+    g_peak = r->arenaState().stat().peakLive; g_maxReq = r->maxCallBytes();
     #endif
     delete r;
   }

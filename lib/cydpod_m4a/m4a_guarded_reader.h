@@ -41,10 +41,11 @@ class M4aGuardedReader {
   const M4aArena& arenaState() const { return arena; }
   size_t maxCallRequests() const { return callMaxRequests; }  // evidence: largest request count / byte total of one vendor call
   size_t maxCallBytes() const { return callMaxBytes; }
+  void setArenaProbe(const M4aArena::Probe* p) { arena.setProbe(p); }  // test aid (allocation-failure sweep); never set in the firmware
 
   // Arena memory source (default: new (std::nothrow)); nullptr selects the legacy mode in which the vendor allocates from the heap
   // directly (unprotected; host baselines only). Only effective when the allocator-hook overlay is applied (CYDPOD_ALLOCATOR_HOOK).
-  // Call before begin(); it ends any running track. Sizes default to kM4aArenaMainBytes / kM4aArenaReserveBytes (tests shrink them).
+  // Call before begin(); it ends any running track. Sizes default to kArenaMainBytes / kArenaReserveBytes (tests shrink them).
   void setArenaMemory(const M4aArenaMemory* m) { destroyVendor(); arena.close(); mem = m; }
   void setArenaSizes(size_t mainBytes, size_t reserveBytes) { destroyVendor(); arena.close(); mainB = mainBytes; resB = reserveBytes; }
   // Gives the arena memory back (the vendor objects are destroyed first). The next begin() acquires it again.
@@ -153,7 +154,7 @@ class M4aGuardedReader {
   alignas(audio_tools::M4AAudioDemuxer) unsigned char demuxBuf[sizeof(audio_tools::M4AAudioDemuxer)];
   alignas(M4aCappedSizes) unsigned char sizesBuf[sizeof(M4aCappedSizes)];
   bool built = false;
-  M4aArena arena; const M4aArenaMemory* mem = m4aNothrowMemory(); size_t mainB = kM4aArenaMainBytes, resB = kM4aArenaReserveBytes;
+  M4aArena arena; const M4aArenaMemory* mem = m4aNothrowMemory(); size_t mainB = kArenaMainBytes, resB = kArenaReserveBytes;
 #ifdef CYDPOD_ALLOCATOR_HOOK
   audio_tools::AllocatorHook hook{M4aArena::hookAllocate, M4aArena::hookRelease, &arena};
 #endif

@@ -38,3 +38,5 @@ unmute
 ```
 
 Watch `TRACK ev=live ... heap=... largest=...` (real free heap while playing), `min_heap` in `stats`, `underrun_frames`, any `ERR m4a low_memory` and any second banner (reboot).
+
+**Superseded by CY-10b3 (reader arena).** The admission arithmetic above (41,456 B, 4,032 B slack) assumed a 14,336 B reader. With the fixed 16,384 B arena the model is 47,840 B against the same 45,488 B free: the guard now rejects an `.m4a` at that state, 2,352 B short (`cy10b-alloc-failure.md`, `cy11b-admission.md`). The image in this document (1,224,944 B) and the CY-10b3 probe (1,226,960 B, sha256 `8da289bc871781f3ac4bebee37fea63a0dbc175d0229b87172e942b880690071`) are different builds.

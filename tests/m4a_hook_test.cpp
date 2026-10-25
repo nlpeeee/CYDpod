@@ -22,7 +22,7 @@ void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p, size_t) noexcept { std::free(p); }
 
 // The arena's one backing block is static storage here, so the arena run makes no global allocation of its own.
-alignas(16) static unsigned char g_arenaMem[kM4aArenaMainBytes + kM4aArenaReserveBytes];
+alignas(16) static unsigned char g_arenaMem[kArenaAcquireBytes];
 static const M4aArenaMemory g_staticMem{[](size_t n, void*) -> void* { return n <= sizeof g_arenaMem ? g_arenaMem : nullptr; }, [](void*, void*) {}, nullptr};
 
 struct Run { size_t frames = 0, adtsBytes = 0, global = 0, globalFree = 0, allocs = 0, frees = 0, live = 0, bytesPeak = 0; M4aStatus st = M4aStatus::ok; bool exhausted = false; };

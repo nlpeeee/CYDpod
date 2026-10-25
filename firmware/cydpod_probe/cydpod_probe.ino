@@ -52,10 +52,13 @@ std::atomic<uint32_t> sourceReads{0}; // sample-size window refills of the curre
 // M4A admission model (CY-11b, docs/research/cy11b-admission.md). Bytes; arithmetic is evaluated in m4aNeedFree/m4aNeedLargest below.
 constexpr uint32_t kDecoderPeakBytes=20680;      // Helix AACDecInfo+PSInfoBase, tests/helix_decode.cpp --allocation-test (WSL, 64-bit)
 constexpr uint32_t kDecoderLargestRequest=20560; // largest single Helix request (PSInfoBase)
-constexpr uint32_t kReaderPeakBytes=14336;       // measured whole-reader peak 13,560 (CY-11a, 25 real files) rounded up to 14 KiB; includes the reader object
+// CY-10b3: the reader is its object plus ONE arena block taken from the heap (cydpod::kArenaAcquireBytes = main + reserve + 8 alignment slack, see
+// docs/research/cy10b-alloc-failure.md); all the vendored reader's allocations are served from it, so this replaces the old measured 14,336.
+constexpr uint32_t kReaderPeakBytes=uint32_t(cydpod::kArenaAcquireBytes+sizeof(cydpod::M4aGuardedReader));
 // Free heap that must remain after the track's decoder+reader+feed are allocated. PROVISIONAL (CY-13a): the board measured 45,488 B free after the
-// file is open (CY-12a); the model then needs 20,680+14,336+4,392+2,048 = 41,456 B, leaving 4,032 B slack. The true playback floor is NOT measured on
-// hardware (no track was played in CY-11c). If heap runs out during playback the board reboots; the allocation-failure fix (R2) is still open.
+// file is open (CY-12a). With the CY-10b3 arena the model needs 20,680+(16,392+4,344)+4,376+2,048 = 47,840 B (xtensa sizeof) there, which exceeds it (arithmetic and shortfall in
+// docs/research/cy10b-alloc-failure.md): an .m4a is rejected with low_memory until the coordinator decides how to close the gap. The true playback floor
+// is NOT measured on hardware (no track was played in CY-11c). A failed reader allocation is now a clean no_memory status, not a reboot (R2).
 constexpr uint32_t kPlaybackMarginBytes=2048;
 void sampleLargest() {
   uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
@@ -90,6 +93,11 @@ struct SdSource : cydpod::M4aSeekableSource {
     return got==size ? cydpod::M4aSourceResult::ok : cydpod::M4aSourceResult::shortRead;
   }
 };
+// The arena's one fallible allocation (CY-10b3): internal 8-bit heap, may fail; the reader turns a refusal into M4aStatus::noMemory. The vendored
+// audio-tools Allocator is routed into the arena only inside the reader's own calls (begin/write/destruction), which run on the producer task alone.
+static void* arenaAcquire(size_t bytes,void*) { return heap_caps_malloc(bytes,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT); }
+static void arenaRelease(void* block,void*) { heap_caps_free(block); }
+const cydpod::M4aArenaMemory kArenaMemory{arenaAcquire,arenaRelease,nullptr};
 // Pull adapter: file bytes -> guarded M4A reader -> ADTS frames queued here -> AdtsDecoder reads them like an .aac file.
 struct M4aFeed {
   cydpod::M4aGuardedReader reader;
@@ -120,12 +128,13 @@ struct M4aFeed {
   bool failed() const { return overflow || reader.status()!=cydpod::M4aStatus::ok; }
 };
 // Admission need after the track file is open and before M4aFeed/decoder are allocated. feed extra = M4aFeed minus the reader object.
-// Host (64-bit) layout is 9,144 / 4,392; a 32-bit target is not larger, so these bounds hold the doc's arithmetic.
-static_assert(sizeof(M4aFeed)<=9144,"M4aFeed grew: update cy11b-admission.md");
+// xtensa layout (CY-10b3, read from the compiler): M4aFeed 8,720 / reader 4,344 / feed extra 4,376; the 64-bit host layout is 9,392 / 5,000 / 4,392.
+static_assert(sizeof(M4aFeed)<=8720,"M4aFeed grew (xtensa sizeof was 8,720 at CY-10b3): update cy10b-alloc-failure.md and cy11b-admission.md");
 constexpr uint32_t m4aFeedExtra() { return uint32_t(sizeof(M4aFeed)-sizeof(cydpod::M4aGuardedReader)); }
 constexpr uint32_t m4aNeedFree() { return kDecoderPeakBytes+kReaderPeakBytes+m4aFeedExtra()+kPlaybackMarginBytes; }
-// Feed is allocated first as one block, then Helix needs its own largest request from what is left.
-constexpr uint32_t m4aNeedLargest() { return uint32_t(sizeof(M4aFeed))+kDecoderLargestRequest; }
+// Feed is allocated first as one block, then the reader arena as ONE contiguous block (kArenaAcquireBytes), then Helix needs its own largest request
+// from what is left; with all three carved from the same largest block (the conservative case) the sum must fit.
+constexpr uint32_t m4aNeedLargest() { return uint32_t(sizeof(M4aFeed))+uint32_t(cydpod::kArenaAcquireBytes)+kDecoderLargestRequest; }
 
 // Only the active consumer calls this. Gain ramps after unmute; mute is immediate.
 void render(Stereo* data, size_t count, GainRamp& gain) {
@@ -256,7 +265,13 @@ void producerTask(void*) {
       }
       feed=new(std::nothrow) M4aFeed;
       if(!feed) { stopConsumers(); m4aState="alloc"; logTrack("skip"); Serial.println("ERR M4A allocation"); file.close(); continue; }
-      feed->begin(file); m4aState="ok";
+      feed->begin(file);
+      if(feed->failed()) {  // e.g. no_memory: the arena block could not be taken; nothing else was allocated for this track
+        stopConsumers(); m4aState=feed->state(); logTrack("skip");
+        Serial.printf("ERR m4a %s\n",m4aState.load());
+        delete feed; file.close(); continue;
+      }
+      m4aState="ok";
     }
     if(!decoder.begin()) { stopConsumers(); Serial.println("ERR AAC allocation"); file.close(); delete feed; continue; }
     sampleLargest(); logTrack("live"); logTrack("start");

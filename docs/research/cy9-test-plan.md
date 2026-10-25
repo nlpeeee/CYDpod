@@ -92,10 +92,10 @@ Verified 2026-10-25 on both `powershell -NoProfile -File tools/cyd_probe_session
 
 ## CY-11c: what hardware qualification checks (from CY-11b)
 
-Needs a connected Bluetooth state and `.m4a` files; hardware access is a separate authorised chunk. Since CY-13a the margin is a provisional 2,048 B (`need=41,456` vs 45,488 free after open at the CY-12a state; `docs/research/cy13a-playable-build.md`), so tracks are admitted; the true playback floor is unmeasured and this test must measure it. Then check:
+Needs a connected Bluetooth state and `.m4a` files; hardware access is a separate authorised chunk. Since CY-13a the margin is a provisional 2,048 B; since CY-10b3 the reader is a 16,384 B arena and the model is `need=47,840` / `need_largest=45,672` (`docs/research/cy10b-alloc-failure.md`), which is **more than the 45,488 / 45,044 measured free after open at the CY-12a state: an `.m4a` is expected to be rejected with `ERR m4a low_memory` until the 2,352 B gap is closed** (record the real values; do not read the rejection as a failure of this test). Once a build admits tracks, the true playback floor is unmeasured and this test must measure it. Then check:
 
 - `ERR m4a low_memory heap=.. largest=.. need=.. need_largest=..` appears only when heap < need, never on an admitted track.
-- `TRACK ev=live` heap/largest versus free heap after open: consumed bytes against the modelled 38,640 (decoder 20,680 + reader live + feed extra); remaining free heap versus the 2,048 B provisional margin (record the real minimum) at `ev=live` and throughout (`min_heap`).
+- `TRACK ev=live` heap/largest versus free heap after open: consumed bytes against the modelled 45,792 B (decoder 20,680 + arena block 16,392 + feed 8,720; the arena is taken whole, so it does not vary with the track); remaining free heap versus the 2,048 B provisional margin (record the real minimum) at `ev=live` and throughout (`min_heap`).
 - `producer_stack` high-water >= 1,024 during a full `.m4a` run (refill seeks run on this task); `source_reads` about frames/256 + 1; no `ERR m4a source_*` on a good card, and a clean skip when the card errors mid-track (fault injection is hardware work).
 - `underrun_frames` stays 0 over a full `.m4a` with the 2,048-frame ring; only then evaluate 1,024.
 - All 25 real files admit and play to EOF; heap/largest do not decline across five tracks.

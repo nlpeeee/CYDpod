@@ -80,3 +80,14 @@ need_largest = 29,704 (unchanged; 45,044 largest -> 15,340 spare)
 ```
 
 The 2,048 B is a provisional choice, not a measured floor: no track was played in CY-11c. If heap runs out during playback the board reboots; the allocation-failure fix (R2) is open. Image: `aac-probe` 1,224,944 B, static RAM 61,552 B, sha256 `002f811ffaedf48cee190f9dfb225ad013f8557a1f1bb687034d620d00a20914` (the CY-11b image `b25eec1e...` had the same size). See `cy13a-playable-build.md`.
+
+## Update CY-10b3: the reader is a 16,384 B arena (status: the model no longer admits at the measured state)
+
+`kReaderPeakBytes` is no longer a hand-typed 14,336. The reader's vendored allocations now come from one arena block taken with `heap_caps_malloc(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)`, so the constant is derived in the probe: `cydpod::kArenaAcquireBytes + sizeof(cydpod::M4aGuardedReader)` = 16,392 + 4,344 = 20,736 B (xtensa sizes read from the compiler: `sizeof(M4aFeed)` 8,720, reader 4,344, feed extra 4,376). `kPlaybackMarginBytes` is still 2,048.
+
+```
+need_free    = 20,680 + 20,736 + 4,376 + 2,048 = 47,840   vs 45,488 free after open  -> 2,352 B short  (low_memory)
+need_largest = 8,720 + 16,392 + 20,560         = 45,672   vs 45,044 largest         ->   628 B short
+```
+
+The arena is one contiguous block and the largest-block requirement includes it as a single request between the feed and Helix's 20,560 B request. With a zero margin the demand is 45,792 B, still 304 B above the free heap. Derivation of the 16,384 B, the sweep that proves failure handling, and the ways to close the gap (ring to 1,024 frames alone is enough; others combined): `cy10b-alloc-failure.md`, section CY-10b3. The older numbers above (14,336 B, 41,456 B) describe the CY-11b/CY-13a model and are history.

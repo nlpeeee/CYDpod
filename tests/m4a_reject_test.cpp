@@ -10,8 +10,9 @@
 using namespace cydpod;
 using Bytes = std::vector<uint8_t>;
 #ifdef CYDPOD_ARENA_RUN  // build_m4a_arena.sh: same cases through the arena; peak = peak live arena bytes, held to the documented bound
+#include "m4a_file_source.h"  // arena mode runs the shipping (file-backed) table: a resident table is limited to kM4aArenaResidentEntries there
 #define PEAK_LIMIT kM4aArenaLiveBoundBytes
-#define REQ_LIMIT kM4aArenaLiveBoundBytes
+#define REQ_LIMIT kArenaReserveBytes  // maxReq = the most bytes requested during any one vendor call (CY-10b3 mechanical reserve check)
 #else
 #define PEAK_LIMIT kM4aHeapBudgetBytes
 #define REQ_LIMIT kM4aTableBytes
@@ -90,11 +91,15 @@ struct Result { M4aStatus st; size_t frames, peak, maxReq; };
 static Result runInChild(const Bytes& in, size_t slice) {
   g_live = g_peak = g_maxReq = 0; size_t frames = 0; M4aStatus st = M4aStatus::ok;
   { auto* r = new M4aGuardedReader;
+    #ifdef CYDPOD_ARENA_RUN
+    MemSource src(in); r->begin([&](const uint8_t*, size_t) { ++frames; }, &src);
+    #else
     r->begin([&](const uint8_t*, size_t) { ++frames; });
+    #endif
     for (size_t i = 0; i < in.size() && st == M4aStatus::ok; i += slice) st = r->write(in.data() + i, std::min(slice, in.size() - i));
     if (st == M4aStatus::ok) st = r->finish();
     #ifdef CYDPOD_ARENA_RUN
-    g_peak = r->arenaState().stat().peakLive; g_maxReq = r->arenaState().stat().maxRequest;
+    g_peak = r->arenaState().stat().peakLive; g_maxReq = r->maxCallBytes();
     #endif
     delete r; }
   return {st, frames, g_peak, g_maxReq};

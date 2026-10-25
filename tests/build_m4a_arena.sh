@@ -6,6 +6,7 @@
 # Exit 77 = real-media part skipped. CYDPOD_ARENA_FAST=1 skips the sanitizer build.
 set -eu
 cd "$(dirname "$0")/.."
+export CYDPOD_ARENA_RANDOM="${CYDPOD_ARENA_RANDOM-1500}"  # random frame-size streams in part (f)
 OUT=tests/out/m4a_arena; mkdir -p "$OUT/codec" "$OUT/codec-asan"
 sh tests/apply_audiotools_overlay.sh "$OUT/audiotools"
 HELIX=.deps/sketchbook/libraries/arduino-libhelix/src

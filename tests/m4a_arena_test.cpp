@@ -96,6 +96,17 @@ static Pcm decode(const Bytes& adts) {
     ++d.frames;
   }
 }
+// Smallest main region (8-byte steps) with which the track still plays without touching the reserve: the real requirement, fragmentation included.
+static size_t minMain(const Bytes& in, size_t slice, bool fileBacked = true) {
+  size_t lo = 64, hi = 32 * 1024;
+  while (lo < hi) {
+    size_t mid = ((lo + hi) / 2) & ~size_t(7);
+    M4aGuardedReader r; r.setArenaSizes(mid, kArenaReserveBytes);
+    Run o = feed(r, in, fileBacked, slice, false);
+    if (o.st == M4aStatus::ok && !r.arenaState().exhausted()) hi = mid; else lo = mid + 8;
+  }
+  return lo;
+}
 static bool hookClear() { return audio_tools::allocatorHook() == nullptr; }
 
 int main(int argc, char** argv) {
@@ -110,7 +121,7 @@ int main(int argc, char** argv) {
     mem.fail = true;
     check(!a.open(&mem.vt, 1024, 256) && !a.isOpen() && mem.live.empty(), "(a) refused acquisition -> not open, nothing held");
     mem.fail = false;
-    check(a.open(&mem.vt, 1024, 4096) && mem.acquires == 2 && mem.lastBytes == 5120 && mem.live.size() == 1, "(a) one acquisition of main+reserve");
+    check(a.open(&mem.vt, 1024, 4096) && mem.acquires == 2 && mem.lastBytes == 4096 + 1024 + kArenaAlignSlack && mem.live.size() == 1, "(a) one acquisition of main+reserve");
     void* p1 = a.allocate(100); void* p2 = a.allocate(200); void* p3 = a.allocate(300);
     check(p1 && p2 && p3 && p1 != p2 && (uint8_t*)p2 >= (uint8_t*)p1 + 100 && (uint8_t*)p3 >= (uint8_t*)p2 + 200 && !((uintptr_t)p1 & 7) && !((uintptr_t)p2 & 7), "(a) first fit, 8-byte aligned, disjoint");
     std::memset(p1, 1, 100); std::memset(p2, 2, 200); std::memset(p3, 3, 300);
@@ -156,10 +167,10 @@ int main(int argc, char** argv) {
     const M4aArena::Stats& s = r->arenaState().stat();
     check(o.st == M4aStatus::ok && o.frames == 131 && p.ok && p.frames * 1024 == 134144, "(b) fixture via arena: %zu frames, %u samples per channel", o.frames, p.frames * 1024);
     check(o.adts == legacyAdts && p.hash == legacyPcm.hash, "(b) ADTS (%zu B) and PCM identical to the heap path (hash %016llx)", o.adts.size(), (unsigned long long)p.hash);
-    check(mem.acquires == 1 && mem.lastBytes == kM4aArenaMainBytes + kM4aArenaReserveBytes && !r->arenaState().exhausted() && s.reserveRequests == 0,
-          "(b) one acquisition of %zu B (main %zu + reserve %zu); never exhausted; reserve unused", mem.lastBytes, kM4aArenaMainBytes, kM4aArenaReserveBytes);
-    std::fprintf(stderr, "     fixture: allocs=%zu frees=%zu peakLive=%zu highWater=%zu maxRequest=%zu maxCallRequests=%zu maxCallBytes=%zu\n",
-                 s.allocs, s.frees, s.peakLive, s.highWater, s.maxRequest, r->maxCallRequests(), r->maxCallBytes());
+    check(mem.acquires == 1 && mem.lastBytes == kArenaAcquireBytes && !r->arenaState().exhausted() && s.reserveRequests == 0,
+          "(b) one acquisition of %zu B (main %zu + reserve %zu + alignment slack); never exhausted; reserve unused", mem.lastBytes, kArenaMainBytes, kArenaReserveBytes);
+    std::fprintf(stderr, "     fixture: allocs=%zu frees=%zu peakLive=%zu minMain=%zu maxRequest=%zu maxCallRequests=%zu maxCallBytes=%zu\n",
+                 s.allocs, s.frees, s.peakLive, minMain(fixture, 1024), s.maxRequest, r->maxCallRequests(), r->maxCallBytes());
     check(hookClear(), "(b) hook slot empty after the track");
     // next track on the same reader: whole-arena reset, no second acquisition, no leak, identical output (CY-5 reset behaviour)
     Run o2 = feed(*r, fixture);
@@ -172,7 +183,9 @@ int main(int argc, char** argv) {
     check(mem.live.empty() && mem.releases == 1 && hookClear(), "(b) destruction releases the arena (live blocks: %zu)", mem.live.size());
     // resident (no source) table in arena mode: bounded at kM4aArenaResidentEntries
     M4aGuardedReader rr; Run res = feed(rr, fixture, false);
-    check(res.st == M4aStatus::ok && res.adts == o.adts, "(b) resident table (131 entries) in arena mode: identical");
+    check(res.st == M4aStatus::tableOverflow, "(b) resident table: the 131-entry fixture exceeds the %zu-entry arena limit (%s)", kM4aArenaResidentEntries, m4aStatusName(res.st));
+    { std::vector<uint32_t> few(kM4aArenaResidentEntries, 40); Bytes fs = synth(few); Run viaFile = feed(rr, fs, true), viaRes = feed(rr, fs, false);
+      check(viaRes.st == M4aStatus::ok && viaRes.adts == viaFile.adts && viaRes.frames == few.size(), "(b) resident table at the limit: identical to the file-backed run"); }
     std::vector<uint32_t> ok(kM4aArenaResidentEntries, 8), over(kM4aArenaResidentEntries + 1, 8);
     Run a = feed(rr, synth(ok), false), b = feed(rr, synth(over), false);
     check(a.st == M4aStatus::ok && b.st == M4aStatus::tableOverflow, "(b) resident table at %zu entries ok, +1 -> %s", kM4aArenaResidentEntries, m4aStatusName(b.st));
@@ -201,14 +214,15 @@ int main(int argc, char** argv) {
   {
     size_t exhaustedRuns = 0, okRuns = 0, mixed = 0, maxReserve = 0, maxReserveReq = 0, firstOk = 0;
     Bytes adversarial; { std::vector<uint32_t> s; for (uint32_t i = 1; i <= 200; ++i) s.push_back(i); adversarial = synth(s); }
-    for (const Bytes* in : {&fixture, &adversarial})
+    Bytes jumps; { std::vector<uint32_t> s(17, 1); for (uint32_t i = 1; i <= 30; ++i) s.push_back(i); s.push_back(2041); s.push_back(1500); s.push_back(2041); jumps = synth(s, 0, 3); }
+    for (const Bytes* in : {&fixture, &adversarial, &jumps})
       for (size_t mainBytes = 16; mainBytes <= 24 * 1024; mainBytes += mainBytes < 4096 ? 16 : 256) {
-        FakeMem mem; auto* r = new M4aGuardedReader; r->setArenaMemory(&mem.vt); r->setArenaSizes(mainBytes, kM4aArenaReserveBytes);
+        FakeMem mem; auto* r = new M4aGuardedReader; r->setArenaMemory(&mem.vt); r->setArenaSizes(mainBytes, kArenaReserveBytes);
         Run o = feed(*r, *in, true, 1024, false);
         const M4aArena::Stats& s = r->arenaState().stat();
         bool exhausted = r->arenaState().exhausted();
         bool clean = ((o.st == M4aStatus::ok && !exhausted) || (o.st == M4aStatus::noMemory && exhausted)) && r->arenaState().consistent();
-        if (!clean || !hookClear() || s.reserveUsed > kM4aArenaReserveBytes) check(false, "(d) main=%zu: status=%s exhausted=%d reserveUsed=%zu", mainBytes, m4aStatusName(o.st), exhausted, s.reserveUsed);
+        if (!clean || !hookClear() || s.reserveUsed > kArenaReserveBytes) check(false, "(d) main=%zu: status=%s exhausted=%d reserveUsed=%zu", mainBytes, m4aStatusName(o.st), exhausted, s.reserveUsed);
         if (exhausted) { ++exhaustedRuns; maxReserve = std::max(maxReserve, s.reserveUsed); maxReserveReq = std::max(maxReserveReq, s.reserveRequests); if (o.frames >= (in == &fixture ? 131u : 200u)) ++mixed; }
         else { ++okRuns; if (!firstOk) firstOk = mainBytes; }
         failures += !clean;
@@ -216,15 +230,15 @@ int main(int argc, char** argv) {
         if (!mem.live.empty()) { check(false, "(d) main=%zu leaked the arena", mainBytes); }
       }
     check(exhaustedRuns > 100 && okRuns > 10, "(d) sweep of tiny main regions: %zu exhausted runs (all no_memory), %zu fitting runs (all ok); first fitting main = %zu B", exhaustedRuns, okRuns, firstOk);
-    std::fprintf(stderr, "     worst exhausted run: reserve used %zu of %zu B, %zu reserve requests; runs that still delivered every frame before the flag: %zu\n", maxReserve, kM4aArenaReserveBytes, maxReserveReq, mixed);
+    std::fprintf(stderr, "     worst exhausted run: reserve used %zu of %zu B, %zu reserve requests; runs that still delivered every frame before the flag: %zu\n", maxReserve, kArenaReserveBytes, maxReserveReq, mixed);
     // exhausted reader recovers with a normal arena on the next begin()
-    FakeMem mem; M4aGuardedReader r; r.setArenaMemory(&mem.vt); r.setArenaSizes(256, kM4aArenaReserveBytes);
+    FakeMem mem; M4aGuardedReader r; r.setArenaMemory(&mem.vt); r.setArenaSizes(256, kArenaReserveBytes);
     Run bad = feed(r, fixture);
-    r.setArenaSizes(kM4aArenaMainBytes, kM4aArenaReserveBytes);
+    r.setArenaSizes(kArenaMainBytes, kArenaReserveBytes);
     Run good = feed(r, fixture);
     check(bad.st == M4aStatus::noMemory && good.st == M4aStatus::ok && good.adts == legacyAdts, "(d) exhausted reader plays the next track with a normal arena");
     // sticky: write() after exhaustion keeps returning no_memory and delivers nothing
-    M4aGuardedReader t; t.setArenaMemory(&mem.vt); t.setArenaSizes(256, kM4aArenaReserveBytes);
+    M4aGuardedReader t; t.setArenaMemory(&mem.vt); t.setArenaSizes(256, kArenaReserveBytes);
     Run x = feed(t, fixture); size_t before = x.frames;
     check(x.st == M4aStatus::noMemory && t.write(fixture.data(), 100) == M4aStatus::noMemory && before == x.frames, "(d) status stays no_memory (sticky)");
   }
@@ -250,17 +264,18 @@ int main(int argc, char** argv) {
   }
 
   // ---- (f) peak live bytes ----
-  size_t maxLive = 0, maxHigh = 0, maxReq = 0, maxCallB = 0, maxCallN = 0;
+  size_t maxLive = 0, maxHigh = 0 /* largest minMain */, maxReq = 0, maxCallB = 0, maxCallN = 0;
   auto measure = [&](const char* name, const Bytes& in, M4aStatus want, size_t slice, bool quiet) {
     M4aGuardedReader* r = new M4aGuardedReader;
     Run o = feed(*r, in, true, slice, false);
     const M4aArena::Stats& s = r->arenaState().stat();
     bool chain = r->arenaState().consistent();
     r->end();  // destroys the vendor objects: every block must be back
-    bool ok = o.st == want && !r->arenaState().exhausted() && s.peakLive <= kM4aArenaLiveBoundBytes && s.highWater <= kM4aArenaMainBytes && r->maxCallBytes() <= kM4aArenaReserveBytes && s.live == 0 && chain;
-    maxLive = std::max(maxLive, s.peakLive); maxHigh = std::max(maxHigh, s.highWater); maxReq = std::max(maxReq, s.maxRequest);
+    size_t need = minMain(in, slice);
+    bool ok = o.st == want && !r->arenaState().exhausted() && s.peakLive <= kM4aArenaLiveBoundBytes && need <= kArenaMainBytes && r->maxCallBytes() <= kArenaReserveBytes && s.live == 0 && chain;
+    maxLive = std::max(maxLive, s.peakLive); maxHigh = std::max(maxHigh, need); maxReq = std::max(maxReq, s.maxRequest);
     maxCallB = std::max(maxCallB, r->maxCallBytes()); maxCallN = std::max(maxCallN, r->maxCallRequests());
-    if (!ok || !quiet) std::fprintf(stderr, "%-4s %-40s slice=%-5zu status=%-8s peakLive=%zu highWater=%zu maxReq=%zu callBytes=%zu callReqs=%zu\n", ok ? "ok" : "FAIL", name, slice, m4aStatusName(o.st), s.peakLive, s.highWater, s.maxRequest, r->maxCallBytes(), r->maxCallRequests());
+    if (!ok || !quiet) std::fprintf(stderr, "%-4s %-40s slice=%-5zu status=%-8s peakLive=%zu minMain=%zu maxReq=%zu callBytes=%zu callReqs=%zu\n", ok ? "ok" : "FAIL", name, slice, m4aStatusName(o.st), s.peakLive, need, s.maxRequest, r->maxCallBytes(), r->maxCallRequests());
     failures += !ok; delete r;
   };
   for (size_t slice : {(size_t)7, (size_t)256, (size_t)1024, (size_t)65536, fixture.size()}) measure("fixture", fixture, M4aStatus::ok, slice, true);
@@ -284,7 +299,59 @@ int main(int argc, char** argv) {
       for (size_t i = 0; i < n; ++i) s.push_back(1 + rnd() % maxSz);
       measure("random frame sizes", synth(s, rnd() % 2 ? kM4aMaxStsdBytes - 80 : 0, rnd() % 4), M4aStatus::ok, (size_t)1 << (rnd() % 12), true);
     } }
-  std::fprintf(stderr, "     synthetic + fixture maxima: peakLive=%zu highWater=%zu largest request=%zu; one vendor call: %zu requests, %zu B\n", maxLive, maxHigh, maxReq, maxCallN, maxCallB);
+  std::fprintf(stderr, "     synthetic + fixture maxima: peakLive=%zu minMain=%zu largest request=%zu; one vendor call: %zu requests, %zu B\n", maxLive, maxHigh, maxReq, maxCallN, maxCallB);
+
+  // ---- (g) mechanical reserve bound and fallback disjointness ----
+  // The reserve must cover the bytes ONE vendor call can request, with margin. The vendor is fed the mdat payload in kM4aVendorSliceBytes
+  // slices, so the worst call is a slice in which the frame buffer and the ADTS scratch both jump to the largest size on top of a chain of
+  // strictly growing small frames. Place that slice at every alignment (0..slice-1 tiny frames before it) and measure the real call totals.
+  {
+    size_t worstCall = 0, runs = 0; bool allOk = true;
+    for (size_t pad = 0; pad < kM4aVendorSliceBytes; ++pad) {
+      std::vector<uint32_t> s(pad, 1);
+      for (uint32_t i = 1; i <= 30; ++i) s.push_back(i);                      // growing chain: scratch grows at every frame
+      s.push_back(2041); for (uint32_t i = 1; i <= 30; ++i) s.push_back(i);  // both buffers jump to the maximum, then small frames again
+      s.push_back(1500); s.push_back(2041); s.push_back(1025); s.push_back(2041);
+      for (size_t chunk : {(size_t)1024, (size_t)65536}) {
+        M4aGuardedReader r; Run o = feed(r, synth(s), true, chunk, false);
+        worstCall = std::max(worstCall, r.maxCallBytes()); ++runs;
+        allOk = allOk && o.st == M4aStatus::ok && !r.arenaState().exhausted() && r.maxCallBytes() <= kArenaReserveBytes;
+      }
+    }
+    check(allOk, "(g) %zu slice-alignment runs: worst single vendor call %zu B (with headers) <= reserve %zu B", runs, worstCall, kArenaReserveBytes);
+    check(maxCallB <= kArenaReserveBytes && worstCall <= kArenaReserveBytes, "(g) fixture, adversarial and random streams: one vendor call <= %zu B (reserve %zu B, margin %zu B)", std::max(maxCallB, worstCall), kArenaReserveBytes, kArenaReserveBytes - std::max(maxCallB, worstCall));
+    // allocator model test: random alloc/free (small, class-size and oversize requests) against a main region too small for them, so the
+    // fallback is exercised; every grant is checked by address range: reserve grants never overlap each other or any main block, main
+    // blocks never overlap each other, all stay inside the single block, and a request beyond the reserve is the only null.
+    struct Rng { const uint8_t* p; size_t n; bool res; };
+    for (size_t mainBytes : {(size_t)1024, (size_t)4096, kArenaMainBytes}) {
+      FakeMem mem; M4aArena a; a.open(&mem.vt, mainBytes, 6144);
+      const uint8_t* lo = a.regionBase(); const uint8_t* hi = lo + mainBytes + 6144;
+      std::vector<Rng> live; std::vector<void*> order; uint32_t seed = 99 + (uint32_t)mainBytes; auto rnd = [&] { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+      size_t bad = 0, nulls = 0, grants = 0, reserveGrants = 0;
+      for (int step = 0; step < 20000; ++step) {
+        if (step % 500 == 499) { a.reset(); live.clear(); }  // a new track: the reserve starts again from its first byte
+        if (live.empty() || rnd() % 5 < 3) {
+          size_t n = rnd() % 4 == 0 ? 513 + rnd() % 1544 : rnd() % 4 == 1 ? 1 + rnd() % 3000 : 1 + rnd() % 400;
+          void* p = a.allocate(n);
+          if (!p) { ++nulls; if (a.stat().reserveUsed + ((n + 7) & ~size_t(7)) <= 6144) ++bad; continue; }  // null only when the reserve cannot take it
+          const uint8_t* b = static_cast<uint8_t*>(p); bool res = b >= lo + mainBytes;
+          ++grants; reserveGrants += res;
+          if (b < lo || b + n > hi || (res ? b < lo + mainBytes : b + n > lo + mainBytes) || ((uintptr_t)b & 7)) ++bad;
+          for (const Rng& r : live) if (b < r.p + r.n && r.p < b + n) ++bad;
+          live.push_back({b, n, res});
+          std::memset(p, 0x5A, n);
+        } else {
+          size_t i = rnd() % live.size();
+          a.release(const_cast<uint8_t*>(live[i].p));
+          if (!live[i].res) live.erase(live.begin() + i);  // a reserve block stays reserved (never reused) until reset
+        }
+        if (!a.consistent()) ++bad;
+      }
+      check(bad == 0 && grants > 1000, "(g) allocator model, main %zu B: %zu grants (%zu from the reserve), %zu refusals beyond the reserve, %zu violations", mainBytes, grants, reserveGrants, nulls, bad);
+      a.close();
+    }
+  }
 
   const char* folder = argc > 2 ? argv[2] : std::getenv("CYDPOD_REAL_MEDIA");
   if (!folder || !*folder || !std::filesystem::is_directory(folder)) {
@@ -305,21 +372,21 @@ int main(int argc, char** argv) {
     for (size_t slice : {(size_t)256, (size_t)1024}) {
       M4aGuardedReader* r = new M4aGuardedReader; Run o = feed(*r, in, true, slice, slice == 1024);
       const M4aArena::Stats& s = r->arenaState().stat();
-      bool ok = o.st == M4aStatus::ok && o.frames == expect[name] && !r->arenaState().exhausted() && s.peakLive <= kM4aArenaLiveBoundBytes && r->maxCallBytes() <= kM4aArenaReserveBytes;
+      bool ok = o.st == M4aStatus::ok && o.frames == expect[name] && !r->arenaState().exhausted() && s.peakLive <= kM4aArenaLiveBoundBytes && r->maxCallBytes() <= kArenaReserveBytes;
       if (slice == 1024) {
         Pcm p = decode(o.adts); ok = ok && p.ok && p.frames == o.frames;
         M4aGuardedReader legacy; legacy.setArenaMemory(nullptr); Run l = feed(legacy, in);
         ok = ok && l.adts == o.adts;
-        check(ok, "(f) %s frames=%zu peakLive=%zu highWater=%zu callBytes=%zu callReqs=%zu == heap path", name.c_str(), o.frames, s.peakLive, s.highWater, r->maxCallBytes(), r->maxCallRequests());
+        check(ok, "(f) %s frames=%zu peakLive=%zu minMain=%zu callBytes=%zu callReqs=%zu == heap path", name.c_str(), o.frames, s.peakLive, slice == 1024 ? minMain(in, slice) : 0, r->maxCallBytes(), r->maxCallRequests());
       } else failures += !ok;
-      realLive = std::max(realLive, s.peakLive); realHigh = std::max(realHigh, s.highWater); minLive = std::min(minLive, s.peakLive);
+      realLive = std::max(realLive, s.peakLive); realHigh = std::max(realHigh, slice == 1024 ? minMain(in, slice) : size_t(0)); minLive = std::min(minLive, s.peakLive);
       realCallB = std::max(realCallB, r->maxCallBytes()); realCallN = std::max(realCallN, r->maxCallRequests());
       delete r;
     }
     ++files;
   }
   check(files == 25 && files == expect.size(), "(f) %zu real files through the arena (want 25)", files);
-  std::fprintf(stderr, "     real files: peak live %zu..%zu B, high water <= %zu B, one vendor call <= %zu requests / %zu B\n", minLive, realLive, realHigh, realCallN, realCallB);
+  std::fprintf(stderr, "     real files: peak live %zu..%zu B, min main <= %zu B, one vendor call <= %zu requests / %zu B\n", minLive, realLive, realHigh, realCallN, realCallB);
   std::fprintf(stderr, failures ? "FAILED %d\n" : "PASS arena\n", failures);
   return failures != 0;
 }

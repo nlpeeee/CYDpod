@@ -1,6 +1,6 @@
 # CY-10b: internal allocation failure in the vendored reader (review R2)
 
-Status: **part 2 of 3 done** (CY-10b1: constructor-time allocator hook overlay; CY-10b2: fixed arena, deferred construction, sticky failure). R2 is fixed for every path the guard admits; CY-10b3 (exhaustive sweep, firmware hook) remains, see the end of this file.
+Status: **part 3 of 3 done** (CY-10b1: constructor-time allocator hook overlay; CY-10b2: fixed arena, deferred construction, sticky failure; CY-10b3: failure sweep, arena right-sizing to 16,384 B, firmware wiring). R2 is fixed for every path the guard admits. **Open: the wired firmware does not admit an `.m4a` at the measured board state** (47,840 B needed, 45,488 B free after the file is open: 2,352 B short; see "CY-10b3" at the end). The CY-10b2 sections in the middle are kept as history; where they quote sizes (28,672 B arena, first fit, 256-byte slices, 11,520 B bound) CY-10b3 supersedes them.
 
 ## Findings (why a hook, and where it has to sit)
 
@@ -193,9 +193,141 @@ All host suites pass: `build_m4a_{host,caps,reject,sequence,r1r5,filetable,real,
 
 Compile only; no hardware was touched and nothing was flashed. Note for whoever flashes it: the probe's reader now takes one 28,672 B block from the heap in `begin()` instead of about 8.7 KB of scattered vendor allocations.
 
-## Still to do (CY-10b3)
 
-- Exhaustive failure sweep: make allocation N fail for every N in a valid run and in the rejection suite (the arena sweep above varies the region size, not the individual request) and require a clean status, no abort, no leak, and a usable reader on the next `begin()`. Include a fault on the arena acquisition in the `begin()` of a second track.
-- Check the reserve bound mechanically: instrument the per-call request total for adversarial frame-size streams delivered as one 256-byte slice at every alignment, and for the container/level-stack single-shot calls.
-- Wire the firmware hook (`heap_caps_malloc(..., MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)`) through `setArenaMemory`, size the firmware admission (`kReaderPeakBytes`, `m4aNeedFree`, the CY-11b margin) from the 28,672 B arena, and confirm on the device that no other task allocates through the vendored `Allocator` while a vendor call runs (the design rule above).
-- Decide whether the 20 KiB main region can shrink (best-fit, or placing the long-lived blocks first, would cut the 1.47x fragmentation).
+## CY-10b3: failure sweep, arena right-sizing, firmware wiring
+
+Compile and host tests only; no hardware, serial port, SD card or flashing. Branch `cydpod/cy-10`.
+
+### Result in one paragraph
+
+The reader arena is now **16,384 B in total (main 11,776 + reserve 4,608), down from 28,672 B**, and the allocation-failure sweep passes for every allocation event on three inputs (plain and ASan/UBSan). The probe takes the arena with `heap_caps_malloc(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)` and derives its admission from `cydpod::kArenaAcquireBytes`. **That is still not small enough to admit an `.m4a` at the measured board state:** after the file is open the board has 45,488 B free and the model needs 47,840 B, so the guard rejects with `low_memory`, **2,352 B short** (628 B short on the largest block; 304 B short even with a zero margin). The margin was not touched. Options for closing the gap are at the end; the decision is the coordinator's.
+
+### Final sizes (`lib/cydpod_m4a/m4a_arena.h`)
+
+| constant | bytes | meaning |
+|---|---|---|
+| `kArenaMainBytes` | 11,776 | live bound 11,440 + 336 fragmentation allowance |
+| `kArenaReserveBytes` | 4,608 | bump-only fallback, plain request sizes |
+| `kArenaTotalBytes` | **16,384** | main + reserve (`static_assert`) |
+| `kArenaAlignSlack` | 8 | `heap_caps_malloc` only promises 4-byte alignment, so `open()` asks for 8 more and aligns the base itself |
+| `kArenaAcquireBytes` | 16,392 | the one request made to the heap |
+| `kArenaClassMinRequest` / `kArenaClassPayload` | 512 / 2,056 | requests in (512, 2,056] are served as one block size |
+| `kM4aVendorSliceBytes` | 64 (was 256) | largest mdat payload slice handed to the vendor in one call |
+| `kM4aArenaResidentEntries` | 64 (was 256) | resident (no-source) sample-size table inside an arena; the shipping mode is file-backed and has none |
+| `kM4aArenaLiveBoundBytes` | 11,440 (was 11,520) | proven bound, derived below, computed from the constants |
+
+### Allocator: why the arena can be this small
+
+CY-10b2 used first fit and sized the main region 20,480 B for an 11,520 B bound because fragmentation reached 1.47x the live peak (16,128 B on the adversarial streams). The vendor's allocations are a handful of 1-2 KiB buffers (parser buffer, demuxer buffer, frame buffer, ADTS scratch) that `Vector`/`SingleBuffer` grow by allocating the new block before freeing the old one, plus a few small vectors. Two changes remove nearly all the waste:
+
+1. **One block size for the large buffers.** Every request in (512, 2,056] B is served as a 2,056 B payload block (2,064 B with its header). A freed large block is therefore always exactly reusable by the next large request; growth never leaves a hole that no later request fits.
+2. **Two-ended placement.** Large blocks are cut from the high end of the best-fitting free block, small blocks (callbacks, containers, level stack, resident table, early ADTS-scratch steps) from the low end, so the two kinds do not carve each other's holes. The search is best fit with coalescing on free.
+
+Measured with `minMain` (the smallest main region, in 8-byte steps, with which the track still plays without touching the reserve: the real requirement, fragmentation included), over the fixture, 8 adversarial patterns x 4 slice sizes, 300 random frame-size streams and 25 real files:
+
+| allocator | worst synthetic minMain | real files minMain | peak live |
+|---|---|---|---|
+| CY-10b2 first fit (high water, same kinds of input) | 16,128 | <= 12,040 | 7,544 .. 10,984 |
+| best fit | 15,400 | <= 11,272 | same |
+| best fit + class size | 12,728 | <= 11,208 | 11,016 |
+| **best fit + class size + two-ended** | **11,208** | **<= 11,208** | **11,016** (real files 10,992) |
+
+Fragmentation is now 192 B over the peak instead of 4.3 KB. The price is that the live peak no longer varies with the track: a class block is 2,064 B whether the frame is 400 or 2,000 B, so every input peaks at 10,992..11,016 B (before: 7.5..8.8 KB typical). That does not matter: the arena is fixed and its size is set by the worst case, which fell from 20,480 + 8,192 to 11,776 + 4,608.
+
+### Proven bound on live bytes (11,440 B)
+
+Same structure as the b2 table, with class blocks: five class blocks (parser buffer, demuxer buffer, frame buffer, ADTS scratch, and the predecessor of whichever of the last two is growing; only one grows at a time) = 5 x 2,064 = 10,320; callbacks 6 x 56 = 336 + 8; containers 17 x 16 = 272 + 8; level stack 8 x 8 = 64 + 8; resident table 64 x 2 = 128 + 8; and, conservatively, one small predecessor while a small vector grows (280 + 8). Sum **11,440** (`kM4aArenaLiveBoundBytes` is computed from these terms). The phase-aware figure is lower, 11,152 (the small predecessor exists only while containers/callbacks are built, when the ADTS scratch does not exist yet); the measured peak is 11,016 because the resident table is absent in the shipping mode. The main region adds 336 B for fragmentation (observed 192 B). The bound follows from the caps (`m4a_caps.h`), not from the file.
+
+### Reserve: derivation and mechanical check
+
+The reserve serves a vendor call that outgrows the main region, until the reader notices (`vendorDone()`), so it must cover the bytes **one** vendor call can request, in plain sizes (the reserve has no headers and is never reused):
+
+| call | worst request volume |
+|---|---|
+| `demux.begin()` (parser + demuxer buffers) | 4,096 (4,112 with headers, the measured maximum over every test) |
+| construction | frame buffer 1,024 + callback vector growth 1,344 = 2,368 (the worst exhausted run used exactly 2,368) |
+| `write()` of the moov header | containers 2,448 + level stack 288 = 2,736 |
+| one 64-byte mdat slice | frame buffer jump 2,048 + ADTS scratch jump 2,056 + strictly growing small steps inside the slice (< 250) + 8-byte rounding < 4,320 |
+
+The slice was reduced from 256 to 64 B for this (a 256 B slice allows ~600 B of growth steps per buffer; the firmware feeds 256 B chunks, so each now costs four vendor calls instead of one, which is negligible). 4,608 B leaves 288 B over the slice bound and 496 B over the measured maximum.
+
+Mechanical checks (all run by `build_m4a_arena.sh`):
+
+- `m4a_arena_test` (f): every measured run requires `maxCallBytes() <= kArenaReserveBytes`; maximum over the fixture, adversarial, random and 25 real files: **4,112 B** (21..25 requests).
+- `m4a_arena_test` (g): a stream with the growing-chain / jump-to-2,041 pattern placed at **every one of the 64 slice alignments** (128 runs, two chunk sizes): worst call 4,112 B <= 4,608 B, never exhausted.
+- `m4a_caps_test` and `m4a_reject_test` in arena mode (105 malformed runs, 3 slice sizes each) now hold the per-call byte total to `kArenaReserveBytes` (they held the largest single request to the live bound before).
+- Fallback disjointness by address ranges: `m4a_arena_test` (g) drives the allocator with 20,000 random alloc/free operations (small, class-size, oversize) against main regions of 1,024 B, 4,096 B and the real size with a 6 KiB reserve, resetting every 500 steps. Every grant is checked: main blocks never overlap each other, reserve blocks never overlap each other or any main block, everything stays inside the one block, 8-byte aligned; refusals (null) only when the plain request does not fit the reserve; the block chain stays consistent. 0 violations. The failure sweep repeats the same audit inside real vendor flows (below).
+
+### Bound proof re-run and exhaustion fallback
+
+- `build_m4a_arena.sh` (plain and ASan/UBSan): fixture, 25 real files, adversarial and random streams, chunk sizes 1 B .. 4 MiB: peak live <= 11,016 <= bound 11,440, `minMain` <= 11,208 <= main 11,776, never exhausted, ADTS and PCM identical to the heap path.
+- Forced exhaustion (d): main region swept from 16 B to 24 KiB for the fixture, a 200-frame ascending stream and a chain-then-jump stream with 17 tiny frames before it (3 inputs): each run is `ok` without the flag or `no_memory` with it; the block chain stays consistent; the reserve never overran (worst exhausted run: 2,368 of 4,608 B); an exhausted reader plays the next track.
+
+### Failure sweep (`tests/m4a_alloc_fail_test.cpp`, `tests/build_m4a_alloc_fail.sh`)
+
+A counting run records every allocation event the reader can make while it begins, plays and is destroyed: the arena acquisition (`M4aArenaMemory`), every vendored-allocator request (the arena hook, observed through the new `M4aArena::Probe` test aid), and anything that bypasses both (global `operator new` and the `malloc` family, wrapped with `-Wl,--wrap`). Then for every k in 1..N the k-th event fails, in two modes: only the k-th, and the k-th and every later one ("sticky"). A hook allocation "fails" by being refused by the main region, so it is served from the reserve (the design never returns null from the hook) and raises the exhaustion flag; a failed acquisition returns null from the memory source (which, like `heap_caps_malloc`, hands out only 4-byte aligned blocks); a bypassing allocation would return null or throw. The harness itself never allocates inside the window (fixed-capacity containers, a one-pointer callback), so every event belongs to the reader.
+
+Per faulted run it asserts: no abort, crash, hang or escaped exception (signal handlers and a timeout report the input and k); status `no_memory` for an accepted input (the rejection status or `no_memory` for a rejected one) and sticky on further `write()`/`finish()`; after `end()` arena live bytes 0, the memory source holds nothing, no hook grant is left, no bypassing allocation is left; every grant audited by address range (no overlap, inside the block); then the next valid track on the **same reader with its arena kept**, on the same reader **after `end()`** (arena acquired again) and on a **fresh reader** decode identically (ADTS bytes, frame count and hash; PCM decoded through Helix and hashed for the fixture, and for k = 1, N/2, N elsewhere).
+
+| input | chunks | N events | faulted runs (single + sticky) | outcome |
+|---|---|---|---|---|
+| fixture `stereo-faststart.m4a` | 256 B | 45 (1 acquisition, 44 hook, 0 bypassing) | 90 | 90 `no_memory` |
+| fixture | 4,096 B | 45 | 90 | 90 `no_memory` |
+| fixture as a **second track** on a warm reader (arena kept) | 256 B | 44 (0 acquisition, 44 hook) | 88 | 88 `no_memory` |
+| rejected `stereo-moov-last.m4a` | 256 B | 13 (1, 12, 0) | 26 | 26 `no_memory` |
+| rejected `stereo-moov-last.m4a` | 4,096 B | 13 | 26 | 26 `no_memory` |
+| real file `07-01 - Deee-Lite - Groove Is in the Heart.m4a` (read-only, 9,985 frames) | 256 B | 49 (1, 48, 0) | 98 | 98 `no_memory` |
+
+418 faulted runs, 0 failures, plain and under `-fsanitize=address,undefined` (`.tools/logs/cy10b3-sweep.txt`). The rejected file's rejection (`moov_after_mdat`, raised at the mdat header) comes after all 13 of its allocations, so every fault there pre-empts it. Also checked: an acquisition refused in the `begin()` of the **second** track on a reader (track 1 ok, `end()`, track 2 `no_memory`, `write()`/`finish()` keep returning it, track 3 plays identically). Zero bypassing allocations is asserted: nothing the reader does touches the heap outside the arena hook and its one acquisition. The sweep found nothing to fix in the reader. A deliberate negative control (a refused request returning null instead of falling back to the reserve) hung the vendor's `stop()` path, which the sweep's timeout reports; that is the reason for the reserve design.
+
+### Where the allocator hook is installed and cleared
+
+`setAllocatorHook` has exactly one call site, `M4aGuardedReader::Scope` (`lib/cydpod_m4a/m4a_guarded_reader.h`): the constructor saves the current slot value and installs this reader's hook, the destructor restores the saved value (null in the firmware). `Scope` is instantiated in four places only: `begin()` (twice: construction plus primer, and the `demux.begin()` call), `destroyVendor()` (`~M4AAudioDemuxer`, `~M4aCappedSizes`, from `begin()`, `end()` and the destructor), and `vendorWrite()` (each `demux.write`). `finish()` and the guard's own scan call nothing in the vendor. In the firmware those entry points are reached from `M4aFeed::begin` (producer task, after `SD.open`), `M4aFeed::read` (producer task, inside the `decoder.next` lambda) and `delete feed` (producer task). Nothing else uses the vendored `Allocator` while the slot is set: the Bluetooth stack is ESP32-A2DP without `A2DP_I2S_AUDIOTOOLS` (it never includes AudioTools; nothing in the probe defines that macro), Helix allocates through its own `helix_malloc`/`libhelix::Allocator` (a separate class in another namespace), the sink and main tasks never call into the reader, and the frame callback and `SdSource::readAt` run inside the scope but allocate nothing through audio-tools containers (they `memcpy` and call `File::read`). The slot is a plain global written only by `Scope`; this remains a design rule that the code cannot enforce, which the tests check from the other side (slot empty between calls; a foreign hook is neither used nor lost; `m4a_hook_test`: 56 arena allocations = 56 heap allocations of the hook-less run, 0 bypassing).
+
+### Firmware wiring (`firmware/cydpod_probe/cydpod_probe.ino`)
+
+- `kArenaMemory` = `heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)` / `heap_caps_free`; `M4aFeed::begin` calls `reader.setArenaMemory(&kArenaMemory)` before `reader.begin`. If the block cannot be taken, `begin()` returns `no_memory`; the producer now checks `feed->failed()` right after `begin`, logs `TRACK ev=skip` and `ERR m4a no_memory`, deletes the feed and continues with the next command, before the decoder is allocated.
+- `constexpr uint32_t kReaderPeakBytes = cydpod::kArenaAcquireBytes + sizeof(cydpod::M4aGuardedReader)` (16,392 + 4,344 = 20,736; was the hand-typed 14,336). `m4aNeedFree()` keeps its formula; `m4aNeedLargest()` is now `sizeof(M4aFeed) + kArenaAcquireBytes + kDecoderLargestRequest`, because the feed, the arena (one contiguous block) and Helix's largest request are carved in that order, all from the largest block in the conservative case.
+- Compiler-reported xtensa sizes: `sizeof(M4aFeed)` 8,720, `sizeof(M4aGuardedReader)` 4,344, feed extra 4,376 (the 64-bit host layout is 9,392 / 5,000 / 4,392). `static_assert(sizeof(M4aFeed) <= 8720)` now guards the arithmetic below.
+
+### Admission at the measured board state: does not fit
+
+CY-12a: 45,488 B free and 45,044 B largest block after the file is open.
+
+```
+reader arena                     = 16,384 + 8 alignment slack = 16,392
+kReaderPeakBytes                 = 16,392 + 4,344             = 20,736
+need_free    = 20,680 + 20,736 + 4,376 + 2,048                = 47,840
+free         = 45,488                                         -> 2,352 B SHORT   (rejected, low_memory)
+need_largest = 8,720 + 16,392 + 20,560                        = 45,672
+largest      = 45,044                                         ->   628 B SHORT
+zero margin  : 20,680 + 8,720 + 16,392 = 45,792 vs 45,488     ->   304 B SHORT
+```
+
+The margin is unchanged at 2,048 B; nothing was tuned. Before CY-10b3 the same state "admitted" with 4,032 B of slack, but only because the model assumed a 14,336 B reader and a failed allocation inside it was not survivable. With the arena the demand is real, fixed and failure-safe, and it is larger. The floor for the arena is the live bound (11,440 B) plus the 4,112 B the reserve must cover for `demux.begin()`, about 15.5 KB, so no allocator work can reach the 14,040 B the state would allow (45,488 - 2,048 - 20,680 - 8,720).
+
+Ways to close the gap, none applied (each needs a decision or a measurement the host cannot give):
+
+1. **Ring 2,048 -> 1,024 frames** (`PcmRing`, a `.bss` object): +4,096 B of boot heap, enough alone (free 49,584 B vs 47,840 B). Needs the underrun data CY-11b noted it lacks.
+2. `AdtsDecoder::pcm_` 4,096 -> 2,048 samples: +4,096 B if the LC bound is proven (`cy11b-admission.md`).
+3. Producer stack 8,192 -> 6,144 (+2,048 B): short by 304 B alone; together with sink stack 3,072 -> 2,048 (+1,024 B) it closes the gap.
+4. A frame cap below 2,041 B (an AAC-LC stereo frame cannot exceed 1,536 B) would let the frame buffer and ADTS scratch use a smaller class; it saves roughly 1.5 KiB of main and 0.5 KiB of reserve and is a caps/policy change; not enough alone.
+5. `M4aFeed::adts[4096]` is the ADTS queue between the reader and the decoder; with frames <= 2,048 B it could shrink somewhat; unmeasured.
+
+### Test expectations that changed with the new sizes
+
+- `m4a_arena_test` (a)/(b): the acquisition is `kArenaAcquireBytes` (main + reserve + 8); the 131-entry fixture through the **resident** table now returns `table_overflow` (the arena limit is 64 entries) and the identity check uses a 64-entry stream instead; `highWater` (an extent that two-ended placement makes meaningless) is replaced by `minMain`; the unit expectations (first-fit-like hole reuse, coalescing) still hold because the unit arena is smaller than a class block, where class rounding is off.
+- `m4a_arena_test` (d): a third forced-exhaustion input; (g) is new.
+- `m4a_caps_test` / `m4a_reject_test` in arena mode: the per-call request total is held to `kArenaReserveBytes`; the reject suite runs file-backed (the shipping mode, via `MemSource`) because its fixtures use 131-entry tables.
+- `m4a_hook_test`: static arena block sized `kArenaAcquireBytes`; counts unchanged (56/56, peak live 10,992).
+
+### Results
+
+All host suites pass: `tests/build_m4a_{host,caps,reject,sequence,r1r5,filetable,real,hook,arena}.sh` and `build_m4a_alloc_fail.sh` (real: accepted=25 mismatches=0; the arena and sweep tests also under ASan/UBSan with no finding). `powershell -File tools/check.ps1` exit 0 (`.tools/logs/cy10b3-check.txt`); session dry-runs (`tools/cy11c_session.ps1`, `tools/cyd_probe_session.ps1`, `-DryRun`) pass in PS 5.1 and `pwsh`.
+
+| | image bytes | static RAM | sha256 |
+|---|---|---|---|
+| CY-10b2 probe | 1,226,528 | 61,560 | `bd005e2fef9978b18e3bca2965d4c464e3fe6d4d7d054f35ee3e0771ff39ba2e` |
+| CY-10b3 probe | 1,226,960 (+432) | 61,560 (+0) | `8da289bc871781f3ac4bebee37fea63a0dbc175d0229b87172e942b880690071` |
+
+62.4% of the 1,966,080 B slot. Compile only; nothing was flashed. **Do not flash this image expecting an `.m4a` to play:** the guard will answer `ERR m4a low_memory` at the CY-12a heap state until the 2,352 B are found.

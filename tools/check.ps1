@@ -3,24 +3,24 @@
 param([switch]$SkipProbe, [switch]$SkipHostMedia)
 $ErrorActionPreference = 'Stop'
 
-function Test-AudioToolsInventory {
-    param([string]$SourceRoot, [string]$InventoryPath)
+function Test-FileInventory {
+    param([string]$Label, [string]$SourceRoot, [string]$InventoryPath)
     $expected = Get-Content -LiteralPath $InventoryPath -Raw | ConvertFrom-Json
     $expectedNames = @($expected.PSObject.Properties.Name)
     foreach ($item in ($expected.PSObject.Properties | Sort-Object Name)) {
         $path = Join-Path $SourceRoot $item.Name
         if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
-            throw "AudioTools inventory missing file: $($item.Name)"
+            throw "$Label inventory missing file: $($item.Name)"
         }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item.Value) {
-            throw "AudioTools inventory SHA256 mismatch: $($item.Name)"
+            throw "$Label inventory SHA256 mismatch: $($item.Name)"
         }
     }
     $source = (Resolve-Path -LiteralPath $SourceRoot).Path.TrimEnd([char]92, [char]47)
     foreach ($file in (Get-ChildItem -LiteralPath $source -Recurse -File -Force | Sort-Object FullName)) {
         $relative = $file.FullName.Substring($source.Length + 1).Replace([char]92, [char]47)
         if ($expectedNames -cnotcontains $relative) {
-            throw "AudioTools inventory unexpected file: $relative"
+            throw "$Label inventory unexpected file: $relative"
         }
     }
 }
@@ -48,8 +48,10 @@ try {
     if ($sourceFiles.Count -ne @($expected.PSObject.Properties).Count) {
         throw 'Unexpected files in vendored source snapshot.'
     }
-    Test-AudioToolsInventory -SourceRoot (Join-Path $root 'vendor/arduino-audio-tools') `
+    Test-FileInventory -Label 'AudioTools' -SourceRoot (Join-Path $root 'vendor/arduino-audio-tools') `
         -InventoryPath (Join-Path $root 'tools/audiotools-files.sha256.json')
+    Test-FileInventory -Label 'MiniAAC' -SourceRoot (Join-Path $root 'vendor/miniaac') `
+        -InventoryPath (Join-Path $root 'tools/miniaac-files.sha256.json')
     if ((Get-FileHash $cli).Hash.ToLowerInvariant() -ne $lock.cli.executableSha256) { throw 'Arduino CLI executable differs from lock.' }
     if ((Get-FileHash .deps/sketchbook/libraries/arduino-libhelix/src/ConfigHelix.h).Hash.ToLowerInvariant() -ne $lock.patches[0].sha256) {
         throw 'Helix config differs from lock; run setup.ps1.'
@@ -65,9 +67,9 @@ try {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
             throw 'Required AAC probe is missing. Use -SkipProbe only for an explicit stock-baseline check.'
         }
-        $m4aInclude = (Join-Path $root 'lib/cydpod_m4a').Replace([string][char]92, '/')
-        # The pristine tree was verified above. The probe compiles a staged copy with patches/audio-tools/*.patch applied
-        # (CY-10b1 allocator hook); vendor/ and its inventory are never modified.
+        # CY-31: the probe decodes with MiniAAC (vendor/miniaac, inventory verified above), passed to arduino-cli as a single --library.
+        # AudioTools and lib/cydpod_m4a are no longer on the probe's build path. The retained AudioTools overlay patches (CY-10b1) are
+        # still applied to a staged copy of the pristine tree below so that they keep applying; vendor/ and its inventory are never modified.
         $patchedRoot = Join-Path $root '.tools/staging/audiotools-patched'
         if (Test-Path $patchedRoot) {
             if (!(Resolve-Path $patchedRoot).Path.StartsWith((Join-Path $root '.tools/staging/'), [StringComparison]::OrdinalIgnoreCase)) {
@@ -82,8 +84,8 @@ try {
             try { & git apply --whitespace=nowarn $patch.FullName } finally { Pop-Location }
             if ($LASTEXITCODE -ne 0) { throw "AudioTools overlay failed to apply: $($patch.Name)" }
         }
-        $toolsInclude = (Join-Path $patchedRoot 'src').Replace([string][char]92, '/')
-        $jobs += @{ Name = 'aac-probe'; Sketch = 'firmware/cydpod_probe'; Flags = "-DCYDPOD_AAC_LC_ONLY -I$toolsInclude -I$m4aInclude" }
+        $jobs += @{ Name = 'aac-probe'; Sketch = 'firmware/cydpod_probe'; Flags = '-DCYDPOD_AAC_LC_ONLY'
+            Library = (Join-Path $root 'vendor/miniaac') }
     }
     $results = @()
     foreach ($job in $jobs) {
@@ -118,6 +120,7 @@ try {
             $arguments += @('--build-property', "compiler.cpp.extra_flags=$($job.Flags)",
                 '--build-property', "compiler.c.extra_flags=$($job.Flags)")
         }
+        if ($job.Library) { $arguments += @('--library', $job.Library) }
         $arguments += $stage
         $log = Join-Path $root ".tools/logs/$($job.Name).log"
         Write-Host "Compiling $($job.Name)..."

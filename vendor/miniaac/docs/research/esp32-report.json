@@ -1,0 +1,118 @@
+{
+  "target": "classic ESP32 / Xtensa",
+  "compiler": "xtensa-esp-elf-gcc.exe (crosstool-NG esp-14.2.0_20260121) 14.2.0",
+  "workspace_bytes": 22480,
+  "codec_arena_bytes": 19432,
+  "pcm_bytes": 4096,
+  "total_component_ram_bytes": 26576,
+  "object_sections_bytes_before_linker_gc": {
+    "text_and_literals": 20144,
+    "rodata": 29228,
+    "data": 0,
+    "bss": 0
+  },
+  "largest_static_stack_frames": [
+    {
+      "function": "miniaac_open",
+      "bytes": 544,
+      "kind": "static"
+    },
+    {
+      "function": "raac_IMDCT",
+      "bytes": 144,
+      "kind": "static"
+    },
+    {
+      "function": "raac_TNSFilter",
+      "bytes": 128,
+      "kind": "static"
+    },
+    {
+      "function": "raac_Dequantize",
+      "bytes": 112,
+      "kind": "static"
+    },
+    {
+      "function": "miniaac_decode_next",
+      "bytes": 112,
+      "kind": "static"
+    },
+    {
+      "function": "raac_DecodeNoiselessData",
+      "bytes": 112,
+      "kind": "static"
+    },
+    {
+      "function": "raac_PNS",
+      "bytes": 112,
+      "kind": "static"
+    },
+    {
+      "function": "raac_StereoProcess",
+      "bytes": 112,
+      "kind": "static"
+    },
+    {
+      "function": "R4Core",
+      "bytes": 96,
+      "kind": "static"
+    },
+    {
+      "function": "raac_R4FFT",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "UnpackQuads",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "UnpackPairsNoEsc",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "AACDecode",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "raac_DCT4",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "raac_DecodeNextElement",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "raac_UnpackADIFHeader",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "UnpackPairsEsc.constprop",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "raac_DecodeSpectrumLong",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "raac_DecodeSpectrumShort",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "box_next",
+      "bytes": 64,
+      "kind": "static"
+    }
+  ],
+  "heap_allocator_references": false,
+  "hardware_tested": false
+}

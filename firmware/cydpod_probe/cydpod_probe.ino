@@ -1,4 +1,4 @@
-// Minimal ORIGINAL ESP32 probe. No UI, Wi-Fi, PSRAM, codec or MP4 implementation.
+// Minimal ORIGINAL ESP32 probe. No UI, Wi-Fi or PSRAM. AAC-LC/M4A/ADTS decoding is MiniAAC (CY-31, vendor/miniaac) via miniaac_adapter.h.
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
@@ -7,9 +7,7 @@
 #include <BluetoothA2DPSource.h>
 #include <driver/i2s_std.h>
 #include <esp_heap_caps.h>
-#include <AACDecoderHelix.h> // Arduino dependency discovery; raw C API below does the decoding.
-#include "adts_decoder.h"
-#include "m4a_guarded_reader.h" // lib/cydpod_m4a, include path supplied by tools/check.ps1
+#include "miniaac_adapter.h" // pulls in miniaac.h: the MinimalAAC library, supplied with --library by tools/check.ps1
 #if !defined(CONFIG_IDF_TARGET_ESP32) || !defined(CYDPOD_AAC_LC_ONLY)
 #error This probe requires original ESP32 and global CYDPOD_AAC_LC_ONLY
 #endif
@@ -26,7 +24,7 @@ enum class Output : uint8_t { bluetooth, line, headphone };
 enum class Op : uint8_t { play, stop, output, pair, ls };
 struct Command { Op op; Output output; uint32_t epoch; char text[128]; };
 PcmRing<2048> pcmRing; // exactly 8192 bytes of PCM
-AdtsDecoder decoder;
+MiniAacTrack miniPlayer; // static: MiniAAC workspace 22,528 B + PCM 4,096 B, no heap
 SPIClass sdSpi(VSPI);
 BluetoothA2DPSource a2dp;
 Preferences prefs;
@@ -48,94 +46,28 @@ bool a2dpStarted=false;
 uint32_t pairStarted=0;
 std::atomic<uint32_t> minLargest{UINT32_MAX};
 std::atomic<const char*> m4aState{"na"}; // published static-lifetime status strings
-std::atomic<uint32_t> sourceReads{0}; // sample-size window refills of the current track (producer writes)
-// M4A admission model (CY-11b, docs/research/cy11b-admission.md). Bytes; arithmetic is evaluated in m4aNeedFree/m4aNeedLargest below.
-constexpr uint32_t kDecoderPeakBytes=20680;      // Helix AACDecInfo+PSInfoBase, tests/helix_decode.cpp --allocation-test (WSL, 64-bit)
-constexpr uint32_t kDecoderLargestRequest=20560; // largest single Helix request (PSInfoBase)
-// CY-10b3: the reader is its object plus ONE arena block taken from the heap (cydpod::kArenaAcquireBytes = main + reserve + 8 alignment slack, see
-// docs/research/cy10b-alloc-failure.md); all the vendored reader's allocations are served from it, so this replaces the old measured 14,336.
-constexpr uint32_t kReaderPeakBytes=uint32_t(cydpod::kArenaAcquireBytes+sizeof(cydpod::M4aGuardedReader));
-// Free heap that must remain after the track's decoder+reader+feed are allocated. PROVISIONAL (CY-13a): the board measured 45,488 B free after the
-// file is open (CY-12a). With the CY-10b3 arena the model needs 20,680+(16,392+4,344)+4,376+2,048 = 47,840 B (xtensa sizeof) there, which exceeds it (arithmetic and shortfall in
-// docs/research/cy10b-alloc-failure.md): an .m4a is rejected with low_memory until the coordinator decides how to close the gap. The true playback floor
-// is NOT measured on hardware (no track was played in CY-11c). A failed reader allocation is now a clean no_memory status, not a reboot (R2).
-constexpr uint32_t kPlaybackMarginBytes=2048;
+// Admission (CY-31, docs/research/cy31-miniaac-integration.md). MiniAAC allocates nothing: workspace and PCM buffer are inside the static
+// miniPlayer, so a track needs no heap beyond what the rest of the firmware (SD, Bluetooth, stacks) already holds. What is left is the playback
+// margin, kept at 10,240 B (CY-13a's 2,048 B was provisional): free internal heap after the file is open must stay at or above it.
+constexpr uint32_t kPerTrackHeapBytes=0;
+constexpr uint32_t kPlaybackMarginBytes=10240;
+constexpr uint32_t trackNeedFree() { return kPerTrackHeapBytes+kPlaybackMarginBytes; }
 void sampleLargest() {
   uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
   uint32_t old=minLargest.load();
   while(largest<old && !minLargest.compare_exchange_weak(old,largest)) {}
 }
 
-bool endsWithNoCase(const char* s,const char* suffix) {
-  size_t a=strlen(s), b=strlen(suffix);
-  return a>=b && !strcasecmp(s+a-b,suffix);
-}
 // One stable line per track event: TRACK ev=live|start|end|skip name=<path> m4a=<status|na> heap=<free> largest=<block> min_heap=<since boot> min_sampled_largest=<min> producer_stack=<bytes> source_reads=<n>
-// ev=live is logged once per track right after reader and decoder are allocated (ev=start follows at the same state).
+// m4a= carries the MiniAAC status name (ok, format, io, unsupported, ... or not_44100_stereo), for .aac tracks too. ev=live is logged once per track right after MiniAAC opened it (ev=start follows at the same state).
 void logTrack(const char* ev) {
   sampleLargest();
   const char* state=m4aState.load();
   Serial.printf("TRACK ev=%s name=%s m4a=%s heap=%u largest=%u min_heap=%u min_sampled_largest=%u producer_stack=%u source_reads=%u\n",ev,track,state,
     unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
     unsigned(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(minLargest.load()),
-    unsigned(producerHandle?uxTaskGetStackHighWaterMark(producerHandle):0),unsigned(sourceReads.load()));
+    unsigned(producerHandle?uxTaskGetStackHighWaterMark(producerHandle):0),unsigned(miniPlayer.reads.load()));
 }
-// Sample-size window source over the one open SD handle: save position, seek, read, restore. No second FatFs window.
-struct SdSource : cydpod::M4aSeekableSource {
-  File* file=nullptr;
-  cydpod::M4aSourceResult readAt(uint64_t offset,uint8_t* dst,size_t size) override {
-    sourceReads.fetch_add(1);
-    if(!file || offset>UINT32_MAX) return cydpod::M4aSourceResult::seekError;
-    const size_t saved=file->position();
-    if(!file->seek(uint32_t(offset))) { file->seek(saved); return cydpod::M4aSourceResult::seekError; }
-    const size_t got=file->read(dst,size);
-    if(!file->seek(saved)) return cydpod::M4aSourceResult::seekError;
-    return got==size ? cydpod::M4aSourceResult::ok : cydpod::M4aSourceResult::shortRead;
-  }
-};
-// The arena's one fallible allocation (CY-10b3): internal 8-bit heap, may fail; the reader turns a refusal into M4aStatus::noMemory. The vendored
-// audio-tools Allocator is routed into the arena only inside the reader's own calls (begin/write/destruction), which run on the producer task alone.
-static void* arenaAcquire(size_t bytes,void*) { return heap_caps_malloc(bytes,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT); }
-static void arenaRelease(void* block,void*) { heap_caps_free(block); }
-const cydpod::M4aArenaMemory kArenaMemory{arenaAcquire,arenaRelease,nullptr};
-// Pull adapter: file bytes -> guarded M4A reader -> ADTS frames queued here -> AdtsDecoder reads them like an .aac file.
-struct M4aFeed {
-  cydpod::M4aGuardedReader reader;
-  uint8_t adts[4096]; size_t head=0, tail=0;
-  uint8_t chunk[256];
-  bool done=false, overflow=false;
-  SdSource source;
-  void begin(File& file) {
-    source.file=&file; sourceReads.store(0);
-    reader.begin([this](const uint8_t* d,size_t n) {
-      if(head==tail) head=tail=0;
-      if(tail+n>sizeof(adts)) { overflow=true; return; }
-      memcpy(adts+tail,d,n); tail+=n;
-    },&source);
-  }
-  size_t read(File& file,uint8_t* out,size_t n) {
-    while(head==tail && !done && reader.status()==cydpod::M4aStatus::ok && !overflow) {
-      size_t got=file.read(chunk,sizeof(chunk));
-      if(got==0) { reader.finish(); done=true; }
-      else reader.write(chunk,got);
-    }
-    size_t take=std::min(n,tail-head);
-    memcpy(out,adts+head,take); head+=take;
-    return take;
-  }
-  // ok only if the whole file demuxed cleanly and no frame was dropped.
-  const char* state() const { return overflow ? "adts_queue_overflow" : cydpod::m4aStatusName(reader.status()); }
-  bool failed() const { return overflow || reader.status()!=cydpod::M4aStatus::ok; }
-};
-// Admission need after the track file is open and before M4aFeed/decoder are allocated. feed extra = M4aFeed minus the reader object.
-// xtensa layout (CY-10b3, read from the compiler): M4aFeed 8,720 / reader 4,344 / feed extra 4,376; the 64-bit host layout is 9,392 / 5,000 / 4,392.
-static_assert(sizeof(M4aFeed)<=8720,"M4aFeed grew (xtensa sizeof was 8,720 at CY-10b3): update cy10b-alloc-failure.md and cy11b-admission.md");
-constexpr uint32_t m4aFeedExtra() { return uint32_t(sizeof(M4aFeed)-sizeof(cydpod::M4aGuardedReader)); }
-constexpr uint32_t m4aNeedFree() { return kDecoderPeakBytes+kReaderPeakBytes+m4aFeedExtra()+kPlaybackMarginBytes; }
-// Feed is allocated first as one block, then the reader arena as ONE contiguous block (kArenaAcquireBytes), then Helix needs its own largest request
-// from what is left; with all three carved from the same largest block (the conservative case) the sum must fit.
-constexpr uint32_t m4aNeedLargest() { return uint32_t(sizeof(M4aFeed))+uint32_t(cydpod::kArenaAcquireBytes)+kDecoderLargestRequest; }
-
 // Only the active consumer calls this. Gain ramps after unmute; mute is immediate.
 void render(Stereo* data, size_t count, GainRamp& gain) {
   size_t got=pcmRing.pop(data,count);
@@ -240,7 +172,7 @@ void producerTask(void*) {
       continue;
     }
     if(command.op==Op::ls) { listDirectory(command.text); lsPending.store(false); continue; }
-    stopConsumers(); decoder.end();
+    stopConsumers(); miniPlayer.end();
     if(command.op==Op::stop) { track[0]=0; continue; }
     if(command.op==Op::output || command.op==Op::pair) {
       closeOutput(); output=command.output;
@@ -252,62 +184,48 @@ void producerTask(void*) {
     if(!track[0]) continue;
     File file=SD.open(track,FILE_READ);
     if(!file || file.isDirectory()) { Serial.println("ERR track open"); continue; }
-    M4aFeed* feed=nullptr; m4aState="na"; sourceReads.store(0);
-    if(endsWithNoCase(track,".m4a")) {
-      const uint32_t heap=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
-      const uint32_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
-      // Evidence-based model (cy11b-admission.md), checked after the file is open (its buffers are already paid) and before
-      // the reader/decoder are allocated. need = free-heap need; the largest-block need is m4aNeedLargest().
-      if(heap<m4aNeedFree() || largest<m4aNeedLargest()) {
-        stopConsumers(); m4aState="low_memory"; logTrack("skip");
-        Serial.printf("ERR m4a low_memory heap=%u largest=%u need=%u need_largest=%u\n",unsigned(heap),unsigned(largest),unsigned(m4aNeedFree()),unsigned(m4aNeedLargest()));
-        file.close(); continue;
-      }
-      feed=new(std::nothrow) M4aFeed;
-      if(!feed) { stopConsumers(); m4aState="alloc"; logTrack("skip"); Serial.println("ERR M4A allocation"); file.close(); continue; }
-      feed->begin(file);
-      if(feed->failed()) {  // e.g. no_memory: the arena block could not be taken; nothing else was allocated for this track
-        stopConsumers(); m4aState=feed->state(); logTrack("skip");
-        Serial.printf("ERR m4a %s\n",m4aState.load());
-        delete feed; file.close(); continue;
-      }
-      m4aState="ok";
+    m4aState="na";
+    // Admission (cy31-miniaac-integration.md): checked after the file is open (its buffers are already paid), before anything is decoded.
+    const uint32_t heap=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    if(heap<trackNeedFree()) {
+      stopConsumers(); m4aState="low_memory"; logTrack("skip");
+      Serial.printf("ERR m4a low_memory heap=%u need=%u\n",unsigned(heap),unsigned(trackNeedFree()));
+      file.close(); continue;
     }
-    if(!decoder.begin()) { stopConsumers(); Serial.println("ERR AAC allocation"); file.close(); delete feed; continue; }
+    if(miniPlayer.begin(file)!=MINIAAC_OK) {  // io/format/unsupported/..., or not_44100_stereo: skip the track, keep serving commands
+      stopConsumers(); m4aState=miniPlayer.name(); logTrack("skip");
+      Serial.printf("ERR m4a %s\n",miniPlayer.name());
+      file.close(); continue;
+    }
+    m4aState="ok";
     sampleLargest(); logTrack("live"); logTrack("start");
     btConsume.store(output==Output::bluetooth); i2sConsume.store(output!=Output::bluetooth);
-    DecodeResult result=DecodeResult::frame;
+    MiniAacTrack::Pull result=MiniAacTrack::Pull::frames;
     while(epoch.load()==command.epoch) {
-      result=decoder.next([&file,feed](uint8_t* p,size_t n)->size_t { return feed?feed->read(file,p,n):file.read(p,n); });
-      if(feed) m4aState=feed->state();
-      if(result!=DecodeResult::frame) break;
-      decodedFrames.fetch_add(1);
-      if((decodedFrames.load()&15)==0) sampleLargest();
-      size_t sent=0;
-      while(sent<1024 && epoch.load()==command.epoch) {
-        sent+=pcmRing.push(decoder.pcm()+sent,1024-sent);
-        if(pcmRing.size()>=1024) ready.store(true);
-        // A disconnected A2DP source cannot drain; wait, bounded by pair timeout.
-        if(a2dpStarted && !connected.load() && millis()-connectionChanged.load()>30000) {
-          Serial.println("ERR Bluetooth connect/reconnect timeout; pair again"); epoch.fetch_add(1); break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1));
+      if(!miniPlayer.pending()) {  // a partial ring push keeps the rest of the block for the next pass
+        result=miniPlayer.next();
+        if(result!=MiniAacTrack::Pull::frames) break;
+        decodedFrames.fetch_add(1);
+        if((decodedFrames.load()&15)==0) sampleLargest();
       }
+      miniPlayer.consume(pcmRing.push(miniPlayer.pcm(),miniPlayer.pending()));
+      if(pcmRing.size()>=1024) ready.store(true);
+      // A disconnected A2DP source cannot drain; wait, bounded by pair timeout.
+      if(a2dpStarted && !connected.load() && millis()-connectionChanged.load()>30000) {
+        Serial.println("ERR Bluetooth connect/reconnect timeout; pair again"); epoch.fetch_add(1); break;
+      }
+      vTaskDelay(pdMS_TO_TICKS(1));
     }
-    decoder.end();
-    bool m4aFailed=feed && feed->failed();
-    delete feed; feed=nullptr;
-    file.close(); // the reader's source used this handle until now; every readAt restored the position, also on failure
-    if(m4aFailed && epoch.load()==command.epoch) {
-      // Demux error: drop queued PCM, skip this track, keep serving the next command.
-      stopConsumers(); logTrack("skip"); Serial.printf("ERR m4a %s\n",m4aState.load());
-    } else if(epoch.load()==command.epoch && result==DecodeResult::eof) {
+    miniPlayer.end();
+    file.close(); // MiniAAC read through this handle until now
+    if(result==MiniAacTrack::Pull::error && epoch.load()==command.epoch) {
+      // Read/format/codec error: publish the status, drop queued PCM, skip this track, keep serving the next command.
+      m4aState=miniPlayer.name(); stopConsumers(); logTrack("skip"); Serial.printf("ERR m4a %s\n",miniPlayer.name());
+    } else if(epoch.load()==command.epoch && result==MiniAacTrack::Pull::eof) {
       ready.store(true);
       uint32_t until=millis()+2000;
       while(pcmRing.size() && epoch.load()==command.epoch && int32_t(until-millis())>0) vTaskDelay(pdMS_TO_TICKS(1));
       logTrack("end"); Serial.println("EOF");
-    } else if(epoch.load()==command.epoch) {
-      stopConsumers(); Serial.printf("ERR %s helix=%d\n",resultName(result),decoder.lastError);
     }
     stopConsumers();
   }
@@ -319,7 +237,7 @@ void metrics() {
   Serial.printf("METRIC m4a=%s heap=%u min_heap=%u largest=%u min_sampled_largest=%u producer_stack=%u sink_stack=%u loop_stack=%u ring=%u decoded=%u underrun_frames=%u underrun_calls=%u queue_rejected=%u connected=%u muted=%u level=%u source_reads=%u\n",
     state,unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),unsigned(largest),unsigned(minLargest.load()),
     unsigned(producerHandle?uxTaskGetStackHighWaterMark(producerHandle):0),unsigned(sinkHandle?uxTaskGetStackHighWaterMark(sinkHandle):0),unsigned(uxTaskGetStackHighWaterMark(nullptr)),
-    unsigned(pcmRing.size()),unsigned(decodedFrames.load()),unsigned(underrunFrames.load()),unsigned(underrunCalls.load()),unsigned(queueRejected.load()),unsigned(connected.load()),unsigned(muted.load()),targetLevel.load(),unsigned(sourceReads.load()));
+    unsigned(pcmRing.size()),unsigned(decodedFrames.load()),unsigned(underrunFrames.load()),unsigned(underrunCalls.load()),unsigned(queueRejected.load()),unsigned(connected.load()),unsigned(muted.load()),targetLevel.load(),unsigned(miniPlayer.reads.load()));
 }
 bool submit(Op op,const char* text=nullptr,Output output=Output::bluetooth) {
   Command c{}; c.op=op; c.output=output;

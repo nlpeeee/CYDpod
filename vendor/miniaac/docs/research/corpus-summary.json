@@ -1,0 +1,24 @@
+{
+  "files": 175,
+  "passed": 175,
+  "failed": 0,
+  "elapsed_seconds": 122.447,
+  "profiles": {
+    "LC": 175
+  },
+  "sample_rates": {
+    "44100": 175
+  },
+  "channels": {
+    "2": 175
+  },
+  "audio_hours": 10.697588441672965,
+  "min_snr_db": 82.00449389579106,
+  "max_rmse_lsb": 0.4073140292814831,
+  "max_abs_error_lsb": 6.0,
+  "host_workspaces": [
+    22512
+  ],
+  "largest_read_bytes": 1340,
+  "lowest_snr_track": "06 - Ska Soul and Retro Pop\\06-20 - Daryl Hall & John Oates - You Make My Dreams (Come True).m4a"
+}

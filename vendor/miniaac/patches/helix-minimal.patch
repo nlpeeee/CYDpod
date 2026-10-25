@@ -1,0 +1,209 @@
+--- a/src/ConfigHelix.h
++++ b/src/ConfigHelix.h
+@@ -1,66 +1,10 @@
+ #pragma once
+-
+-// Common
+-#ifndef SYNCH_WORD_LEN
+-#  define SYNCH_WORD_LEN 4
+-#endif 
+-
+-#ifndef HELIX_CHUNK_SIZE
+-#  define HELIX_CHUNK_SIZE 1024
++/* MinimalAAC: intentionally no SBR and no runtime-generated trig tables. */
++#if defined(HELIX_FEATURE_AUDIO_CODEC_AAC_SBR) || defined(AAC_ENABLE_SBR)
++#error MinimalAAC must be compiled without SBR
+ #endif
+-
+-// mp3
+-#ifndef MP3_MAX_OUTPUT_SIZE
+-#  define MP3_MAX_OUTPUT_SIZE (1024 * 5)
++/* Arduino has no per-library CFLAGS hook. Preserve fixed-point wrapping
++ * semantics there as well as in the explicit CMake compiler options. */
++#if defined(__GNUC__) && !defined(__clang__)
++#pragma GCC optimize ("wrapv", "no-strict-aliasing")
+ #endif
+-#ifndef MP3_MAX_FRAME_SIZE
+-#  define MP3_MAX_FRAME_SIZE (1024 * 2)
+-#endif
+-#ifndef MP3_MIN_FRAME_SIZE
+-#  define MP3_MIN_FRAME_SIZE 1024
+-#endif
+-
+-// aac
+-#ifndef AAC_MAX_OUTPUT_SIZE
+-#  define AAC_MAX_OUTPUT_SIZE (1024 * 8)
+-#endif
+-#ifndef AAC_MAX_FRAME_SIZE
+-#  define AAC_MAX_FRAME_SIZE 2100
+-#endif
+-#ifndef AAC_MIN_FRAME_SIZE
+-#  define AAC_MIN_FRAME_SIZE 1024
+-#endif
+-
+-// Allocation: define allocator to be used
+-#define ALLOCATOR libhelix::AllocatorExt
+-
+-// Logging: Activate/Deactivate logging
+-#if !defined(HELIX_LOGGING_ACTIVE) 
+-#  define HELIX_LOGGING_ACTIVE true
+-#endif
+-
+-#ifndef HELIX_LOG_LEVEL
+-#  define HELIX_LOG_LEVEL LogLevelHelix::Warning
+-#endif
+-
+-#ifndef LOG_METHOD
+-#  define LOG_METHOD __PRETTY_FUNCTION__
+-#endif
+-
+-#if !defined(HELIX_LOGGING_OUT) && HELIX_LOGGING_ACTIVE && defined(ARDUINO) 
+-#  define HELIX_LOGGING_OUT Serial
+-#endif
+-
+-/// Use the IDF logger for ESP32
+-#if !defined(USE_IDF_LOGGER) && HELIX_LOGGING_ACTIVE && (defined(ESP32) || defined(ESP_PLATFORM)) && !defined(ARDUINO)
+-#  define USE_IDF_LOGGER
+-#endif
+-
+-#ifndef HELIX_LOG_SIZE
+-#  define HELIX_LOG_SIZE 256
+-#endif
+-
+-/// the ESP8266 does not have enough memory
+-#ifndef ESP8266
+-#  define HELIX_FEATURE_AUDIO_CODEC_AAC_SBR
+-#endif--- a/src/libhelix-aac/aaccommon.h
++++ b/src/libhelix-aac/aaccommon.h
+@@ -79,7 +79,7 @@
+ #define NUM_SAMPLE_RATES	12
+ #define NUM_DEF_CHAN_MAPS	8
+ #define NUM_ELEMENTS		8
+-#define MAX_NUM_PCE_ADIF	16
++#define MAX_NUM_PCE_ADIF	1 /* MinimalAAC: raw blocks need only one PCE; ADIF not exposed. */
+ 
+ #define MAX_WIN_GROUPS		8
+ #define MAX_SFB_SHORT		15
+--- a/src/libhelix-aac/aacdec.c
++++ b/src/libhelix-aac/aacdec.c
+@@ -376,6 +376,11 @@
+ 		err = DecodeNextElement(aacDecInfo, &inptr, &bitOffset, &bitsAvail);
+ 		if (err)
+ 			return err;
++
++        /* MinimalAAC: do not silently decode just the LC core of HE-AAC. */
++        if (aacDecInfo->currBlockID == AAC_ID_FIL &&
++            (aacDecInfo->fillExtType == EXT_SBR_DATA || aacDecInfo->fillExtType == EXT_SBR_DATA_CRC))
++            return ERR_AAC_MPEG4_UNSUPPORTED;
+ 		
+ 		elementChans = elementNumChans[aacDecInfo->currBlockID];
+ 		if (baseChan + elementChans > AAC_MAX_NCHANS)
+--- a/src/libhelix-aac/assembly.h
++++ b/src/libhelix-aac/assembly.h
+@@ -57,7 +57,7 @@
+ /* toolchain:           MSFT Visual C++
+  * target architecture: x86
+  */
+-#if (defined (_WIN32) && !defined (_WIN32_WCE)) || (defined (__WINS__) && defined (_SYMBIAN)) || (defined (WINCE_EMULATOR)) || (defined (_OPENWAVE_SIMULATOR))
++#if !defined(_M_X64) && ((defined(_WIN32) && !defined(_WIN32_WCE)) || (defined(__WINS__) && defined(_SYMBIAN)) || defined(WINCE_EMULATOR) || defined(_OPENWAVE_SIMULATOR))
+ 
+ #pragma warning( disable : 4035 )	/* complains about inline asm not returning a value */
+ 
+@@ -433,7 +433,7 @@
+ 
+ typedef long long Word64;
+ 
+-static __inline__ int MULSHIFT32(int x, int y)
++static __inline int MULSHIFT32(int x, int y)
+ {
+     int z;
+ 
+@@ -500,11 +500,11 @@
+ 	return sum64;
+ }
+ 
+-#elif defined(ARDUINO) || defined(ESP32) || defined(ESP_PLATFORM) || defined(__GNUC__) && (defined(__powerpc__) || defined(__POWERPC__)) || (defined (_SOLARIS) && !defined (__GNUC__) && !defined (_SOLARISX86))
++#elif defined(_M_X64) || defined(ARDUINO) || defined(ESP32) || defined(ESP_PLATFORM) || defined(__GNUC__) && (defined(__powerpc__) || defined(__POWERPC__)) || (defined (_SOLARIS) && !defined (__GNUC__) && !defined (_SOLARISX86))
+ 
+ typedef long long Word64;
+ 
+-static __inline__ int MULSHIFT32(int x, int y)
++static __inline int MULSHIFT32(int x, int y)
+ {
+     int z;
+ 
+--- a/src/libhelix-aac/buffers.c
++++ b/src/libhelix-aac/buffers.c
+@@ -43,14 +43,8 @@
+  * buffers.c - allocation and deallocation of internal AAC decoder buffers
+  **************************************************************************************/
+ 
+-#if defined(USE_DEFAULT_STDLIB) || defined(ARDUINO)
+-#include <stdlib.h>
+-#else
+-#include "hlxclib/stdlib.h"
+-#endif
++#include "coder.h"
+ 
+-#include "coder.h"
+-#include "utils/helix_memory.h"
+ 
+ /**************************************************************************************
+  * Function:    ClearBuffer
+@@ -97,21 +91,8 @@
+  **************************************************************************************/
+ AACDecInfo *AllocateBuffers(void)
+ {
+-	AACDecInfo *aacDecInfo;
+-
+-	aacDecInfo = (AACDecInfo *)helix_malloc(sizeof(AACDecInfo));
+-	if (!aacDecInfo)
+-		return 0;
+-	ClearBuffer(aacDecInfo, sizeof(AACDecInfo));
+-
+-	aacDecInfo->psInfoBase = helix_malloc(sizeof(PSInfoBase));
+-	if (!aacDecInfo->psInfoBase) {
+-		FreeBuffers(aacDecInfo);
+-		return 0;
+-	}
+-	ClearBuffer(aacDecInfo->psInfoBase, sizeof(PSInfoBase));
+-
+-	return aacDecInfo;
++    /* MinimalAAC: caller-owned arena only; heap entry point disabled. */
++    return 0;
+ }
+ 
+ AACDecInfo *AllocateBuffersPre(void **ptr, int *sz)
+@@ -158,9 +139,6 @@
+  **************************************************************************************/
+ void FreeBuffers(AACDecInfo *aacDecInfo)
+ {
+-	if (!aacDecInfo)
+-		return;
+-
+-	SAFE_FREE(aacDecInfo->psInfoBase);
+-	SAFE_FREE(aacDecInfo);
++    /* MinimalAAC: the arena belongs to the caller. */
++    (void)aacDecInfo;
+ }
+--- a/src/libhelix-aac/decelmnt.c
++++ b/src/libhelix-aac/decelmnt.c
+@@ -321,7 +321,7 @@
+ 		*fillBuf++ = GetBits(bsi, 8);
+ 
+ 	aacDecInfo->currInstTag = -1;	/* fill elements don't have instance tag */
+-	aacDecInfo->fillExtType = 0;
++	aacDecInfo->fillExtType = psi->fillCount ? (psi->fillBuf[0] >> 4) & 0x0f : 0; /* MinimalAAC: detect SBR even when disabled. */
+ 
+ #ifdef AAC_ENABLE_SBR
+ 	/* check for SBR 
+--- a/src/libhelix-aac/filefmt.c
++++ b/src/libhelix-aac/filefmt.c
+@@ -340,6 +340,7 @@
+ 	fhADIF->bsType =   GetBits(&bsi, 1);
+ 	fhADIF->bitRate =  GetBits(&bsi, 23);
+ 	fhADIF->numPCE =   GetBits(&bsi, 4) + 1;	/* add 1 (so range = [1, 16]) */
++	if (fhADIF->numPCE > MAX_NUM_PCE_ADIF) return ERR_AAC_INVALID_ADIF_HEADER; /* MinimalAAC arena bound */
+ 	if (fhADIF->bsType == 0)
+ 		fhADIF->bufferFull = GetBits(&bsi, 20);
+ 

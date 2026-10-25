@@ -1,0 +1,432 @@
+[
+  {
+    "event": "ready",
+    "files": 6,
+    "psram_bytes": 0,
+    "cpu_mhz": 240,
+    "workspace": 22480
+  },
+  {
+    "event": "selected",
+    "file": "/Music/07-21 - Cassius - Cassius 1999.m4a"
+  },
+  {
+    "event": "selected",
+    "file": "/Music/07-20 - Daft Punk - Get Lucky.m4a"
+  },
+  {
+    "event": "selected",
+    "file": "/Music/07-22 - Basement Jaxx - Red Alert.m4a"
+  },
+  {
+    "event": "start",
+    "file": "/Music/07-21 - Cassius - Cassius 1999.m4a"
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 613376,
+    "audio_seconds": 13.909
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 1205248,
+    "audio_seconds": 27.33
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 1793024,
+    "audio_seconds": 40.658
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 2370560,
+    "audio_seconds": 53.754
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 2951168,
+    "audio_seconds": 66.92
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 3535872,
+    "audio_seconds": 80.179
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 4112384,
+    "audio_seconds": 93.251
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 4694016,
+    "audio_seconds": 106.44
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 5276672,
+    "audio_seconds": 119.652
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 5861376,
+    "audio_seconds": 132.911
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 6436864,
+    "audio_seconds": 145.961
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 7040000,
+    "audio_seconds": 159.637
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 7609344,
+    "audio_seconds": 172.547
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 8179712,
+    "audio_seconds": 185.481
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 8740864,
+    "audio_seconds": 198.206
+  },
+  {
+    "event": "progress",
+    "job": 0,
+    "frames": 9315328,
+    "audio_seconds": 211.232
+  },
+  {
+    "event": "result",
+    "file": "/Music/07-21 - Cassius - Cassius 1999.m4a",
+    "status": 1,
+    "rate": 44100,
+    "channels": 2,
+    "frames": 9781248,
+    "expected_frames": 9781248,
+    "pcm_hash": 1081732884,
+    "audio_seconds": 221.797007,
+    "wall_us": 49862222,
+    "open_us": 75636,
+    "decode_total_us": 47523896,
+    "read_total_us": 14195211,
+    "max_decode_us": 32748,
+    "max_steady_decode_us": 32748,
+    "over_deadline_calls": 146,
+    "blocks": 9552,
+    "read_calls": 9823,
+    "read_bytes": 8924090,
+    "workspace": 22480,
+    "pcm_bytes": 4096,
+    "heap_before_open": 195792,
+    "heap_after_open": 195792,
+    "heap_end": 195528,
+    "stack_budget": 4096,
+    "stack_high_water_bytes": 1776
+  },
+  {
+    "event": "start",
+    "file": "/Music/07-20 - Daft Punk - Get Lucky.m4a"
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 621568,
+    "audio_seconds": 14.095
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 1227776,
+    "audio_seconds": 27.841
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 1833984,
+    "audio_seconds": 41.587
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 2440192,
+    "audio_seconds": 55.333
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 3035136,
+    "audio_seconds": 68.824
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 3639296,
+    "audio_seconds": 82.524
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 4244480,
+    "audio_seconds": 96.247
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 4856832,
+    "audio_seconds": 110.132
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 5459968,
+    "audio_seconds": 123.809
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 6059008,
+    "audio_seconds": 137.392
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 6671360,
+    "audio_seconds": 151.278
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 7272448,
+    "audio_seconds": 164.908
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 7863296,
+    "audio_seconds": 178.306
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 8457216,
+    "audio_seconds": 191.774
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 9051136,
+    "audio_seconds": 205.241
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 9643008,
+    "audio_seconds": 218.662
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 10244096,
+    "audio_seconds": 232.292
+  },
+  {
+    "event": "progress",
+    "job": 1,
+    "frames": 10843136,
+    "audio_seconds": 245.876
+  },
+  {
+    "event": "result",
+    "file": "/Music/07-20 - Daft Punk - Get Lucky.m4a",
+    "status": 1,
+    "rate": 44100,
+    "channels": 2,
+    "frames": 10920612,
+    "expected_frames": 10920612,
+    "pcm_hash": 1223142016,
+    "audio_seconds": 247.632925,
+    "wall_us": 54452008,
+    "open_us": 50223,
+    "decode_total_us": 51829999,
+    "read_total_us": 15114104,
+    "max_decode_us": 32285,
+    "max_steady_decode_us": 32285,
+    "over_deadline_calls": 142,
+    "blocks": 10665,
+    "read_calls": 10916,
+    "read_bytes": 9950805,
+    "workspace": 22480,
+    "pcm_bytes": 4096,
+    "heap_before_open": 195528,
+    "heap_after_open": 195528,
+    "heap_end": 195528,
+    "stack_budget": 4096,
+    "stack_high_water_bytes": 1776
+  },
+  {
+    "event": "start",
+    "file": "/Music/07-22 - Basement Jaxx - Red Alert.m4a"
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 641024,
+    "audio_seconds": 14.536
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 1288192,
+    "audio_seconds": 29.211
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 1897472,
+    "audio_seconds": 43.027
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 2497536,
+    "audio_seconds": 56.633
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 3101696,
+    "audio_seconds": 70.333
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 3712000,
+    "audio_seconds": 84.172
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 4322304,
+    "audio_seconds": 98.011
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 4926464,
+    "audio_seconds": 111.711
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 5530624,
+    "audio_seconds": 125.411
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 6133760,
+    "audio_seconds": 139.088
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 6745088,
+    "audio_seconds": 152.95
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 7341056,
+    "audio_seconds": 166.464
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 7931904,
+    "audio_seconds": 179.862
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 8518656,
+    "audio_seconds": 193.167
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 9116672,
+    "audio_seconds": 206.727
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 9718784,
+    "audio_seconds": 220.381
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 10320896,
+    "audio_seconds": 234.034
+  },
+  {
+    "event": "progress",
+    "job": 2,
+    "frames": 10920960,
+    "audio_seconds": 247.641
+  },
+  {
+    "event": "result",
+    "file": "/Music/07-22 - Basement Jaxx - Red Alert.m4a",
+    "status": 1,
+    "rate": 44100,
+    "channels": 2,
+    "frames": 11351340,
+    "expected_frames": 11351340,
+    "pcm_hash": 1626916592,
+    "audio_seconds": 257.4,
+    "wall_us": 56262551,
+    "open_us": 49545,
+    "decode_total_us": 53536697,
+    "read_total_us": 15698412,
+    "max_decode_us": 32655,
+    "max_steady_decode_us": 32655,
+    "over_deadline_calls": 154,
+    "blocks": 11086,
+    "read_calls": 11345,
+    "read_bytes": 10343509,
+    "workspace": 22480,
+    "pcm_bytes": 4096,
+    "heap_before_open": 195524,
+    "heap_after_open": 195524,
+    "heap_end": 195524,
+    "stack_budget": 4096,
+    "stack_high_water_bytes": 1760
+  },
+  {
+    "event": "done"
+  }
+]

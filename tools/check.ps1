@@ -66,7 +66,23 @@ try {
             throw 'Required AAC probe is missing. Use -SkipProbe only for an explicit stock-baseline check.'
         }
         $m4aInclude = (Join-Path $root 'lib/cydpod_m4a').Replace([string][char]92, '/')
-        $toolsInclude = (Join-Path $root 'vendor/arduino-audio-tools/src').Replace([string][char]92, '/')
+        # The pristine tree was verified above. The probe compiles a staged copy with patches/audio-tools/*.patch applied
+        # (CY-10b1 allocator hook); vendor/ and its inventory are never modified.
+        $patchedRoot = Join-Path $root '.tools/staging/audiotools-patched'
+        if (Test-Path $patchedRoot) {
+            if (!(Resolve-Path $patchedRoot).Path.StartsWith((Join-Path $root '.tools/staging/'), [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Staging cleanup escaped .tools/staging.'
+            }
+            Remove-Item -LiteralPath $patchedRoot -Recurse -Force
+        }
+        New-Item -ItemType Directory -Force $patchedRoot | Out-Null
+        Copy-Item -LiteralPath (Join-Path $root 'vendor/arduino-audio-tools/src') -Destination $patchedRoot -Recurse
+        foreach ($patch in (Get-ChildItem (Join-Path $root 'patches/audio-tools') -Filter *.patch | Sort-Object Name)) {
+            Push-Location $patchedRoot
+            try { & git apply --whitespace=nowarn $patch.FullName } finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) { throw "AudioTools overlay failed to apply: $($patch.Name)" }
+        }
+        $toolsInclude = (Join-Path $patchedRoot 'src').Replace([string][char]92, '/')
         $jobs += @{ Name = 'aac-probe'; Sketch = 'firmware/cydpod_probe'; Flags = "-DCYDPOD_AAC_LC_ONLY -I$toolsInclude -I$m4aInclude" }
     }
     $results = @()

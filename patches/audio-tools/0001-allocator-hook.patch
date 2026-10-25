@@ -1,0 +1,60 @@
+--- a/src/AudioTools/CoreAudio/AudioBasic/Collections/Allocator.h
++++ b/src/AudioTools/CoreAudio/AudioBasic/Collections/Allocator.h
+@@ -16,6 +16,29 @@
+  */
+ 
+ /**
++ * @brief CYDpod overlay: optional constructor-time allocator hook. While a
++ * hook is installed, Allocator::allocate() and Allocator::free() (and so every
++ * allocator derived from Allocator that does not override them, and every
++ * SingleBuffer/Vector with USE_ALLOCATOR) route through it. The hook must hand
++ * out calloc-like memory; allocate() zero-fills it. With no hook installed
++ * (the default) behaviour is unchanged. Installing or removing a hook while
++ * hooked memory is live is the caller's responsibility.
++ * @ingroup memorymgmt
++ */
++struct AllocatorHook {
++  void* (*allocate)(size_t size, void* ctx);
++  void (*release)(void* memory, void* ctx);
++  void* ctx;
++};
++
++inline AllocatorHook*& allocatorHookSlot() {
++  static AllocatorHook* hook = nullptr;
++  return hook;
++}
++inline void setAllocatorHook(AllocatorHook* hook) { allocatorHookSlot() = hook; }
++inline AllocatorHook* allocatorHook() { return allocatorHookSlot(); }
++
++/**
+  * @brief Memory allocateator which uses malloc.
+  * @ingroup memorymgmt
+  * @author Phil Schatzmann
+@@ -70,7 +93,14 @@
+ 
+   /// Allocates memory
+   virtual void* allocate(size_t size) {
+-    void* result = do_allocate(size);
++    AllocatorHook* hook = allocatorHook();
++    void* result = nullptr;
++    if (hook != nullptr) {
++      result = hook->allocate(size == 0 ? 1 : size, hook->ctx);
++      if (result != nullptr) memset(result, 0, size == 0 ? 1 : size);
++    } else {
++      result = do_allocate(size);
++    }
+     if (result == nullptr) {
+       LOGE("Allocateation failed for %zu bytes", size);
+       stop();
+@@ -82,7 +112,10 @@
+ 
+   /// frees memory
+   virtual void free(void* memory) {
+-    if (memory != nullptr) ::free(memory);
++    if (memory == nullptr) return;
++    AllocatorHook* hook = allocatorHook();
++    if (hook != nullptr) hook->release(memory, hook->ctx);
++    else ::free(memory);
+   }
+ 
+  protected:

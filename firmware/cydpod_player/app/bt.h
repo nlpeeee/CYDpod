@@ -41,9 +41,9 @@ enum BtFailure : uint8_t {
 };
 
 // Pairing
-bool   bt_pairingBoot();              // this boot was started to pair a speaker
-void   bt_requestPairing();           // restart into a pairing boot (does not return)
-void   bt_cancelPairing();            // restart into a normal boot (does not return)
+bool   bt_pairing();              // live pairing session is active
+bool   bt_requestPairing();           // queue live pairing; false if unavailable
+bool   bt_cancelPairing();            // cancel live pairing; no reboot
 int    bt_deviceCount();
 bool   bt_device(int i, BtDevice& out);
 

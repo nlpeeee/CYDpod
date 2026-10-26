@@ -229,7 +229,7 @@ void loop() {}
   // Only the Bluetooth route has anything to set up before it can play; the
   // on-board speaker just works, so it lands on the player.
   const bool needSpeaker = g_settings.outRoute == OUT_BT &&
-                           (bt_pairingBoot() || bt_speakerName().isEmpty());
+                           (bt_pairing() || bt_speakerName().isEmpty());
   classic_home();
   ui_go(needSpeaker ? SCR_BLUETOOTH : SCR_CLASSIC);
 }

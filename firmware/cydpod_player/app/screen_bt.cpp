@@ -65,7 +65,7 @@ static void drawStatus() {
   } else if (bt_failure() != BT_FAIL_NONE) {
     ui_label(bt_failure() == BT_FAIL_AUTH ? T_PAIR_REFUSED : T_CONNECT_FAILED,
              10, y, ML_DATUM, p.bad, p.bg, tft.width() - 20);
-  } else if (bt_pairingBoot()) {
+  } else if (bt_pairing()) {
     ui_label(T_PAIRING_HINT, 10, y, ML_DATUM, p.text, p.bg, tft.width() - 20);
   } else if (bt_speakerName().length()) {
     const int w = ui_label(T_LOOKING_FOR, 10, y, ML_DATUM, p.dim, p.bg);
@@ -156,7 +156,7 @@ static void enter() {
   shownState = -1;
   shownList = 0xFFFFFFFF;
   shownName = "";
-  waitingToPair = bt_pairingBoot() && !bt_connected();
+  waitingToPair = bt_pairing() && !bt_connected();
 }
 
 static void tick(uint32_t) {
@@ -188,12 +188,12 @@ static void touch(TouchEvent ev, int x, int y) {
   if (ev != TOUCH_TAP && ev != TOUCH_LONG_PRESS) return;
   if (UI_BACK_RECT.contains(x, y)) {
     // Leaving a pairing boot without choosing: go back to normal reconnecting.
-    if (bt_pairingBoot() && !bt_connected()) bt_cancelPairing();
+    if (bt_pairing() && !bt_connected() && !bt_cancelPairing()){ui_toast("Unable to cancel pairing");return;}
     ui_go(SCR_PLAYER);
     return;
   }
   if (pairRect().contains(x, y)) {
-    bt_requestPairing();                 // restarts
+    if(bt_requestPairing())waitingToPair=true;else ui_toast("Bluetooth is not ready. Try again.");
     return;
   }
   if (y >= LIST_Y) {

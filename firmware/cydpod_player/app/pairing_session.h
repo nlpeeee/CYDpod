@@ -33,6 +33,8 @@ struct PairingSession {
       if(!dropSent){dropSent=true;if(!t.drop()){phase=Failed;t.failed("disconnect");}}
       return;
     }
+    // Do not select/cancel before the asynchronous inquiry-start acknowledgment.
+    if(t.inquiryStarting())return;
     if(t.scanning()){
       if(phase==Scanning)return;
       if(!cancelSent){cancelSent=true;if(!t.stopScan()){phase=Failed;t.failed("cancel inquiry");}}

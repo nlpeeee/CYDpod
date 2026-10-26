@@ -53,18 +53,24 @@ class CydSource : public BluetoothA2DPSource {
   void savePeer(){write_address(last_bda_nvs_name(),lastPeer);}
   void forgetSavedPeer(){uint8_t none[6]{};write_address(last_bda_nvs_name(),none);clean_last_connection();}
   bool scanning()const{return discovery_active;}
+  bool inquiryStarting()const{return inquiryPending;}
   bool drop(){return esp_a2d_disconnect(lastPeer)==ESP_OK;}
   bool stopScan(){return esp_bt_gap_cancel_discovery()==ESP_OK;}
   bool startScan(){
     s_a2d_state=APP_AV_STATE_DISCOVERING;
     set_discoverability(ESP_BT_GENERAL_DISCOVERABLE);set_connectable(true);
-    return esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY,10,0)==ESP_OK;
+    const esp_err_t result=esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY,10,0);
+    inquiryPending=result==ESP_OK;
+    if(result!=ESP_OK)s_a2d_state=APP_AV_STATE_UNCONNECTED;
+    return result==ESP_OK;
   }
   bool connect(const uint8_t* addr){
     memcpy(peer_bd_addr,addr,6);memcpy(lastPeer,addr,6);
     s_a2d_state=APP_AV_STATE_CONNECTING;
     const esp_err_t result=esp_a2d_connect(peer_bd_addr);
-    Serial.printf("bt: live connect -> %d\n",result);return result==ESP_OK;
+    Serial.printf("bt: live connect -> %d\n",result);
+    if(result!=ESP_OK)s_a2d_state=APP_AV_STATE_UNCONNECTED;
+    return result==ESP_OK;
   }
   void failed(const char* operation){failure=BT_FAIL_TIMEOUT;Serial.printf("bt: live pairing failed: %s\n",operation);}
  protected:
@@ -97,6 +103,7 @@ class CydSource : public BluetoothA2DPSource {
  private:
   inline static CydSource* owner=nullptr;
   uint32_t submitted=0,accepted=0;
+  bool inquiryPending=false;
   uint8_t lastPeer[6]{};
   cyd::PairingSession session;
   static void dispatch(uint16_t event,void* p){owner->command((Command)event,(Request*)p);}
@@ -105,8 +112,8 @@ class CydSource : public BluetoothA2DPSource {
   static void dispatchGap(uint16_t event,void* p){owner->fixedGap((esp_bt_gap_cb_event_t)event,(esp_bt_gap_cb_param_t*)p);}
   void command(Command cmd,Request* p){
     if(p){if(p->generation<accepted)return;accepted=p->generation;}
-    if(cmd==InquiryStarted)discovery_active=true;
-    else if(cmd==InquiryStopped){discovery_active=false;session.stopped();}
+    if(cmd==InquiryStarted){inquiryPending=false;discovery_active=true;if(linkConnected())esp_bt_gap_cancel_discovery();}
+    else if(cmd==InquiryStopped){inquiryPending=false;discovery_active=false;session.stopped();}
     else if(cmd==Pair){if(!cyd::PairingSession::any(lastPeer))memcpy(lastPeer,peer_bd_addr,6);is_autoreconnect_allowed=false;reconnect_status=NoReconnect;session.begin(p->addr,millis());}
     else if(cmd==Cancel){is_autoreconnect_allowed=false;reconnect_status=NoReconnect;session.cancel(millis());}
     else if(cmd==Select){
@@ -329,9 +336,8 @@ void bt_begin() {
   // number so the screen can show what the owner is agreeing to.
   a2dp.set_ssp_enabled(true);
 
-  // Normal boot: page the saved speaker first. Pairing boot: go straight to
-  // discovery, then turn auto-reconnect back on so the speaker the user picks
-  // is written to the library's NVS for next time.
+  // Page the saved speaker first. Live sessions disable library paging;
+  // accepted peers are persisted by bt_tick, outside the Bluetooth task.
   // One attempt, not three: a device that does not answer the first page is
   // off or out of range, and three immediate tries only delay the fallback to
   // scanning. Anything later is handled by the 15 s paging in bt_tick().
@@ -404,7 +410,7 @@ void bt_tick() {
   // to keep a peer-initiated connection from confusing its state machine. On
   // the pairing screen that is backwards: a car head unit expects to find
   // "CYD-MP3" in its OWN list, and offers no other way in. So re-assert it
-  // while that screen is up, and only there: a pairing boot, nothing connected.
+  // while that screen is up, and only there: a live pairing session, nothing connected.
   static uint32_t nextVisible = 0;
   if (!bt_connected() && (int32_t)(millis() - nextVisible) >= 0) {
     nextVisible = millis() + 5000;

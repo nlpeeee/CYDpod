@@ -20,7 +20,9 @@ static const uint32_t RB_FRAMES = 2048;
 static int16_t*          rb = nullptr;
 static volatile uint32_t rbHead = 0;          // producer only
 static volatile uint32_t rbTail = 0;          // consumer only
-static volatile bool     flushReq = false;    // producer asks, consumer does it
+// One short lock covers ring publication, consumer copies, commands and clock epochs.
+// Never hold it across SD/decoder operations or waits.
+static portMUX_TYPE stateLock = portMUX_INITIALIZER_UNLOCKED;
 
 static inline uint32_t rbUsed() { return (rbHead - rbTail) & (RB_FRAMES - 1); }
 static inline uint32_t rbFree() { return RB_FRAMES - 1 - rbUsed(); }
@@ -30,6 +32,10 @@ static inline uint32_t rbFree() { return RB_FRAMES - 1 - rbUsed(); }
 // ---------------------------------------------------------------------------
 static volatile int      reqTrack  = -1;      // UI -> decode task
 static volatile int32_t  reqSeekMs = -1;
+static volatile uint32_t reqStartMs = 0, commandSerial = 0, seekGoalMs = 0;
+static volatile bool seeking = false, canSeek = false;
+static bool decodeBlocked = false; // seek I/O failure: retain track/queue, await retry
+static inline bool requestPending() { return reqTrack >= 0 || reqSeekMs >= 0; }
 static volatile bool     playing   = true;
 static volatile uint8_t  volumePct = 40;
 
@@ -76,13 +82,9 @@ void audio_pull(int16_t* out, int32_t frames) {
   lastPullMs = millis();
   pullCalls++;
   if (frames > maxRequest) maxRequest = frames;
-  if (flushReq) {
-    rbTail = rbHead;
-    framesPlayed = 0;
-    flushReq = false;
-  }
+  portENTER_CRITICAL(&stateLock);
   int32_t i = 0;
-  if (playing) {
+  if (playing && !seeking) {
     const int32_t gain = (int32_t)volumePct * volumePct;   // perceptual-ish, /10000
     uint32_t tail = rbTail;
     const int32_t n = min<int32_t>(frames, (rbHead - tail) & (RB_FRAMES - 1));
@@ -97,6 +99,7 @@ void audio_pull(int16_t* out, int32_t frames) {
     if (n > 0) starting = false;
     if (n < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
   }
+  portEXIT_CRITICAL(&stateLock);
   memset(out + i * 2, 0, (frames - i) * 2 * sizeof(int16_t));
 }
 
@@ -105,41 +108,72 @@ void audio_pull(int16_t* out, int32_t frames) {
 // ---------------------------------------------------------------------------
 static volatile bool abortDecode = false;     // a request arrived mid-buffer
 
-static inline bool requestPending() { return reqTrack >= 0 || reqSeekMs >= 0; }
-
 static void pushFrame(int16_t l, int16_t r) {
-  while (rbFree() == 0) {
-    if (requestPending()) { abortDecode = true; return; }
-    vTaskDelay(pdMS_TO_TICKS(4));             // Bluetooth is the clock
+  for (;;) {
+    portENTER_CRITICAL(&stateLock);
+    if (requestPending()) { abortDecode = true; portEXIT_CRITICAL(&stateLock); return; }
+    if (rbFree()) {
+      const uint32_t h = rbHead;
+      rb[h * 2] = l; rb[h * 2 + 1] = r;
+      rbHead = (h + 1) & (RB_FRAMES - 1);
+      portEXIT_CRITICAL(&stateLock); return;
+    }
+    portEXIT_CRITICAL(&stateLock);
+    vTaskDelay(pdMS_TO_TICKS(4));
   }
-  const uint32_t h = rbHead;
-  rb[h * 2] = l;
-  rb[h * 2 + 1] = r;
-  rbHead = (h + 1) & (RB_FRAMES - 1);
 }
 
 static M4aTrack m4a;                          // MiniAAC workspace + PCM block, static: no per-track heap
 static File     file;
 
 static void requestFlush() {
-  // If Bluetooth is not pulling (not connected), nothing else touches rbTail.
-  if (millis() - lastPullMs < 200) {
-    flushReq = true;
-    for (int i = 0; i < 50 && flushReq; i++) vTaskDelay(pdMS_TO_TICKS(4));
+  portENTER_CRITICAL(&stateLock);
+  rbTail = rbHead; framesPlayed = 0;
+  portEXIT_CRITICAL(&stateLock);
+}
+struct SeekContext { uint32_t serial; };
+static int seekHook(void* user) {
+  const uint32_t serial = static_cast<SeekContext*>(user)->serial;
+  if (commandSerial != serial) return 1;
+  vTaskDelay(1); // yield long stsc/stsz traversals, also while paused/disconnected
+  return commandSerial != serial;
+}
+static void finishCommand(uint32_t serial) {
+  portENTER_CRITICAL(&stateLock);
+  if (serial == commandSerial) seeking = false;
+  portEXIT_CRITICAL(&stateLock);
+}
+static void seekTrack(uint32_t ms, uint32_t serial) {
+  requestFlush();
+  SeekContext context{serial};
+  const uint32_t at = millis();
+  Serial.printf("seek: starting track %d target %lu\n",int(curTrack),(unsigned long)ms);
+  const miniaac_status rc = m4a.seek(ms, seekHook, &context);
+  if (commandSerial != serial || rc == MINIAAC_CANCELLED) return;
+  if (rc != MINIAAC_OK) {
+    decodeBlocked = true; playing = false;
+    reportError(m4a.name(), curTrack);
+    Serial.printf("seek: failed %s target %lu took %lu ms heap %u\n", m4a.name(), (unsigned long)ms, (unsigned long)(millis()-at), ESP.getFreeHeap());
+  } else {
+    portENTER_CRITICAL(&stateLock);
+    posBaseMs = uint32_t(min<uint64_t>(uint64_t(ms) * 44100 / 1000, m4a.totalFrames() - 1) * 1000 / 44100);
+    framesPlayed = 0; starting = true;
+    portEXIT_CRITICAL(&stateLock);
+    decodeBlocked = false;
+    Serial.printf("seek: track %d target %lu actual %lu took %lu ms heap %u\n",
+                  int(curTrack), (unsigned long)ms, (unsigned long)posBaseMs,
+                  (unsigned long)(millis() - at), ESP.getFreeHeap());
   }
-  if (flushReq || millis() - lastPullMs >= 200) {
-    rbTail = rbHead;
-    framesPlayed = 0;
-    flushReq = false;
-  }
+  finishCommand(serial);
 }
 
 static void closeTrack() {
+  canSeek = false;
   m4a.end();                                  // before the File goes
   if (file) file.close();
 }
 
-// M4A: always from zero (no seeking, so a saved position is ignored).
+// Decode task is the sole owner of this File and decoder, including seeks.
 static bool openTrack(int index) {
   const int count = storage_trackCount();
   if (count == 0) return false;
@@ -149,6 +183,7 @@ static bool openTrack(int index) {
   closeTrack();
   requestFlush();
 
+  canSeek = false; decodeBlocked = false;
   curTrack = index;
   durationMs = 0;
   posBaseMs = 0;
@@ -169,6 +204,7 @@ static bool openTrack(int index) {
     return false;
   }
   durationMs = (uint32_t)(m4a.totalFrames() * 1000 / 44100);
+  canSeek = m4a.seekable();
   trackSerial++;
   Serial.printf("audio: [%d/%d] %s  %u KB  %lu:%02lu  heap %u\n", index + 1, count, path.c_str(),
                 (unsigned)(file.size() / 1024), durationMs / 60000, (durationMs / 1000) % 60,
@@ -182,7 +218,6 @@ static bool openTrack(int index) {
 // It opens what it is asked to open and reports when a track has run out; it
 // never decides what plays next. Play order (shuffle, repeat) is the UI task's
 // business in audio_tick(), so the order table needs no locking.
-static volatile uint32_t reqStartMs  = 0;     // with reqTrack: where to start
 static volatile uint32_t endedSerial = 0;     // bumped when a track finishes
 static volatile uint32_t failSerial  = 0;     // bumped when a track will not open
 static volatile uint32_t diagMaxReadMs = 0;   // diagnostics: slowest SD read
@@ -194,17 +229,24 @@ static void decodeTask(void*) {
   if (reqTrack < 0) startupComplete = true; // empty library
   for (;;) {
     abortDecode = false;
+    portENTER_CRITICAL(&stateLock);
     const int t = reqTrack;
+    const int32_t seek = reqSeekMs;
+    const uint32_t startMs = reqStartMs, serial = commandSerial;
+    reqTrack = -1; reqSeekMs = -1;
+    portEXIT_CRITICAL(&stateLock);
     if (t >= 0) {
-      reqTrack = -1;
-      reqStartMs = 0;
-      reqSeekMs = -1;
-      if (!openTrack(t)) failSerial++;
+      const bool opened = openTrack(t);
+      if (serial == commandSerial) {
+        if (!opened) { failSerial++; finishCommand(serial); }
+        else if (startMs && canSeek) seekTrack(startMs, serial);
+        else finishCommand(serial);
+      }
       startupComplete = true;
       continue;
     }
-    reqSeekMs = -1;                            // seeking is not supported for M4A
-    if (!file) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+    if (seek >= 0) { seekTrack(uint32_t(seek), serial); continue; }
+    if (!file || decodeBlocked || seeking) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
 
     if (m4a.pending() == 0) {
       const uint32_t r0 = millis();
@@ -219,7 +261,7 @@ static void decodeTask(void*) {
       }
       if (pull == M4aTrack::Pull::eof) {
         // End of track: let what is buffered play out, then say so.
-        while (rbUsed() > 0 && !requestPending()) vTaskDelay(pdMS_TO_TICKS(10));
+        while ((rbUsed() > 0 || !playing) && !requestPending()) vTaskDelay(pdMS_TO_TICKS(10));
         if (!requestPending()) {
           closeTrack();
           endedSerial++;
@@ -282,8 +324,10 @@ static void buildOrder(bool shuffled, int firstTrack) {
 }
 
 static void request(int track, uint32_t startMs = 0) {
-  reqStartMs = startMs;
-  reqTrack = track;
+  portENTER_CRITICAL(&stateLock);
+  reqStartMs = startMs; seekGoalMs = startMs; reqSeekMs = -1; reqTrack = track;
+  ++commandSerial; seeking = true; canSeek = false;
+  portEXIT_CRITICAL(&stateLock);
 }
 
 static void advance(bool trackFinished) {
@@ -328,7 +372,7 @@ void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle,
   if (orderLen > 0) {
     startTrack = constrain(startTrack, 0, orderLen - 1);
     buildOrder(shuffleOn, startTrack);
-    request(startTrack, 0);
+    request(startTrack, startMs);
   }
   // CY-37/v3 minimum free stack was >=3964 B on 6144 B: retain ~1.9 KiB observed margin.
   if (xTaskCreatePinnedToCore(decodeTask, "m4adec", 4096, nullptr, 5, &decodeHandle, 1) != pdPASS) {
@@ -380,7 +424,23 @@ void audio_prev() {
 void audio_togglePause()        { playing = !playing; }
 void audio_setVolume(uint8_t p) { volumePct = min<uint8_t>(p, 100); }
 
-void audio_seekRelative(int) {}                // M4A: no seeking in this version
+bool audio_canSeek() { return canSeek && durationMs && reqTrack < 0; }
+bool audio_isSeeking() { return seeking; }
+bool audio_seekTo(uint32_t ms) {
+  portENTER_CRITICAL(&stateLock);
+  if (!canSeek || !durationMs || reqTrack >= 0) { portEXIT_CRITICAL(&stateLock); return false; }
+  seekGoalMs = min<uint32_t>(ms, min<uint32_t>(durationMs - 1, INT32_MAX));
+  reqSeekMs = int32_t(seekGoalMs);
+  ++commandSerial; seeking = true;
+  portEXIT_CRITICAL(&stateLock);
+  return true;
+}
+void audio_seekRelative(int seconds) {
+  portENTER_CRITICAL(&stateLock);
+  const int64_t base = seeking ? seekGoalMs : posBaseMs + uint64_t(framesPlayed) * 1000 / 44100;
+  portEXIT_CRITICAL(&stateLock);
+  audio_seekTo(uint32_t(max<int64_t>(0, min<int64_t>(INT32_MAX, base + int64_t(seconds) * 1000))));
+}
 
 void audio_setShuffle(bool on) {
   if (on == shuffleOn || orderLen == 0) return;
@@ -422,8 +482,11 @@ uint8_t  audio_bufferPct()    { return rbUsed() * 100 / RB_FRAMES; }
 bool     audio_bufferLow()    { return playing && rbUsed() < RB_FRAMES / 2; }
 
 uint32_t audio_positionMs() {
+  portENTER_CRITICAL(&stateLock);
   const uint32_t ms = posBaseMs + (uint32_t)((uint64_t)framesPlayed * 1000 / 44100);
-  return (durationMs && ms > durationMs) ? durationMs : ms;
+  const uint32_t duration = durationMs;
+  portEXIT_CRITICAL(&stateLock);
+  return (duration && ms > duration) ? duration : ms;
 }
 
 uint32_t audio_decodeStackFree() {

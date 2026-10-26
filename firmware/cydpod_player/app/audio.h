@@ -35,7 +35,10 @@ void audio_playTrack(int index);
 void audio_next();
 void audio_prev();                  // restart, or previous in play order in the first 3 s
 void audio_togglePause();
-void audio_seekRelative(int seconds);   // no-op: M4A cannot seek
+void audio_seekRelative(int seconds);
+bool audio_seekTo(uint32_t milliseconds); // coalesced request; decoder task owns all I/O
+bool audio_canSeek();                    // supported M4A with known duration
+bool audio_isSeeking();
 void audio_setVolume(uint8_t percent);
 void audio_setShuffle(bool on);        // reshuffles with the current track first
 void audio_setRepeat(uint8_t mode);    // RepeatMode from settings.h

@@ -43,6 +43,15 @@ class M4aTrack {
     frames_ = count / 2; // stereo only (checked in begin)
     return Pull::frames;
   }
+  bool seekable() const { return total_ && miniaac_seekable(decoder_); }
+  miniaac_status seek(uint32_t ms, miniaac_seek_hook hook, void* user) {
+    size_t count = 0; frames_ = used_ = 0;
+    const uint64_t frame = min<uint64_t>(uint64_t(ms) * 44100 / 1000, total_ ? total_ - 1 : 0);
+    const miniaac_status rc = miniaac_seek(decoder_, frame, pcm_, MINIAAC_PCM_SAMPLES, &count, hook, user);
+    if (rc == MINIAAC_OK) { frames_ = count / 2; name_ = "ok"; }
+    else if (rc != MINIAAC_CANCELLED) name_ = miniaac_status_string(rc);
+    return rc;
+  }
   size_t pending() const { return frames_ - used_; }
   const M4aStereo* pcm() const { return reinterpret_cast<const M4aStereo*>(pcm_) + used_; }
   void consume(size_t frames) { used_ += frames; }

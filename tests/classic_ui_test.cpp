@@ -14,10 +14,13 @@
 #include <iostream>
 #include <vector>
 #include <chrono>
+#include <thread>
 TFT_eSPI tft;
 Settings g_settings;
 static int current=0,calls=0,volume=32,queueLength=0;
-static uint32_t serial=0,clockNow=0;
+static uint32_t serial=0,clockNow=0,lastSeek=0;
+static int seekCalls=0,relativeSeek=0;
+static bool seekAllowed=true;
 static bool playing=false,shuffle=false,down=false,routeAllowed=true;
 static uint8_t repeatMode=0;
 static const uint16_t* queueData=nullptr;
@@ -39,7 +42,11 @@ bool audio_shuffle(){return shuffle;}
 void audio_setRepeat(uint8_t mode){repeatMode=mode;}
 uint8_t audio_repeat(){return repeatMode;}
 bool audio_bufferLow(){return false;}
-uint32_t audio_durationMs(){return 240000;}
+bool audio_canSeek(){return seekAllowed;}
+bool audio_isSeeking(){return false;}
+bool audio_seekTo(uint32_t ms){lastSeek=ms;++seekCalls;return seekAllowed;}
+void audio_seekRelative(int s){relativeSeek=s;++seekCalls;}
+uint32_t audio_durationMs(){return seekAllowed?240000:0;}
 uint32_t audio_positionMs(){return 84000;}
 uint32_t audio_trackSerial(){return serial;}
 bool bt_connected(){return true;}
@@ -85,6 +92,21 @@ int main(){try{
   tap(80,60);check(label("Now Playing")&&playing,"select track");
   tap(120,256);check(!playing,"pause transport hit target");tap(120,256);check(playing,"play transport hit target");
   int was=current;tap(184,256);check(current!=was,"next transport hit target");tap(48,256);check(playing,"previous transport hit target");snapshot("ui-player.svg");
+  int seeks=seekCalls;tap(120,206);check(seekCalls==seeks+1&&lastSeek>119000&&lastSeek<121000,"progress tap seeks halfway");
+  seeks=seekCalls;tx=20;ty=206;down=true;ui_tick(clockNow+=130);tx=200;ui_tick(clockNow+=130);
+  check(ui_pressClaimed()&&seekCalls==seeks,"seek drag claims hold and defers commit");
+  down=false;ui_touch(TOUCH_RECALIBRATE,tx,ty);pump();check(seekCalls==seeks+1&&lastSeek>200000,"seek commits once on release");
+  seeks=seekCalls;tx=50;ty=206;down=true;ui_tick(clockNow+=130);ty=160;ui_tick(clockNow+=130);ty=206;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,tx,ty);pump();
+  check(seekCalls==seeks,"vertical excursion cancels seek permanently");
+  seeks=seekCalls;tx=50;ty=206;down=true;ui_tick(clockNow+=130);++serial;down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(seekCalls==seeks,"track change cancels drag");
+  seekAllowed=false;tap(120,206);check(seekCalls==seeks,"unknown duration disables seek");tap(120,206);seekAllowed=true;
+  // Hold timestamp uses the same monotonic clock as firmware.
+  tx=184;ty=256;down=true;ui_tick(clockNow+=130);std::this_thread::sleep_for(std::chrono::milliseconds(620));down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();
+  check(relativeSeek==10,"holding Next seeks ten seconds instead of advancing");
+  tx=48;ty=256;down=true;ui_tick(clockNow+=130);std::this_thread::sleep_for(std::chrono::milliseconds(620));down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(relativeSeek==-10,"holding Previous seeks backward");
+  tft.setRotation(1);ui_redraw();pump();tap(160,126);check(lastSeek>119000&&lastSeek<121000,"landscape progress geometry");
+  tap(12,126);check(lastSeek==0,"progress start clamp");tap(308,126);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
+  std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, long Next and recalibration claim\n";
   tap(30,300);check(label("Volume"),"footer volume action");tap(180,212);check(volume==37,"volume step");snapshot("ui-volume.svg");
   tap(20,20);check(label("Now Playing"),"back from volume");tap(20,20);check(label("Song 03"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.

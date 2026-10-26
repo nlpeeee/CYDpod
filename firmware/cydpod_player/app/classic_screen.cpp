@@ -37,11 +37,13 @@ int previewCount=0;
 uint32_t lastPaint=0,lastPlayer=0,shownSerial=UINT32_MAX,saveAt=0;
 uint32_t seenError=0,lastStatus=0;
 int shownProgress=-1,shownSecond=-1,shownVolume=-1,shownConnection=-1;
-bool shownPlaying=false,savePending=false;
+bool shownPlaying=false,savePending=false,shownSeeking=false;
 bool previewDirty=false;
 bool externalReturn=false;
+bool seekPreview=false,seekCancelled=false;
+uint32_t seekMs=0,seekDuration=0,seekSerial=0,pressAt=0;
 char notice[128]={};
-constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27;
+constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27,Seek=-28;
 Page& page(){return navigation.current();}
 int rows(){return min(6,(tft.height()-80)/40);}
 int footerY(){return tft.height()-40;}
@@ -225,18 +227,19 @@ void playerTick(uint32_t now){
   const Palette& p=theme();
   if(shownSerial!=audio_trackSerial())playerTrack();
   if(shownPlaying!=audio_isPlaying())playerTransport();
-  const uint32_t pos=audio_positionMs(),duration=audio_durationMs();
+  const uint32_t pos=seekPreview?seekMs:audio_positionMs(),duration=audio_durationMs();
   const int barY=tft.height()-114,barWidth=tft.width()-24;
   int progress=duration?min<int>(barWidth,uint64_t(pos)*barWidth/duration):0;
   if(progress!=shownProgress){tft.fillRect(12,barY,progress,5,p.bar);tft.fillRect(12+progress,barY,barWidth-progress,5,p.barBg);shownProgress=progress;}
-  if(int(pos/1000)!=shownSecond){shownSecond=pos/1000;tft.fillRect(0,barY+7,tft.width(),18,p.bg);
-    ui_text(ui_time(pos),12,barY+16,ML_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);
+  const bool busy=audio_isSeeking();
+  if(int(pos/1000)!=shownSecond||busy!=shownSeeking){shownSecond=pos/1000;shownSeeking=busy;tft.fillRect(0,barY+7,tft.width(),18,p.bg);
+    ui_text(busy?String("Seeking..."):ui_time(pos),12,barY+16,ML_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);
     ui_text(String("-")+ui_time(duration>pos?duration-pos:0,duration>0),tft.width()-12,barY+16,MR_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);}
   int connection=g_settings.outRoute==OUT_BT?(bt_connected()?2:1):0;
   if(connection!=shownConnection){shownConnection=connection;header();footer();}
 }
 void enter(){
-  bg_stop();ready=highlight=-1;gesture=cydclassic::Gesture{};
+  bg_stop();seekPreview=false;ready=highlight=-1;gesture=cydclassic::Gesture{};
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
@@ -254,7 +257,7 @@ void enter(){
   else {invalidate();if(!count){centred(storage_readOnly()?"SD card is read-only":storage_catalogStale()?"Library unavailable":"No entries",100,theme().dim,theme().bg);}}
 }
 void leave(){
-  flushSettings();dirty=0;titles_release();
+  seekPreview=false;flushSettings();dirty=0;titles_release();
   // ui_go calls leave after a navigation push/pop: current() is the destination.
   // Keep a newly built destination preview, otherwise rebuild lazily on Back.
   if(page().mode!=Mode::SourceSongs||externalReturn)freePreview();
@@ -338,7 +341,10 @@ int targetAt(int x,int y){
     if(footerRect(Down).contains(x,y))return count>rows()?Down:-1;
     return Now;
   }
-  if(page().mode==Mode::Player){for(int a:{Prev,Play,Next})if(transportRect(a).contains(x,y))return a;return -1;}
+  if(page().mode==Mode::Player){
+    if(Rect{8,tft.height()-126,tft.width()-16,30}.contains(x,y))return Seek;
+    for(int a:{Prev,Play,Next})if(transportRect(a).contains(x,y))return a;return -1;
+  }
   if(page().mode==Mode::Volume){
     if(sliderRect().contains(x,y))return Slider;
     if(Rect{16,190,80,44}.contains(x,y))return Minus;
@@ -346,16 +352,36 @@ int targetAt(int x,int y){
   }
   int row=(y-40)/40;return row>=0&&row<rows()&&page().top+row<count?page().top+row:-1;
 }
+void seekPreviewAt(int x){
+  const int width=tft.width()-24;
+  seekMs=seekDuration?uint32_t(uint64_t(constrain(x-12,0,width))*(seekDuration-1)/width):0;
+  shownProgress=shownSecond=-1;lastPlayer=0;
+}
+void seekTransport(int target,bool held){
+  if(!storage_trackCount())return;
+  if(held){if(audio_canSeek())audio_seekRelative(target==Prev?-10:10);else ui_toast("Seeking unavailable for this track",1500);}
+  else if(target==Prev)audio_prev();else audio_next();
+}
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
     ready=-1;gesture.down(x,y,page().top,hit);
     if(hit==Slider){volumeAt(x);return true;}
+    if(hit==Seek){
+      seekCancelled=!audio_canSeek();seekPreview=!seekCancelled;
+      seekDuration=audio_durationMs();seekSerial=audio_trackSerial();seekPreviewAt(x);return true;
+    }
+    if(hit==Prev||hit==Next){pressAt=millis();return true;}
     highlight=hit>=0?hit-page().top:-1;if(highlight>=0&&highlight<rows()&&cache[highlight].valid)paintRow(highlight,true);
     return false;
   }
   if(phase==PRESS_MOVE){
     if(gesture.target==Slider){volumeAt(x);return true;}
+    if(gesture.target==Seek){
+      if(abs(y-gesture.y)>24||seekSerial!=audio_trackSerial())seekCancelled=true;
+      if(!seekCancelled)seekPreviewAt(x);return true;
+    }
+    if(gesture.target==Prev||gesture.target==Next){if(hit!=gesture.target)gesture.cancelled=true;return true;}
     bool claimed=gesture.move(x,y,hit,count>rows());
     if(claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
       if(top!=page().top){page().top=top;highlight=-1;invalidate();footer();}}
@@ -364,6 +390,17 @@ bool press(PressPhase phase,int x,int y){
   }
   if(phase==PRESS_UP){
     if(gesture.target==Slider)return true;
+    if(gesture.target==Seek){
+      seekPreview=false;shownProgress=shownSecond=-1;lastPlayer=0;
+      if(!seekCancelled&&seekSerial==audio_trackSerial()){
+        if(!audio_seekTo(seekMs))ui_toast("Seeking unavailable for this track",1500);
+      }else if(!audio_canSeek())ui_toast("Seeking unavailable for this track",1500);
+      return true;
+    }
+    if(gesture.target==Prev||gesture.target==Next){
+      if(!gesture.cancelled&&hit==gesture.target)seekTransport(gesture.target,millis()-pressAt>=600);
+      return true;
+    }
     ready=gesture.activate(hit)?hit:-1;
     if(highlight>=0){paintRow(highlight,false);highlight=-1;}
     return gesture.claimed||gesture.cancelled;

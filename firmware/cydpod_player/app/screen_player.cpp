@@ -331,7 +331,9 @@ static void touch(TouchEvent ev, int x, int y) {
       ui_toast(full ? T_FAV_FULL : on ? T_FAV_ADDED : T_FAV_REMOVED, 1500);
       return;
     }
-    return;                                   // M4A: no +/-10 s seeking
+    if (B[PB_PREV].contains(x,y)) audio_seekRelative(-10);
+    else if (B[PB_NEXT].contains(x,y)) audio_seekRelative(10);
+    return;
   }
   if (ev != TOUCH_TAP) return;
 
@@ -350,6 +352,8 @@ static void touch(TouchEvent ev, int x, int y) {
     audio_setVolume(constrain(v, 0, 100));
     g_settings.volume = audio_volume();
     saveSoon(now);
+  } else if (L->barTouch.contains(x,y) && audio_canSeek() && L->bar.w > 0) {
+    audio_seekTo(uint32_t(uint64_t(constrain(x-L->bar.x,0,L->bar.w)) * (audio_durationMs()-1) / L->bar.w));
   } else if (L->time.contains(x, y)) {
     g_settings.timeMode = (g_settings.timeMode + 1) % TIME_MODE_COUNT;
     shownSecond = 0xFFFFFFFF;

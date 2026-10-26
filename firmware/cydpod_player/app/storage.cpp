@@ -40,7 +40,10 @@ static Record cache;
 static int cacheIndex=-1;
 
 static void closeCat(){if(cat)cat.close();cat=File();cacheIndex=-1;}
-static void openCat(){closeCat();if(active>=0)cat=SD.open(CATALOGS[active]);}
+// CY-41: the default 4 KB stdio buffer is oversized for 712 B record reads; 512 B keeps the persistent
+// handle (CT-06). A refused resize keeps the default buffer, which is only a heap cost.
+static const size_t kCatBuffer=512;
+static void openCat(){closeCat();if(active>=0){cat=SD.open(CATALOGS[active]);if(cat&&!cat.setBufferSize(kCatBuffer))Serial.println("catalog: 512 B buffer refused, default kept");}}
 
 static uint32_t crc(uint32_t value,const void* p,size_t n){return esp_rom_crc32_le(value,(const uint8_t*)p,n);}
 static bool readAt(File& f,uint32_t at,void* p,size_t n){return (f.position()==at||f.seek(at))&&f.read((uint8_t*)p,n)==n;}

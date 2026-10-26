@@ -207,7 +207,7 @@ static bool openTrack(int index) {
     trackSerial++;
     return false;
   }
-  durationMs = (uint32_t)(m4a.totalFrames() * 1000 / 44100);
+  durationMs = (uint32_t)(m4a.totalFrames() * 1000 / m4a.sampleRate());
   canSeek = m4a.seekable();
   trackSerial++;
   Serial.printf("audio: [%d/%d] %s  %u KB  %lu:%02lu  heap %u\n", index + 1, count, path.c_str(),

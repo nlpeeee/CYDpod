@@ -16,7 +16,7 @@ struct Gesture {
     return claimed||cancelled;
   }
   bool activate(int hit)const{return !claimed&&!cancelled&&target!=-1&&hit==target;}
-  int scrollTop(int py,int count,int rows)const{return clampTop(top+(y-py)/40,count,rows);}
+  int scrollTop(int py,int count,int rows)const{return clampTop(top+(y-py)/44,count,rows);}
 };
 template<class T,unsigned Capacity=8> struct Navigation {
   T entries[Capacity]{};unsigned depth=1;

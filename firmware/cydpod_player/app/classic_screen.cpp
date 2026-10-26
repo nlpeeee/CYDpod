@@ -45,18 +45,18 @@ uint32_t seekMs=0,seekDuration=0,seekSerial=0,pressAt=0;
 char notice[128]={};
 constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27,Seek=-28;
 Page& page(){return navigation.current();}
-int rows(){return min(6,(tft.height()-80)/40);}
-int footerY(){return tft.height()-40;}
-Rect rowRect(int i){return {0,40+i*40,tft.width()-8,40};}
+int rows(){return min(6,(tft.height()-88)/44);}
+int footerY(){return tft.height()-44;}
+Rect rowRect(int i){return {0,44+i*44,tft.width()-8,44};}
 Rect footerRect(int action){
   const int w=tft.width();
-  if(action==Home)return {0,footerY(),64,40};
-  if(action==Up)return {64,footerY(),48,40};
-  if(action==Down)return {112,footerY(),48,40};
-  return {160,footerY(),w-160,40};
+  if(action==Home)return {0,footerY(),64,44};
+  if(action==Up)return {64,footerY(),48,44};
+  if(action==Down)return {112,footerY(),48,44};
+  return {160,footerY(),w-160,44};
 }
-Rect transportRect(int action){const int column=action==Prev?0:action==Play?1:2;return {tft.width()/2-96+column*64,tft.height()-84,64,40};}
-Rect sliderRect(){return {40,126,tft.width()-80,40};}
+Rect transportRect(int action){const int column=action==Prev?0:action==Play?1:2;return {4+column*(tft.width()/3),tft.height()-100,tft.width()/3-8,52};}
+Rect sliderRect(){return {24,126,tft.width()-48,52};}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
 void freePreview(){free(preview);preview=nullptr;previewCount=0;}
 void text(const char* s,const Rect& r,uint16_t fg,uint16_t bg,TypeRole role=TYPE_BODY){ui_text(String(s),r.x+10,r.cy(),ML_DATUM,fg,bg,r.w-20,role);}
@@ -73,25 +73,25 @@ const char* title(){
 }
 void header(){
   const Palette& p=theme();
-  for(int y=0;y<40;++y)tft.drawFastHLine(0,y,tft.width(),tft.alphaBlend(uint8_t(y*180/40),p.band,0xffff));
-  tft.drawFastHLine(0,39,tft.width(),p.outline);
-  if(navigation.depth>1)ui_text("< Back",6,20,ML_DATUM,p.text,p.band,54);
-  ui_text(String(title()),tft.width()/2,20,MC_DATUM,p.text,p.band,tft.width()-116);
+  for(int y=0;y<44;++y)tft.drawFastHLine(0,y,tft.width(),tft.alphaBlend(uint8_t(y*180/44),p.band,0xffff));
+  tft.drawFastHLine(0,43,tft.width(),p.outline);
+  if(navigation.depth>1)ui_text("< Back",6,22,ML_DATUM,p.text,p.band,54);
+  ui_text(String(title()),tft.width()/2,22,MC_DATUM,p.text,p.band,tft.width()-116);
   const char* status=g_settings.outRoute==OUT_BT?(bt_connected()?"BT":"BT..."):"SPK";
-  ui_text(String(status),tft.width()-5,20,MR_DATUM,p.dim,p.band,36,TYPE_CAPTION);
+  ui_text(String(status),tft.width()-5,22,MR_DATUM,p.dim,p.band,36,TYPE_CAPTION);
 }
 void footer(){
-  const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),40,p.band);
+  const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),44,p.band);
   tft.drawFastHLine(0,footerY(),tft.width(),p.outline);
   if(page().mode==Mode::Player){
-    text("Volume",{0,footerY(),80,40},p.text,p.band);
-    text((String(audio_volume())+"%").c_str(),{80,footerY(),80,40},p.dim,p.band,TYPE_CAPTION);
-    text("Options",{160,footerY(),tft.width()-160,40},p.text,p.band);
+    text("Volume",{0,footerY(),80,44},p.text,p.band);
+    text((String(audio_volume())+"%").c_str(),{80,footerY(),80,44},p.dim,p.band,TYPE_CAPTION);
+    text("Options",{160,footerY(),tft.width()-160,44},p.text,p.band);
   }else{
     text("Home",footerRect(Home),p.text,p.band);
     if(count>rows()){
-      ui_icon(ICON_UP,88,footerY()+20,14,page().top?p.text:p.disabled,p.band);
-      ui_icon(ICON_DOWN,136,footerY()+20,14,page().top+rows()<count?p.text:p.disabled,p.band);
+      ui_icon(ICON_UP,88,footerY()+22,14,page().top?p.text:p.disabled,p.band);
+      ui_icon(ICON_DOWN,136,footerY()+22,14,page().top+rows()<count?p.text:p.disabled,p.band);
     }
     text("Playing",footerRect(Now),storage_trackCount()?p.text:p.disabled,p.band,TYPE_CAPTION);
   }
@@ -102,19 +102,19 @@ void paintRow(int i,bool pressed){
   tft.fillRect(box.x,box.y,box.w,box.h,bg);
   if(!r.valid)return;
   if(r.detail[0]){
-    ui_text(String(r.label),10,box.y+12,ML_DATUM,fg,bg,box.w-34);
-    ui_text(String(r.detail),10,box.y+30,ML_DATUM,pressed?p.onAccent:p.dim,bg,box.w-34,TYPE_CAPTION);
+    ui_text(String(r.label),10,box.y+14,ML_DATUM,fg,bg,box.w-34);
+    ui_text(String(r.detail),10,box.y+33,ML_DATUM,pressed?p.onAccent:p.dim,bg,box.w-34,TYPE_CAPTION);
   }else text(r.label,box,fg,bg);
   if(r.navigates)ui_icon(ICON_CHEVRON,box.w-12,box.cy(),12,fg,bg);
   else if(r.track==audio_currentTrack()&&audio_isPlaying())ui_icon(ICON_PLAY,box.w-12,box.cy(),12,fg,bg);
-  tft.drawFastHLine(0,box.y+39,box.w,p.outlineSubtle);
+  tft.drawFastHLine(0,box.y+43,box.w,p.outlineSubtle);
 }
 void invalidate(){
   page().top=cydclassic::clampTop(page().top,count,rows());dirty=uint8_t((1u<<rows())-1);
   for(int i=0;i<6;++i)cache[i].valid=false;
-  const Palette& p=theme();const int x=tft.width()-7,h=rows()*40;
-  tft.fillRect(x,40,7,h,p.band);
-  if(count>rows()){const int thumb=max(12,h*rows()/count);const int y=40+(h-thumb)*page().top/max(1,count-rows());tft.fillRect(x+2,y,3,thumb,p.dim);}
+  const Palette& p=theme();const int x=tft.width()-7,h=rows()*44;
+  tft.fillRect(x,44,7,h,p.band);
+  if(count>rows()){const int thumb=max(12,h*rows()/count);const int y=44+(h-thumb)*page().top/max(1,count-rows());tft.fillRect(x+2,y,3,thumb,p.dim);}
 }
 void setRow(Row& r,const char* label,const String& detail=String(),bool navigate=false,bool disabled=false){
   cydlib::copyText(r.label,label);cydlib::copyText(r.detail,detail.c_str());r.valid=true;r.navigates=navigate;r.disabled=disabled;
@@ -199,8 +199,8 @@ void volumeAt(int x){
 void volumePaint(){
   const Palette& p=theme();centred(String(audio_volume())+"%",90,p.text,p.bg);
   Rect s=sliderRect();tft.fillRect(s.x,s.y,s.w,s.h,p.bg);ui_slider(s,audio_volume(),100,p.bg);
-  ui_textButton({16,190,80,44},T_COUNT);ui_textButton({tft.width()-96,190,80,44},T_COUNT);
-  ui_icon(ICON_VOL_DOWN,56,212,22,p.text,p.btn);ui_icon(ICON_VOL_UP,tft.width()-56,212,22,p.text,p.btn);
+  ui_textButton({8,190,96,52},T_COUNT);ui_textButton({tft.width()-104,190,96,52},T_COUNT);
+  ui_icon(ICON_VOL_DOWN,56,216,26,p.text,p.btn);ui_icon(ICON_VOL_UP,tft.width()-56,216,26,p.text,p.btn);
 }
 void playerTransport(){
   ui_button(transportRect(Prev),ICON_PREV);
@@ -214,12 +214,12 @@ void playerTrack(){
     cydlib::copyText(playingInfo.title,"No songs");cydlib::copyText(playingInfo.artist,"Add M4A files to /music");
   }
   const bool portrait=tft.height()>=300;
-  if(portrait){Rect art{tft.width()/2-36,48,72,72};tft.fillRect(art.x,art.y,art.w,art.h,p.band);ui_icon(ICON_NOTE,art.cx(),art.cy(),42,p.dim,p.band);}
-  const int y=portrait?140:54;
-  tft.fillRect(0,y-12,tft.width(),64,p.bg);
+  if(portrait){Rect art{tft.width()/2-28,48,56,56};tft.fillRect(art.x,art.y,art.w,art.h,p.band);ui_icon(ICON_NOTE,art.cx(),art.cy(),34,p.dim,p.band);}
+  const int y=portrait?120:54;
+  tft.fillRect(0,y-12,tft.width(),58,p.bg);
   centred(String(playingInfo.title),y,p.text,p.bg);
-  centred(String(playingInfo.artist),y+22,p.dim,p.bg);
-  centred(String(playingInfo.album),y+42,p.dim,p.bg);
+  centred(String(playingInfo.artist),y+20,p.dim,p.bg);
+  centred(String(playingInfo.album),y+36,p.dim,p.bg);
   shownProgress=shownSecond=-1;shownSerial=audio_trackSerial();
 }
 void playerTick(uint32_t now){
@@ -228,7 +228,7 @@ void playerTick(uint32_t now){
   if(shownSerial!=audio_trackSerial())playerTrack();
   if(shownPlaying!=audio_isPlaying())playerTransport();
   const uint32_t pos=seekPreview?seekMs:audio_positionMs(),duration=audio_durationMs();
-  const int barY=tft.height()-114,barWidth=tft.width()-24;
+  const int barY=tft.height()-136,barWidth=tft.width()-24;
   int progress=duration?min<int>(barWidth,uint64_t(pos)*barWidth/duration):0;
   if(progress!=shownProgress){tft.fillRect(12,barY,progress,5,p.bar);tft.fillRect(12+progress,barY,barWidth-progress,5,p.barBg);shownProgress=progress;}
   const bool busy=audio_isSeeking();
@@ -333,7 +333,7 @@ void activate(int at){
   }
 }
 int targetAt(int x,int y){
-  if(y<40)return navigation.depth>1&&x<56?Back:-1;
+  if(y<44)return navigation.depth>1&&x<64?Back:-1;
   if(y>=footerY()){
     if(page().mode==Mode::Player)return x<80?Volume:x>=160?Options:-1;
     if(footerRect(Home).contains(x,y))return Home;
@@ -342,15 +342,15 @@ int targetAt(int x,int y){
     return Now;
   }
   if(page().mode==Mode::Player){
-    if(Rect{8,tft.height()-126,tft.width()-16,30}.contains(x,y))return Seek;
+    if(Rect{8,tft.height()-148,tft.width()-16,44}.contains(x,y))return Seek;
     for(int a:{Prev,Play,Next})if(transportRect(a).contains(x,y))return a;return -1;
   }
   if(page().mode==Mode::Volume){
     if(sliderRect().contains(x,y))return Slider;
-    if(Rect{16,190,80,44}.contains(x,y))return Minus;
-    if(Rect{tft.width()-96,190,80,44}.contains(x,y))return Plus;return -1;
+    if(Rect{8,190,96,52}.contains(x,y))return Minus;
+    if(Rect{tft.width()-104,190,96,52}.contains(x,y))return Plus;return -1;
   }
-  int row=(y-40)/40;return row>=0&&row<rows()&&page().top+row<count?page().top+row:-1;
+  int row=(y-44)/44;return row>=0&&row<rows()&&page().top+row<count?page().top+row:-1;
 }
 void seekPreviewAt(int x){
   const int width=tft.width()-24;

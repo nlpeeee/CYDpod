@@ -140,13 +140,14 @@ int main(){try{
   tap(80,110);check(playing&&storage_trackLabel(current)=="Song 03"&&calls>before,"result commits playable queue");
   // Existing 52 px transport and 44 px seek targets include the outer edges.
   tap(120,222);check(!playing,"large play target upper edge");tap(120,270);check(playing,"large play target lower edge");
+  tx=100;ty=246;down=true;ui_tick(clockNow+=130);tx=130;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(!playing,"sliding inside Play executes instead of silently cancelling");
   tap(20,20);tap(80,66);tap(120,300);tap(100,256);tap(200,256); // edit, Clear, Delete on empty, ABC
   tap(60,256);tap(60,256); // z,z
   tap(200,300);check(label("No matches"),"empty results are visible");
   tap(80,66);tft.setRotation(1);ui_redraw();pump();
   tap(150,176);check(label("q")&&label("z"),"landscape alphabet second page");snapshot("ui-search-landscape.svg");
   tft.setRotation(0);ui_redraw();pump();
-  classic_home();ui_go(SCR_CLASSIC);pump();tap(80,198);tap(80,154);check(label("Screen timeout")&&label("Sleep timer"),"Playback exposes both sleep settings");snapshot("ui-playback-sleep.svg");
+  classic_home();ui_go(SCR_CLASSIC);pump();tap(80,198);tap(80,154);check(label("Screen timeout")&&label("Sleep timer"),"Playback exposes both sleep settings");g_settings.screenTimeout=2;ui_redraw();pump();snapshot("ui-playback-sleep.svg");g_settings.screenTimeout=0;
   tap(80,154);check(g_settings.screenTimeout==1,"screen timeout cycles and persists setting");
   tap(80,198);check(g_settings.sleepTimer==1,"sleep timer cycles setting");sleep_setTimer(0,clockNow);
   classic_home();ui_go(SCR_CLASSIC);pump();tap(80,110);playing=true;

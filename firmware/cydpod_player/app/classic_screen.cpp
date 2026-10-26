@@ -38,7 +38,7 @@ int previewCount=0;
 uint32_t lastPaint=0,lastPlayer=0,shownSerial=UINT32_MAX,saveAt=0;
 uint32_t seenError=0,lastStatus=0;
 int shownProgress=-1,shownSecond=-1,shownVolume=-1,shownConnection=-1;
-bool shownPlaying=false,savePending=false,shownSeeking=false;
+bool shownPlaying=false,savePending=false,shownSeeking=false,shownWaiting=false;
 bool previewDirty=false;
 bool externalReturn=false;
 bool seekPreview=false,seekCancelled=false;
@@ -250,9 +250,9 @@ void playerTick(uint32_t now){
   const int barY=tft.height()-136,barWidth=tft.width()-24;
   int progress=duration?min<int>(barWidth,uint64_t(pos)*barWidth/duration):0;
   if(progress!=shownProgress){tft.fillRect(12,barY,progress,5,p.bar);tft.fillRect(12+progress,barY,barWidth-progress,5,p.barBg);shownProgress=progress;}
-  const bool busy=audio_isSeeking();
-  if(int(pos/1000)!=shownSecond||busy!=shownSeeking){shownSecond=pos/1000;shownSeeking=busy;tft.fillRect(0,barY+7,tft.width(),18,p.bg);
-    ui_text(busy?String("Seeking..."):ui_time(pos),12,barY+16,ML_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);
+  const bool busy=audio_isSeeking(),waiting=audio_isPlaying()&&g_settings.outRoute==OUT_BT&&!bt_connected();
+  if(int(pos/1000)!=shownSecond||busy!=shownSeeking||waiting!=shownWaiting){shownSecond=pos/1000;shownSeeking=busy;shownWaiting=waiting;tft.fillRect(0,barY+7,tft.width(),18,p.bg);
+    ui_text(busy?String("Seeking..."):waiting?String("Waiting for BT"):ui_time(pos),12,barY+16,ML_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);
     ui_text(String("-")+ui_time(duration>pos?duration-pos:0,duration>0),tft.width()-12,barY+16,MR_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);}
   int connection=g_settings.outRoute==OUT_BT?(bt_connected()?2:1):0;
   static uint16_t shownSleep=UINT16_MAX;
@@ -474,7 +474,7 @@ bool press(PressPhase phase,int x,int y){
       if(!seekCancelled)seekPreviewAt(x);return true;
     }
     if(gesture.target==Prev||gesture.target==Next){if(hit!=gesture.target)gesture.cancelled=true;return true;}
-    bool claimed=gesture.move(x,y,hit,count>rows());
+    bool claimed=gesture.move(x,y,hit,gesture.target>=0&&gesture.target<KeyBase&&count>rows());
     if(claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
       if(top!=page().top){page().top=top;highlight=-1;invalidate();footer();}}
     if(claimed&&highlight>=0){paintRow(highlight,false);highlight=-1;}
@@ -491,6 +491,7 @@ bool press(PressPhase phase,int x,int y){
     }
     if(gesture.target==Prev||gesture.target==Next){
       if(!gesture.cancelled&&hit==gesture.target)seekTransport(gesture.target,millis()-pressAt>=600);
+      else Serial.println("cmd: transport ignored (finger left target)");
       return true;
     }
     ready=gesture.activate(hit)?hit:-1;

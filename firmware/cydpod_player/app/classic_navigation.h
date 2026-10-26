@@ -10,8 +10,9 @@ struct Gesture {
   bool claimed=false,cancelled=false;
   void down(int px,int py,int first,int hit){x=px;y=py;top=first;target=hit;claimed=cancelled=false;}
   bool move(int px,int py,int hit,bool scroll){
-    (void)scroll;
-    if(abs(px-x)>=10||abs(py-y)>=10)claimed=true;
+    // Only a scrollable list claims movement inside its target. Resistive
+    // jitter/sliding within a large button must still execute its command.
+    if(scroll&&(abs(px-x)>=10||abs(py-y)>=10))claimed=true;
     if(hit!=target)cancelled=true;
     return claimed||cancelled;
   }

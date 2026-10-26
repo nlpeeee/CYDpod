@@ -286,7 +286,7 @@ void loop() {
     Serial.printf("diag: sd read max %u ms  bg frame max %u ms %u KB  dac stalls %u\n",
                   audio_takeMaxReadMs(), maxMs, maxBytes / 1024, speaker_stalls());
     const AudioCommands commands=audio_commands();
-    Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u pullMax %d pendingTrack %d pendingSeek %ld cmdSerial %lu opening %d seeking %d blocked %d  "
+    Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u pullMax %d pendingTrack %d pendingSeek %ld cmdSerial %lu starting %d seeking %d blocked %d  "
                   "bg %d %u.%u fps %u ms  %s  %s  pulls %u frames %u\n",
                   ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(),
                   audio_decodeStackFree(), (unsigned)uxTaskGetStackHighWaterMark(nullptr),

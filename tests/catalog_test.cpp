@@ -50,6 +50,7 @@ int main(){try{
   gesture.move(20,10,-1,true);check(!gesture.activate(0)&&gesture.claimed,"drag suppresses tap");
   gesture.move(20,60,0,true);check(!gesture.activate(0),"return after drag still cancelled");
   gesture.down(20,300,0,-11);check(gesture.activate(-11),"footer control tap");
+  gesture.move(50,300,-11,false);check(gesture.activate(-11),"sliding inside a button is not a cancelled drag");
   gesture.move(68,300,-12,false);check(!gesture.activate(-11),"button exit cancels");
   check(cydclassic::clampTop(100,12,6)==6&&cydclassic::clampTop(-1,12,6)==0,"scroll clamp");
   struct TestPage{int top=0;};cydclassic::Navigation<TestPage> nav;nav.current().top=17;

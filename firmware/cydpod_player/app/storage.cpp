@@ -87,6 +87,22 @@ static bool validate(const char* path,Header& h){
 static bool tagRead(void* p,uint64_t at,void* dst,size_t bytes){
   File& f=*(File*)p;return at<=UINT32_MAX&&f.seek(uint32_t(at))&&f.read((uint8_t*)dst,bytes)==bytes;
 }
+// Leaf of the scan, kept out of scanDir so the (up to three) recursive frames stay small (CT-01).
+#ifdef _MSC_VER
+#define CYD_NOINLINE
+#else
+#define CYD_NOINLINE __attribute__((noinline))
+#endif
+static CYD_NOINLINE void addTrack(const String& p,File& f,File* output,StorageProgressFn progress){
+  if(scanned>=MaxTracks||p.length()>=256){++skipped;return;}  // CT-02: skip the file, keep building
+  const uint32_t size=f.size(),modified=uint32_t(f.getLastWrite());
+  scanCrc=crc(scanCrc,p.c_str(),p.length()+1);scanCrc=crc(scanCrc,&size,4);scanCrc=crc(scanCrc,&modified,4);
+  if(output){Record& r=work[0];memset(&r,0,sizeof(r));copyText(r.path,p.c_str());Tags tags(tagRead,&f,size,(uint8_t*)&work[1]);
+    if(!tags.parse(r)){memset(r.title,0,sizeof(r)-sizeof(r.path));Serial.printf("catalog: tags unavailable %s\n",p.c_str());}
+    fallback(r);if(output->write((const uint8_t*)&r,sizeof(r))!=sizeof(r))scanOk=false;
+  }
+  ++scanned;if(progress&&output)progress("Reading song tags",scanned,plannedTracks);
+}
 static void scanDir(const String& path,int depth,File* output,StorageProgressFn progress){
   File dir=SD.open(path);if(!dir||!dir.isDirectory()){scanOk=false;return;}
   for(File f=dir.openNextFile();f;f=dir.openNextFile()){
@@ -97,18 +113,7 @@ static void scanDir(const String& path,int depth,File* output,StorageProgressFn 
         f.close();if(depth<2)scanDir(p,depth+1,output,progress);
       }else{
         String low=p;low.toLowerCase();
-        if(low.endsWith(".m4a")){
-          if(scanned>=MaxTracks||p.length()>=256)++skipped;  // CT-02: skip the file, keep building
-          else{
-            const uint32_t size=f.size(),modified=uint32_t(f.getLastWrite());
-            scanCrc=crc(scanCrc,p.c_str(),p.length()+1);scanCrc=crc(scanCrc,&size,4);scanCrc=crc(scanCrc,&modified,4);
-            if(output){Record& r=work[0];memset(&r,0,sizeof(r));copyText(r.path,p.c_str());Tags tags(tagRead,&f,size,(uint8_t*)&work[1]);
-              if(!tags.parse(r)){memset(r.title,0,sizeof(r)-sizeof(r.path));Serial.printf("catalog: tags unavailable %s\n",p.c_str());}
-              fallback(r);if(output->write((const uint8_t*)&r,sizeof(r))!=sizeof(r))scanOk=false;
-            }
-            ++scanned;if(progress&&output)progress("Reading song tags",scanned,plannedTracks);
-          }
-        }
+        if(low.endsWith(".m4a"))addTrack(p,f,output,progress);
       }
     }
     f.close();if(!scanOk)break;

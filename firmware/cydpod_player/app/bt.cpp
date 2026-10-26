@@ -509,12 +509,13 @@ uint32_t bt_listSerial() { return listSerial; }
 
 bool bt_requestPairing() {
   if(!bluetoothReady){Serial.println("cmd: pair ignored (Bluetooth not ready)");return false;}
-  if(!pairingActive)pairResumeWanted=speaker_route()==OUT_BT&&audio_isPlaying();
+  const bool fresh=!pairingActive,pauseForPair=speaker_route()==OUT_BT&&audio_isPlaying();
+  if(fresh)pairResumeWanted=pauseForPair;
   if(!a2dp.post(CydSource::Pair,g_settings.btAddr)){failure=BT_FAIL_TIMEOUT;Serial.println("cmd: pair ignored (queue busy)");return false;}
   portENTER_CRITICAL(&pairingMux);pairingActive=true;portEXIT_CRITICAL(&pairingMux);
   haveTarget=false;pendingKnown=-1;connectDeadline=0;passkey=0;failure=BT_FAIL_NONE;
-  if(speaker_route()==OUT_BT&&audio_isPlaying())audio_togglePause();
-  pairPauseIntent=audio_playIntentSerial();
+  if(pauseForPair){audio_togglePause();pairResumeWanted=true;pairPauseIntent=audio_playIntentSerial();}
+  else if(fresh)pairPauseIntent=audio_playIntentSerial();
   portENTER_CRITICAL(&devMux);devCount=0;++listSerial;portEXIT_CRITICAL(&devMux);
   Serial.println("cmd: pair queued");return true;
 }

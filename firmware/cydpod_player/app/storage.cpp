@@ -15,7 +15,7 @@ static int active=-1;
 static bool stale=false,rebuilt=false;
 // Every access to the shared catalogue handle `cat` and the record `cache` takes
 // `mutex` (UI task and decode task both call in). validate() and the boot-time
-// build use their own handles, and work[] is touched at boot only, never while
+// build use their own handles, and work[] exists only inside storage_begin, never while
 // `cat` is in use.
 static SemaphoreHandle_t mutex=nullptr;
 static uint32_t scanCrc=0;
@@ -30,8 +30,9 @@ static void phase(const char* name){reportPhase=name;report(0,-1);}
 static void breathe(){delay(1);}
 static bool readOnly=false;  // card mounted but a folder could not be created: never write (CT-07)
 static int skipped=0;  // files left out of the catalogue: path too long or over MaxTracks
-// Shared boot scratch, not a whole-library cache.
-static Record work[2];
+// Shared boot scratch, not a whole-library cache. Heap-allocated by storage_begin for the
+// duration of the call only (CY-41), never on the 5 KB loop stack (CT-01).
+static Record* work=nullptr;
 // One open handle on the active catalogue plus the last record read through it
 // (CT-06): lookups no longer open, seek and close a 1.4 MB file every time, and
 // no 712 B Record has to live on the 5 KB loop-task stack (CT-01).
@@ -271,6 +272,9 @@ bool storage_mount(){
 }
 bool storage_begin(StorageProgressFn progress){
   if(!storage_mount())return false;
+  struct Scratch{Record* p;~Scratch(){work=nullptr;free(p);}} scratch{(Record*)malloc(2*sizeof(Record))};  // freed on every return path
+  if(!scratch.p){Serial.println("catalog: no heap for boot scratch");return false;}
+  work=scratch.p;
   xSemaphoreTake(mutex,portMAX_DELAY);closeCat();xSemaphoreGive(mutex);
   struct Reopen{~Reopen(){xSemaphoreTake(mutex,portMAX_DELAY);openCat();xSemaphoreGive(mutex);}} reopen;  // every return path
   active=-1;header={};stale=rebuilt=false;

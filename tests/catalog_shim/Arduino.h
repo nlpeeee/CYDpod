@@ -43,6 +43,7 @@ struct HostSerial {
   void println(const char* p=""){std::puts(p);}
 };
 inline HostSerial Serial;
+inline void delay(uint32_t){}
 inline uint32_t millis(){return uint32_t(std::chrono::steady_clock::now().time_since_epoch().count()/1000000);}
 using SemaphoreHandle_t=std::mutex*;
 inline SemaphoreHandle_t xSemaphoreCreateMutex(){return new std::mutex;}

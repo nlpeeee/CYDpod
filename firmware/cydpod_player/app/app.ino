@@ -111,13 +111,18 @@ static void resumePoint(int& track, uint32_t& ms) {
   }
 }
 
-static void libraryProgress(int done, int total) {
+static void libraryProgress(const char* phase, int done, int total) {
   const Palette& p = theme();
-  if (done == 1) centreMessage("CYDpod", "Reading song tags", p.accent);
+  static char shown[24];
+  if (strcmp(shown, phase)) {                    // new phase: new screen text
+    strlcpy(shown, phase, sizeof(shown));
+    centreMessage("CYDpod", phase, p.accent);
+  }
   tft.fillRect(0, tft.height() / 2 + 34, tft.width(), 20, p.bg);
   tft.setTextColor(p.dim, p.bg);
   tft.setTextDatum(MC_DATUM);
-  tft.drawString(total ? String(done) + " / " + String(total) : String(done) + " songs", tft.width() / 2, tft.height() / 2 + 44, 2);
+  tft.drawString(total > 0 ? String(done) + " / " + String(total) : total < 0 ? String(done) + "%" : String(done) + " songs",
+                 tft.width() / 2, tft.height() / 2 + 44, 2);
 }
 
 static void titleProgress(int done, int total) {

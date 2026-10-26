@@ -32,6 +32,15 @@ static Bytes tagged(const std::string& title,const std::string& artist,const std
 }
 static void put(const char* relative,const Bytes& bytes){auto p=SD.root/relative;std::filesystem::create_directories(p.parent_path());std::ofstream f(p,std::ios::binary);f.write((const char*)bytes.data(),bytes.size());check(bool(f),"write fixture");}
 static bool readVector(void* p,uint64_t at,void* dst,size_t n){auto& b=*(Bytes*)p;if(at>b.size()||n>b.size()-at)return false;memcpy(dst,b.data()+at,n);return true;}
+static std::vector<std::string> phasesSeen;static int lastPercent=-1;
+static void progressSeen(const char* phase,int done,int total){if(phasesSeen.empty()||phasesSeen.back()!=phase)phasesSeen.push_back(phase);lastPercent=total<0?done:-1;}
+static std::vector<int> libraryOrder(){
+  std::vector<int> order;uint16_t ids[2000];CatalogEntry e;
+  for(int i=0;i<storage_browseCount({CatalogKind::Songs,0});++i)if(storage_browseEntry({CatalogKind::Songs,0},i,e))order.push_back(e.track);
+  for(int g=0;g<storage_browseCount({CatalogKind::Artists,0});++g){int n=storage_browseTracks({CatalogKind::ArtistSongs,uint16_t(g)},ids,2000);order.push_back(-1);order.insert(order.end(),ids,ids+n);}
+  for(int g=0;g<storage_browseCount({CatalogKind::Albums,0});++g){int n=storage_browseTracks({CatalogKind::AlbumSongs,uint16_t(g)},ids,2000);order.push_back(-2);order.insert(order.end(),ids,ids+n);}
+  return order;
+}
 static int find(CatalogView view,const char* label){CatalogEntry e;for(int i=0;i<storage_browseCount(view);++i)if(storage_browseEntry(view,i,e)&&e.label==label)return i;throw std::runtime_error(std::string("missing ")+label);}
 static CatalogView child(CatalogView v,const char* label){CatalogEntry e;check(storage_browseEntry(v,find(v,label),e)&&e.navigates,"group child");return e.child;}
 int main(){try{
@@ -85,7 +94,9 @@ int main(){try{
   check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"explicit refresh rebuilds");
   // Damage newest B header; A remains readable and can be used without rewriting music.
   put(".sys/library-b.cat",Bytes(12,0));check(storage_begin(nullptr)&&storage_catalogReady()&&storage_trackCount()==7,"damaged newest falls back");
-  put("music/B/new.m4a",tagged("A new song","Artist B","Greatest Hits",3));check(storage_begin(nullptr)&&storage_catalogRebuilt()&&storage_trackCount()==8,"new file triggers rebuild");
+  put("music/B/new.m4a",tagged("A new song","Artist B","Greatest Hits",3));check(storage_begin(progressSeen)&&storage_catalogRebuilt()&&storage_trackCount()==8,"new file triggers rebuild");
+  {const std::vector<std::string> want={"Reading song tags","Preparing to sort","Sorting songs","Sorting artists","Sorting albums","Grouping artists","Grouping albums","Finishing","Checking library"};
+   check(phasesSeen==want,"progress names every rebuild phase (CT-03)");}
   check(!storage_browseEntry(songs,-1,e)&&!storage_browseEntry(songs,2000,e),"range checks");
   check(storage_browseTracks(songs,ids,1)==0,"queue capacity guarded");
   playlist_begin();check(playlist_playView(songs,0),"play catalogue selection");
@@ -107,6 +118,20 @@ int main(){try{
   check(storage_begin(nullptr)&&storage_trackCount()==1000&&storage_browseCount(artists)==10&&storage_browseCount(albums)==20,"1000-track catalogue");
   check(storage_browseEntry(songs,0,e)&&e.label=="Song 0000","large title index");
   check(storage_begin(nullptr)&&!storage_catalogRebuilt(),"large warm boot");
+  {const std::vector<int> withKeys=libraryOrder();
+   hostLargestBlock=1000;check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"rebuild without sort keys");hostLargestBlock=64000;
+   check(libraryOrder()==withKeys&&withKeys.size()>1000,"key sort and record sort give the same order (CT-03)");}
+  // CT-03: varied titles, artists, albums (short, mixed case, shared prefixes): keys and records must order identically.
+  SD.root=std::filesystem::current_path()/("catalog-mixed-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  {unsigned seed=12345;auto next=[&](unsigned n){seed=seed*1103515245u+12345u;return (seed>>16)%n;};
+   auto word=[&](unsigned max){std::string w;unsigned len=1+next(max);for(unsigned i=0;i<len;++i){char c=char('a'+next(4));if(next(3)==0)c=char(c-32);w.push_back(c);}return w;};
+   std::vector<std::string> artistNames,albumNames;for(int i=0;i<12;++i)artistNames.push_back(word(7));for(int i=0;i<20;++i)albumNames.push_back(word(9));
+   for(int i=0;i<400;++i){char path[64];snprintf(path,sizeof(path),"music/F%d/%03d.m4a",int(next(6)),i);
+     put(path,tagged(word(10),artistNames[next(12)],albumNames[next(20)],int(1+next(6)),int(1+next(2)),next(5)==0?artistNames[next(12)]:""));}
+   check(storage_begin(nullptr)&&storage_trackCount()==400,"mixed catalogue");
+   const std::vector<int> withKeys=libraryOrder();
+   hostLargestBlock=1000;check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"mixed rebuild without keys");hostLargestBlock=64000;
+   check(libraryOrder()==withKeys,"mixed data: key sort equals record sort (CT-03)");}
   // CT-02: 2,002 files: the extra two are skipped and counted, the library still builds. (A 256+ character path cannot be created by the MSVC host shim, so that branch is covered by reading only.)
   SD.root=std::filesystem::current_path()/("catalog-limit-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   for(int i=0;i<2002;++i){char path[64],name[32];snprintf(path,sizeof(path),"music/G%d/%04d.m4a",i/200,i);snprintf(name,sizeof(name),"L%04d",i);put(path,tagged(name,"Limit Artist","Limit Album",i%99+1));}

@@ -21,6 +21,13 @@ static SemaphoreHandle_t mutex=nullptr;
 static uint32_t scanCrc=0;
 static int scanned=0;
 static bool scanOk=true;
+static int plannedTracks=0;  // tag-scan total, known from the cheap first pass
+static StorageProgressFn reportFn=nullptr;  // set only while a rebuild runs
+static const char* reportPhase="";
+// Progress and a 1 ms yield (idle task and watchdog feed) for the long loops. total<0: percent.
+static void report(int done,int total){if(reportFn)reportFn(reportPhase,done,total);}
+static void phase(const char* name){reportPhase=name;report(0,-1);}
+static void breathe(){delay(1);}
 static int skipped=0;  // files left out of the catalogue: path too long or over MaxTracks
 // Shared boot scratch, not a whole-library cache.
 static Record work[2];
@@ -60,7 +67,9 @@ static bool validate(const char* path,Header& h){
   ok=ok&&h.bytes==at&&f.size()==at;
   if(!ok){f.close();return false;}
   uint8_t* b=(uint8_t*)&work[1];uint32_t value=0,remaining=h.bytes-sizeof(Header);f.seek(sizeof(Header));  // boot scratch, 712 B >= 512
-  while(remaining){size_t n=std::min<size_t>(remaining,512);if(f.read(b,n)!=n){ok=false;break;}value=crc(value,b,n);remaining-=n;}
+  const uint32_t body=remaining;uint32_t chunks=0;
+  while(remaining){size_t n=std::min<size_t>(remaining,512);if(f.read(b,n)!=n){ok=false;break;}value=crc(value,b,n);remaining-=n;
+    if(!(++chunks&63)){breathe();report(int(uint64_t(body-remaining)*50/body),-1);}}
   ok=ok&&value==h.checksum;
   for(uint32_t p=h.songsAt;ok&&p<h.artistGroupsAt;p+=2){uint16_t id;ok=readAt(f,p,&id,2)&&id<h.tracks;}
   for(unsigned kind=0;ok&&kind<3;++kind){uint32_t base=kind==0?h.artistGroupsAt:kind==1?h.albumGroupsAt:h.artistAlbumGroupsAt;
@@ -68,7 +77,8 @@ static bool validate(const char* path,Header& h){
     for(int i=0;ok&&i<count;++i){Group g{};ok=groupAt(f,base,i,g)&&g.representative<h.tracks&&g.count&&uint32_t(g.first)+g.count<=h.tracks;
       if(kind==0)ok=ok&&g.subCount&&uint32_t(g.subFirst)+g.subCount<=h.artistAlbums;}
   }
-  Record& r=work[0];for(int i=0;ok&&i<h.tracks;++i)ok=fileRecord(f,i,r)&&validRecord(r);
+  Record& r=work[0];for(int i=0;ok&&i<h.tracks;++i){ok=fileRecord(f,i,r)&&validRecord(r);
+    if(!(i&63)){breathe();report(50+i*50/h.tracks,-1);}}
   f.close();return ok;
 }
 
@@ -95,7 +105,7 @@ static void scanDir(const String& path,int depth,File* output,StorageProgressFn 
               if(!tags.parse(r)){memset(r.title,0,sizeof(r)-sizeof(r.path));Serial.printf("catalog: tags unavailable %s\n",p.c_str());}
               fallback(r);if(output->write((const uint8_t*)&r,sizeof(r))!=sizeof(r))scanOk=false;
             }
-            ++scanned;if(progress&&output)progress(scanned,0);
+            ++scanned;if(progress&&output)progress("Reading song tags",scanned,plannedTracks);
           }
         }
       }
@@ -105,12 +115,67 @@ static void scanDir(const String& path,int depth,File* output,StorageProgressFn 
   dir.close();
 }
 static bool writeAll(File& f,const void* p,size_t n){return f.write((const uint8_t*)p,n)==n;}
-static bool appendOrder(File& f,Header& h,Order mode,uint16_t* ids,uint32_t& offset){
+// CT-03: sort on a 24 B in-RAM key per track instead of reading two 712 B records for
+// every comparison (about 130 k comparisons for 2,000 tracks). The records are read only
+// when the keys cannot settle an order. Without enough heap the keys are skipped and the
+// old record-by-record comparison is used, slower but identical.
+struct SortKey{uint32_t title,artist,album,artistCrc,albumCrc;uint16_t disc,track;};
+// First four bytes folded like compareText (ASCII case, zero padded), big endian: the
+// integer order equals the string order whenever the prefixes differ.
+static uint32_t foldPrefix(const char* s){
+  uint32_t v=0;bool end=false;
+  for(int i=0;i<4;++i){unsigned c=0;if(!end){c=(uint8_t)s[i];if(!c)end=true;else if(c<128)c=unsigned(tolower(int(c)));}v=(v<<8)|c;}
+  return v;
+}
+static uint32_t foldCrc(uint32_t value,const char* s){
+  for(;;++s){unsigned c=(uint8_t)*s;if(c<128)c=unsigned(tolower(int(c)));const uint8_t b=uint8_t(c);value=crc(value,&b,1);if(!*s)return value;}
+}
+// -1/+1 when the keys settle the order exactly as compare() would, 0 when only the records can.
+static int keyCompare(const SortKey& a,const SortKey& b,Order order){
+  if(order==Order::Artist){
+    if(a.artist!=b.artist)return a.artist<b.artist?-1:1;
+    if(a.artistCrc!=b.artistCrc)return 0;
+  }
+  if(order!=Order::Title){
+    if(a.albumCrc!=b.albumCrc)return a.album!=b.album?(a.album<b.album?-1:1):0;
+    if(a.disc!=b.disc)return a.disc<b.disc?-1:1;
+    if(a.track!=b.track)return a.track<b.track?-1:1;
+  }
+  return a.title!=b.title?(a.title<b.title?-1:1):0;
+}
+static SortKey* buildKeys(File& f,int n){
+  const size_t bytes=size_t(std::max(1,n))*sizeof(SortKey);
+  if(ESP.getMaxAllocHeap()<bytes+24u*1024u)return nullptr;
+  SortKey* keys=(SortKey*)malloc(bytes);if(!keys)return nullptr;
+  phase("Preparing to sort");
+  Record& r=work[0];
+  for(int i=0;i<n;++i){
+    if(!fileRecord(f,i,r)){free(keys);return nullptr;}
+    r.path[sizeof(r.path)-1]=r.title[sizeof(r.title)-1]=r.artist[sizeof(r.artist)-1]=r.album[sizeof(r.album)-1]=r.albumArtist[sizeof(r.albumArtist)-1]=0;
+    albumFolder(r,work[1].path);
+    SortKey& k=keys[i];k.title=foldPrefix(r.title);k.artist=foldPrefix(r.artist);k.album=foldPrefix(r.album);
+    k.artistCrc=foldCrc(0,r.artist);
+    k.albumCrc=foldCrc(foldCrc(foldCrc(0,r.album),albumOwner(r)),work[1].path);
+    k.disc=r.disc;k.track=r.track;
+    if(!(i&63)){breathe();report(i*100/n,-1);}
+  }
+  return keys;
+}
+static bool appendOrder(File& f,Header& h,Order mode,uint16_t* ids,uint32_t& offset,const SortKey* keys,const char* name){
   for(int i=0;i<h.tracks;++i)ids[i]=i;
-  // At most 4 KB of IDs plus two bounded records. IDs are released before BT.
+  phase(name);
+  int bits=0;for(int v=h.tracks;v;v>>=1)++bits;
+  const uint64_t estimate=std::max<uint64_t>(1,uint64_t(h.tracks)*bits*2);  // heapsort: about 2 n log2 n comparisons
+  uint32_t compares=0;
+  // At most 4 KB of IDs plus the key table. IDs and keys are released before BT.
   const bool ok=sortIds(ids,h.tracks,[&](uint16_t x,uint16_t y,bool& less){
-    if(!fileRecord(f,x,work[0])||!fileRecord(f,y,work[1]))return false;
-    const int c=compare(work[0],work[1],mode);less=c?c<0:x<y;return true;
+    if(!(++compares&255)){breathe();report(int(std::min<uint64_t>(99,compares*100/estimate)),-1);}
+    int c=keys?keyCompare(keys[x],keys[y],mode):0;
+    if(!c){
+      if(!fileRecord(f,x,work[0])||!fileRecord(f,y,work[1]))return false;
+      c=compare(work[0],work[1],mode);
+    }
+    less=c?c<0:x<y;return true;
   });
   if(!ok)return false;
   const uint32_t end=offset;offset+=h.tracks*2;
@@ -121,6 +186,7 @@ static bool buildGroups(File& f,const Header& h,uint32_t orderAt,bool artist,boo
   Record& previous=work[0];Record& record=work[1];
   Group group{},album{};count=0;subCount=0;bool have=false;
   for(int pos=0;pos<=h.tracks;++pos){uint16_t id=0;bool changed=pos==h.tracks,albumChanged=changed;
+    if(!(pos&63)){breathe();report(pos*100/std::max<int>(1,h.tracks),-1);}
     if(!changed){if(!readAt(f,orderAt+pos*2,&id,2)||!fileRecord(f,id,record))return false;
       changed=!have||(artist?compareText(previous.artist,record.artist)!=0:compareAlbum(previous,record)!=0);
       albumChanged=!have||changed||compareAlbum(previous,record)!=0;
@@ -140,6 +206,8 @@ static bool appendFile(File& dst,const char* path,uint32_t& offset){
   src.close();return ok;
 }
 static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,StorageProgressFn progress,Header& checked){
+  reportFn=progress;reportPhase="Reading song tags";
+  struct Done{~Done(){reportFn=nullptr;}} done;  // progress only while a rebuild runs
   File f=SD.open(CATALOGS[slot],"w+");if(!f)return false;
   Header h{};memcpy(h.magic,"CYDCAT1",8);h.signature=signature;h.generation=generation;
   bool ok=writeAll(f,&h,sizeof(h));scanned=0;scanCrc=0;scanOk=true;skipped=0;
@@ -148,16 +216,20 @@ static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,Storage
   uint16_t* ids=(uint16_t*)malloc(std::max<int>(1,h.tracks)*2);
   if(!ids)ok=false;
   uint32_t at=sizeof(Header)+h.tracks*sizeof(Record);
-  if(ok){h.songsAt=at;ok=appendOrder(f,h,Order::Title,ids,at);}
-  if(ok){h.artistsAt=at;ok=appendOrder(f,h,Order::Artist,ids,at);}
-  if(ok){h.albumsAt=at;ok=appendOrder(f,h,Order::Album,ids,at);}
-  free(ids);
+  SortKey* keys=ok?buildKeys(f,h.tracks):nullptr;
+  if(ok){h.songsAt=at;ok=appendOrder(f,h,Order::Title,ids,at,keys,"Sorting songs");}
+  if(ok){h.artistsAt=at;ok=appendOrder(f,h,Order::Artist,ids,at,keys,"Sorting artists");}
+  if(ok){h.albumsAt=at;ok=appendOrder(f,h,Order::Album,ids,at,keys,"Sorting albums");}
+  free(keys);free(ids);
   const char* ag="/.sys/groups.tmp",*al="/.sys/albums.tmp",*aa="/.sys/artistalbums.tmp";
   SD.remove(ag);SD.remove(al);SD.remove(aa);
+  if(ok)phase("Grouping artists");
   if(ok){File artists=SD.open(ag,FILE_WRITE),sub=SD.open(aa,FILE_WRITE);int n=0,s=0;
     ok=artists&&sub&&buildGroups(f,h,h.artistsAt,true,true,artists,n,&sub,s);artists.close();sub.close();h.artists=n;h.artistAlbums=s;}
+  if(ok)phase("Grouping albums");
   if(ok){File albums=SD.open(al,FILE_WRITE);int n=0,s=0;
     ok=albums&&buildGroups(f,h,h.albumsAt,false,false,albums,n,nullptr,s);albums.close();h.albums=n;}
+  if(ok)phase("Finishing");
   if(ok){h.artistGroupsAt=at;ok=appendFile(f,ag,at);}
   if(ok){h.albumGroupsAt=at;ok=appendFile(f,al,at);}
   if(ok){h.artistAlbumGroupsAt=at;ok=appendFile(f,aa,at);}
@@ -168,6 +240,7 @@ static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,Storage
   }
   h.headerChecksum=crc(0,&h,sizeof(h));
   if(ok)ok=f.seek(0)&&writeAll(f,&h,sizeof(h));f.flush();f.close();
+  if(ok)phase("Checking library");
   return ok&&validate(CATALOGS[slot],checked);
 }
 
@@ -194,6 +267,7 @@ bool storage_begin(StorageProgressFn progress){
   const bool force=SD.exists(REFRESH);if(force)SD.remove(REFRESH);
   if(!scanOk){stale=true;Serial.println("catalog: Library stale: cannot read /music, previous catalogue kept");return true;}
   if(skipped)Serial.printf("catalog: skipped %d\n",skipped);
+  plannedTracks=scanned;
   if(active>=0&&!force&&scanCrc==header.signature&&scanned==header.tracks)return true;
   const int target=active==0?1:0;const uint32_t generation=header.generation+1;
   Header candidate{};

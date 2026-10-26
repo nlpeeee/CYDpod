@@ -20,7 +20,9 @@
 #include <Arduino.h>
 #include <SD.h>
 
-typedef void (*StorageProgressFn)(int done, int total);
+// Rebuild progress: a phase name plus done/total (total > 0: "done / total", total < 0:
+// done is a percentage, total == 0: a bare count).
+typedef void (*StorageProgressFn)(const char* phase, int done, int total);
 
 bool storage_mount();                              // card + folders only; false if no card
 bool storage_begin(StorageProgressFn progress);   // mount, then scan and index /music

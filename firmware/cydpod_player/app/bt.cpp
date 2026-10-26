@@ -90,6 +90,12 @@ class CydSource : public BluetoothA2DPSource {
         }
       }
     }
+    // CY-40: whether the stream ever starts is the question when nothing is heard.
+    if (param && event == ESP_A2D_AUDIO_STATE_EVT)
+      Serial.printf("bt: audio state %d  heap %u\n", (int)param->audio_stat.state, ESP.getFreeHeap());
+    if (param && event == ESP_A2D_MEDIA_CTRL_ACK_EVT)
+      Serial.printf("bt: media ack cmd %d status %d  heap %u\n", (int)param->media_ctrl_stat.cmd,
+                    (int)param->media_ctrl_stat.status, ESP.getFreeHeap());
     BluetoothA2DPSource::app_a2d_callback(event, param);
   }
 

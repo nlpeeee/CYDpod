@@ -63,6 +63,8 @@ void audio_pull(int16_t* stereo, int32_t frames);
 // Diagnostics for the serial stat line.
 uint32_t audio_underruns();
 uint32_t audio_takeMaxReadMs();     // slowest SD read since last call
+uint32_t audio_pullCalls();        // diagnostics: Bluetooth pulls so far, and frames it actually took from the ring
+uint32_t audio_pullFrames();
 int32_t  audio_maxRequest();       // largest frame count Bluetooth asked for at once
 uint8_t  audio_bufferPct();
 bool     audio_bufferLow();         // below half: background drawing backs off

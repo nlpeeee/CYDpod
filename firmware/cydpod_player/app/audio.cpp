@@ -66,10 +66,13 @@ bool audio_ready() { return rb && decodeHandle; }
 // Consumer
 // ---------------------------------------------------------------------------
 static volatile int32_t maxRequest = 0;
+static volatile uint32_t pullCalls = 0;       // diagnostics: how often Bluetooth pulled, and how many frames it took
+static volatile uint32_t pullFrames = 0;
 
 void audio_pull(int16_t* out, int32_t frames) {
   if (!rb) { memset(out, 0, frames * 2 * sizeof(int16_t)); return; }
   lastPullMs = millis();
+  pullCalls++;
   if (frames > maxRequest) maxRequest = frames;
   if (flushReq) {
     rbTail = rbHead;
@@ -88,6 +91,7 @@ void audio_pull(int16_t* out, int32_t frames) {
     }
     rbTail = tail;
     framesPlayed += n;
+    pullFrames += n;
     if (n > 0) starting = false;
     if (n < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
   }
@@ -402,6 +406,8 @@ uint32_t audio_trackSerial()  { return trackSerial; }
 uint32_t audio_underruns()    { return underruns; }
 uint32_t audio_takeMaxReadMs() { const uint32_t v = diagMaxReadMs; diagMaxReadMs = 0; return v; }
 int32_t  audio_maxRequest()   { return maxRequest; }
+uint32_t audio_pullCalls()    { return pullCalls; }
+uint32_t audio_pullFrames()   { return pullFrames; }
 uint8_t  audio_bufferPct()    { return rbUsed() * 100 / RB_FRAMES; }
 bool     audio_bufferLow()    { return playing && rbUsed() < RB_FRAMES / 2; }
 

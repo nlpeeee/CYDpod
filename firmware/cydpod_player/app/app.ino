@@ -155,9 +155,11 @@ void setup() {
   cydPrintBanner();
 
   settings_begin();
+  Serial.printf("heap: after settings %u\n", ESP.getFreeHeap());
   cydRgbLedOff();
   display_begin();
   touch_begin();
+  Serial.printf("heap: after display+touch %u\n", ESP.getFreeHeap());
   display_bootGesture();                 // blind panel-controller switch, 8 s hold
 
   centreMessage("CYD MP3", FIRMWARE_LABEL, theme().accent);
@@ -184,6 +186,8 @@ void loop() {}
     delay(2000);
   }
 
+  Serial.printf("heap: after storage %u\n", ESP.getFreeHeap());
+
   // A card that mounts but cannot be written (CT-07), or a rebuild that failed (CT-04):
   // say so for a moment, then carry on with whatever catalogue there is.
   if (storage_readOnly()) {
@@ -196,6 +200,7 @@ void loop() {}
 
   // Folders and playlists first: their names are rendered with the titles.
   playlist_begin();
+  Serial.printf("heap: after playlist %u\n", ESP.getFreeHeap());
   // Both need RAM only available before Bluetooth starts: see the header.
   titles_prepareAll(titleProgress);
   // Classic Touch uses direct, bounded drawing; GIFs do not consume audio SD bandwidth.
@@ -269,7 +274,7 @@ void loop() {
     Serial.printf("diag: sd read max %u ms  bg frame max %u ms %u KB  dac stalls %u\n",
                   audio_takeMaxReadMs(), maxMs, maxBytes / 1024, speaker_stalls());
     Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u req %d  "
-                  "bg %d %u.%u fps %u ms  %s  %s\n",
+                  "bg %d %u.%u fps %u ms  %s  %s  pulls %u frames %u\n",
                   ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(),
                   audio_decodeStackFree(), (unsigned)uxTaskGetStackHighWaterMark(nullptr),
                   audio_bufferPct(), audio_underruns(), audio_maxRequest(),
@@ -278,7 +283,7 @@ void loop() {
                   g_settings.outRoute == OUT_SPEAKER
                     ? (speaker_active() ? "spk" : "spk-off")
                     : (bt_connected() ? "bt" : "no-bt"),
-                  audio_isPlaying() ? "playing" : "paused");
+                  audio_isPlaying() ? "playing" : "paused", audio_pullCalls(), audio_pullFrames());
     lastStat = now;
   }
   delay(2);

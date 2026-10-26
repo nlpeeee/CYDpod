@@ -2,6 +2,7 @@
 #include "codec_track.h"
 #include <new>
 #include "wav_track.h"
+#include "mp3_pool.h"
 #include <string.h>
 namespace {
 struct AacState {
@@ -9,7 +10,7 @@ struct AacState {
   M4aTrack track;
   AacState(int16_t* pcm) : track(workspace, pcm) {}
 };
-union CodecState { AacState aac; WavState wav; CodecState() {} ~CodecState() {} };
+union CodecState { AacState aac; WavState wav; Mp3State mp3; CodecState() {} ~CodecState() {} };
 struct PoolLayout {
   CodecState state;
   int16_t pcm[2304];                 // 1152 stereo MP3 frames, also AAC/WAV
@@ -23,6 +24,7 @@ struct PoolLayout {
   const char* error;
 };
 static_assert(sizeof(AacState) + 4608 + 2048 + 524 + 128 <= 40960, "AAC inclusive pool budget");
+static_assert(sizeof(Mp3State) + 4608 + 2048 + 524 + 128 <= 40960, "MP3 inclusive pool budget");
 static_assert(sizeof(WavState) + 4608 + 2048 + 524 + 128 <= 40960, "WAV inclusive pool budget");
 static_assert(sizeof(PoolLayout) <= 40960, "inclusive codec pool overflow");
 alignas(8) static uint8_t codecPool[40960]; // the ONLY decoder/PCM/input/FIR allocation
@@ -30,13 +32,26 @@ PoolLayout& pool() { return *reinterpret_cast<PoolLayout*>(codecPool); }
 }
 miniaac_status CodecTrack::begin(File& file) {
   end(); pool().file=&file; pool().error="ok"; pool().rate=44100;
-  uint8_t magic[4];
+  uint8_t magic[4]={};
   if (WavState::readAt(file,0,magic,4) && !memcmp(magic,"RIFF",4)) {
     pool().kind=2; new (&pool().state.wav) WavState{};
     const char* error=pool().state.wav.open(file);
     if (error) { pool().error=error; return MINIAAC_UNSUPPORTED; }
     pool().rate=pool().state.wav.rate; pool().total=pool().state.wav.bytes/pool().state.wav.align;
     return MINIAAC_OK;
+  }
+  if (!memcmp(magic,"ID3",3) || (magic[0]==255 && (magic[1]&224)==224 && ((magic[1]>>1)&3)==1)) {
+    pool().kind=3; new (&pool().state.mp3) Mp3State{};
+    const char* error=pool().state.mp3.open(file);
+    if(error){pool().error=error;return MINIAAC_UNSUPPORTED;}
+    const uint32_t at=pool().state.mp3.at;
+    if (pool().state.mp3.frameBytes<=pool().state.mp3.end-at && WavState::readAt(file,at,pool().input,pool().state.mp3.frameBytes)) {
+      const uint8_t* b=pool().input;const bool v1=((b[1]>>3)&3)==3;
+      const unsigned x=4+((b[1]&1)?0:2)+(v1?(pool().state.mp3.channels==1?17:32):(pool().state.mp3.channels==1?9:17));
+      if(x+12<=pool().state.mp3.frameBytes && (!memcmp(b+x,"Xing",4)||!memcmp(b+x,"Info",4)) && (Mp3State::be32(b+x+4)&1))
+        pool().state.mp3.total=uint64_t(Mp3State::be32(b+x+8))*pool().state.mp3.samples;
+    }
+    pool().rate=pool().state.mp3.rate;pool().total=pool().state.mp3.total;return MINIAAC_OK;
   }
   new (&pool().state.aac) AacState(pool().pcm); pool().kind=1;
   return pool().state.aac.track.begin(file);
@@ -47,6 +62,14 @@ void CodecTrack::end() {
 }
 CodecTrack::Pull CodecTrack::next() {
   if(pool().kind==1) return pool().state.aac.track.next();
+  if(pool().kind==3) {
+    pool().used=pool().frames=0;
+    const int n=pool().state.mp3.read(*pool().file,pool().input,pool().pcm,pool().error);
+    pool().total=pool().state.mp3.total;
+    if(n<0)return Pull::error;
+    if(pool().rate!=pool().state.mp3.rate){pool().error="mp3_rate_change";return Pull::error;}
+    pool().frames=size_t(n);return n?Pull::frames:Pull::eof;
+  }
   if(pool().kind!=2) return Pull::error;
   pool().used=pool().frames=0;
   const int n=pool().state.wav.read(*pool().file,pool().input,pool().pcm);

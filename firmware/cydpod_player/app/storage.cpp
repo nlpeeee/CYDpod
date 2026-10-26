@@ -1,5 +1,6 @@
 #include "storage.h"
 #include "catalog.h"
+#include "small_file.h"
 #ifndef CYDPOD_CATALOG_HOST
 #include "board.h"
 #include <SPI.h>
@@ -423,3 +424,104 @@ int storage_browseTracks(CatalogView v,uint16_t* out,int capacity){
   for(int i=0;ok&&i<g.count;++i)ok=idAt(cat,order,g.first+i,out[i]);
   xSemaphoreGive(mutex);return ok?g.count:0;
 }
+
+// CY-50: an expendable search cache, always under /.sys. The catalogue remains
+// authoritative. Header is published last, tied to its checksum and exact size.
+namespace {
+const char* SEARCH="/.sys/search.idx";
+struct SearchHeader {char magic[8];uint32_t catalogue;uint16_t count,keyBytes;uint32_t checksum;};
+struct SearchKey {uint16_t id;char text[62];};
+static_assert(sizeof(SearchKey)==64,"fixed on-card search key");
+SearchKey searchChunk[8]; // shared loop-only scratch, never on the small loop stack
+SearchHeader searchHeader{};
+File searchFile; // at most catalogue + audio + search; closed on completion/leave
+char searchQuery[32]={};
+uint16_t searchIds[50],searchAt=0,searchBuilt=0;
+int searchCount=0;
+uint32_t searchSum=0,buildSum=0;
+bool searchBusy=false,searchBuilding=false,searchFailed=false,searchFallback=false;
+void searchFail(){searchFile.close();searchBusy=searchBuilding=false;searchFailed=true;searchCount=0;Serial.println("cmd: search failed (SD index I/O)");}
+void lowerCopy(char* out,const char* in,size_t n){for(size_t i=0;i<n;++i)out[i]=in[i]?((unsigned char)in[i]<128?char(tolower((unsigned char)in[i])):in[i]):0;}
+bool searchMatches(const char* text){
+  // All space-separated query words may occur anywhere in title or artist.
+  char word[32];const char* q=searchQuery;
+  while(*q){while(*q==' ')++q;unsigned n=0;while(*q&&*q!=' '&&n<31)word[n++]=*q++;word[n]=0;
+    if(n&&!strstr(text,word))return false;}
+  return true;
+}
+void makeSearchKey(SearchKey& key,int id){
+  key={};key.id=id;
+  const Record* r=recordLocked(id);if(!r){key.id=UINT16_MAX;return;}
+  // 35 title bytes + separator + 25 artist bytes. ASCII case folding matches
+  // catalogue ordering; non-ASCII UTF-8 bytes are retained without case folding.
+  const size_t titleBytes=min<size_t>(35,strlen(r->title));
+  lowerCopy(key.text,r->title,titleBytes);key.text[titleBytes]=' ';
+  lowerCopy(key.text+titleBytes+1,r->artist,min<size_t>(25,strlen(r->artist)));
+}
+}
+void storage_searchCancel(){searchFile.close();searchBusy=searchBuilding=false;}
+void storage_searchStart(const char* query){
+  const bool continuingBuild=searchBuilding&&searchHeader.catalogue==storage_libraryCrc();
+  memset(searchQuery,0,sizeof(searchQuery));lowerCopy(searchQuery,query,min<size_t>(31,strlen(query)));
+  searchAt=0;searchCount=0;searchSum=0;searchFailed=false;searchBusy=true;searchFallback=readOnly;
+  if(continuingBuild)return;
+  searchBuilding=false;searchFile.close();
+  if(searchFallback)return; // read-only cards stream the authoritative catalogue
+  File f=openSmallFile(SEARCH);
+  SearchHeader h{};
+  const bool valid=f&&readAt(f,0,&h,sizeof(h))&&!memcmp(h.magic,"CYDSRCH1",8)&&
+    h.catalogue==storage_libraryCrc()&&h.count==storage_trackCount()&&h.keyBytes==sizeof(SearchKey)&&
+    f.size()==sizeof(h)+uint32_t(h.count)*sizeof(SearchKey);
+  if(valid){searchHeader=h;searchFile=f;return;}
+  f.close();
+  searchHeader={};searchHeader.catalogue=storage_libraryCrc();searchHeader.count=storage_trackCount();searchHeader.keyBytes=sizeof(SearchKey);
+  f=openSmallFile(SEARCH,FILE_WRITE);
+  SearchHeader unfinished{};
+  if(!f||f.write((uint8_t*)&unfinished,sizeof(unfinished))!=sizeof(unfinished)){f.close();searchFail();return;}
+  searchFile=f;searchBuilt=0;buildSum=0;searchBuilding=true;
+}
+void storage_searchTick(){
+  if(!searchBusy)return;
+  if(searchBuilding){
+    const int n=min<int>(4,searchHeader.count-searchBuilt);
+    for(int i=0;i<n;++i){
+      xSemaphoreTake(mutex,portMAX_DELAY);makeSearchKey(searchChunk[i],searchBuilt+i);xSemaphoreGive(mutex);
+      if(searchChunk[i].id==UINT16_MAX){searchFail();return;}
+    }
+    if(!searchFile||searchFile.write((uint8_t*)searchChunk,n*sizeof(SearchKey))!=n*sizeof(SearchKey)){searchFail();return;}
+    buildSum=crc(buildSum,searchChunk,n*sizeof(SearchKey));searchBuilt+=n;
+    if(searchBuilt==searchHeader.count){
+      memcpy(searchHeader.magic,"CYDSRCH1",8);searchHeader.checksum=buildSum;
+      searchFile.close();File f=openSmallFile(SEARCH,"r+");
+      if(!f||!f.seek(0)||f.write((uint8_t*)&searchHeader,sizeof(searchHeader))!=sizeof(searchHeader)){f.close();searchFail();return;}
+      f.close();searchBuilding=false;
+      searchFile=openSmallFile(SEARCH);if(!searchFile){searchFail();return;}
+    }
+    breathe();return;
+  }
+  const int n=min<int>(searchFallback?2:8,storage_trackCount()-searchAt);
+  if(searchFallback){
+    for(int i=0;i<n;++i){xSemaphoreTake(mutex,portMAX_DELAY);makeSearchKey(searchChunk[i],searchAt+i);xSemaphoreGive(mutex);}
+  }else{
+    if(!searchFile||!readAt(searchFile,sizeof(SearchHeader)+uint32_t(searchAt)*sizeof(SearchKey),searchChunk,n*sizeof(SearchKey))){searchFail();return;}
+    searchSum=crc(searchSum,searchChunk,n*sizeof(SearchKey));
+  }
+  for(int i=0;i<n;++i){
+    const SearchKey& key=searchChunk[i];
+    if(key.id>=storage_trackCount()||!memchr(key.text,0,sizeof(key.text))){searchFail();return;}
+    if(searchCount<50&&searchMatches(key.text))searchIds[searchCount++]=key.id;
+  }
+  searchAt+=n;
+  if(searchAt==storage_trackCount()){
+    searchFile.close();
+    if(!searchFallback&&searchSum!=searchHeader.checksum){SD.remove(SEARCH);searchFail();return;}
+    searchBusy=false;Serial.printf("cmd: search complete (%d results, maximum 50)\n",searchCount);
+  }
+  breathe();
+}
+bool storage_searchBusy(){return searchBusy;}
+bool storage_searchBuilding(){return searchBuilding;}
+bool storage_searchFailed(){return searchFailed;}
+int storage_searchProgress(){return storage_trackCount()?int(uint32_t(searchBuilding?searchBuilt:searchAt)*100/storage_trackCount()):100;}
+int storage_searchCount(){return searchCount;}
+const uint16_t* storage_searchTracks(){return searchIds;}

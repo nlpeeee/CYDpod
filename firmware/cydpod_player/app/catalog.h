@@ -35,3 +35,15 @@ bool storage_trackInfo(int track,cydlib::Record& out);
 bool storage_trackSummary(int track,String& title,String& artist);
 int storage_findTrack(const String& path);
 void storage_forEachText(void (*fn)(const char*));
+
+// Loop-task-only bounded search. At most eight 64 B keys per tick. A single
+// search handle closes on completion/cancel/leave; restarting abandons the scan.
+void storage_searchStart(const char* query);
+void storage_searchTick();
+void storage_searchCancel();
+bool storage_searchBusy();
+bool storage_searchBuilding();
+bool storage_searchFailed();
+int storage_searchProgress();
+int storage_searchCount();
+const uint16_t* storage_searchTracks();

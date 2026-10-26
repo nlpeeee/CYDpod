@@ -17,7 +17,7 @@
 #include <esp_system.h>
 
 namespace {
-enum class Mode:uint8_t { Home,Music,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Volume,Options,About,Refresh,Message };
+enum class Mode:uint8_t { Home,Music,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Volume,Options,About,Refresh,Message,Search,Keyboard };
 struct Page {
   Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;uint16_t top=0;
   SourceKind sourceKind=SRC_M3U;char title[64]={};
@@ -43,6 +43,9 @@ bool externalReturn=false;
 bool seekPreview=false,seekCancelled=false;
 uint32_t seekMs=0,seekDuration=0,seekSerial=0,pressAt=0;
 char notice[128]={};
+char query[32]={};bool digitKeys=false,lettersSecond=false;
+int searchShownCount=-1,searchShownProgress=-1;
+constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44,KeyPage=-45;
 constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27,Seek=-28;
 Page& page(){return navigation.current();}
 int rows(){return min(6,(tft.height()-88)/44);}
@@ -65,6 +68,7 @@ const char* title(){
   if(page().title[0])return page().title;
   switch(page().mode){
     case Mode::Home:return "CYDpod";case Mode::Music:return "Music";case Mode::Player:return "Now Playing";
+    case Mode::Search:return "Search Results";case Mode::Keyboard:return "Search Songs";
     case Mode::Settings:return "Settings";case Mode::Playback:return "Playback";case Mode::Display:return "Display";
     case Mode::Output:return "Audio Output";case Mode::Volume:return "Volume";case Mode::Options:return "Options";
     case Mode::About:return "About";case Mode::Refresh:return "Refresh Library";case Mode::Message:return "CYDpod";
@@ -83,6 +87,9 @@ void header(){
 void footer(){
   const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),44,p.band);
   tft.drawFastHLine(0,footerY(),tft.width(),p.outline);
+  if(page().mode==Mode::Keyboard){
+    text("Space",{0,footerY(),80,44},p.text,p.band);text("Clear",{80,footerY(),80,44},p.text,p.band);text("Done",{160,footerY(),80,44},p.text,p.band);return;
+  }
   if(page().mode==Mode::Player){
     text("Volume",{0,footerY(),80,44},p.text,p.band);
     text((String(audio_volume())+"%").c_str(),{80,footerY(),80,44},p.dim,p.band,TYPE_CAPTION);
@@ -124,7 +131,8 @@ int sourceId(int wanted){
 }
 int rowCount(){
   switch(page().mode){
-    case Mode::Home:return 4;case Mode::Music:return 6;
+    case Mode::Home:return 5;case Mode::Music:return 7;
+    case Mode::Search:return 1+max(1,storage_searchCount());
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
@@ -137,10 +145,17 @@ void loadRow(int i){
   Row& r=cache[i];r=Row{};const int at=page().top+i;
   if(at>=count){r.valid=true;paintRow(i,false);return;}
   switch(page().mode){
-    case Mode::Home:{const char* names[]={"Music","Now Playing","Shuffle Songs","Settings"};setRow(r,names[at],String(),true,at==1&&!storage_trackCount());break;}
-    case Mode::Music:{const char* names[]={"Artists","Albums","Songs","Playlists","Folders","Favourites"};setRow(r,names[at],String(),true);break;}
+    case Mode::Home:{const char* names[]={"Music","Now Playing","Shuffle Songs","Settings","Search Songs"};setRow(r,names[at],String(),true,at==1&&!storage_trackCount());break;}
+    case Mode::Music:{const char* names[]={"Artists","Albums","Songs","Playlists","Folders","Favourites","Search Songs"};setRow(r,names[at],String(),true);break;}
     case Mode::Catalog:{CatalogEntry e;if(storage_browseEntry(page().view,at,e)){setRow(r,e.label.c_str(),e.detail,e.navigates);r.track=e.track;r.child=e.child;}
       else setRow(r,"Unable to read entry","Check SD card",false,true);break;}
+    case Mode::Search:
+      if(at==0)setRow(r,(String("Edit: ")+query).c_str(),storage_searchFailed()?String("SD error. Edit to retry"):storage_searchBusy()?String(storage_searchBuilding()?"Preparing index ":"Searching ")+String(storage_searchProgress())+"%":String(storage_searchCount())+" results (max 50)",true);
+      else if(at-1<storage_searchCount()){
+        String song,artist;r.track=storage_searchTracks()[at-1];
+        if(storage_trackSummary(r.track,song,artist))setRow(r,song.c_str(),artist);else setRow(r,"Track unavailable",String(),false,true);
+      }else setRow(r,storage_searchBusy()?"Searching...":"No matches",String(),false,true);
+      break;
     case Mode::Sources:{int source=sourceId(at);setRow(r,playlist_name(source).c_str(),String(),true,source<0);r.source=source;break;}
     case Mode::SourceSongs:{String title,artist;if(preview&&at<previewCount&&storage_trackSummary(preview[at],title,artist)){setRow(r,title.c_str(),artist);r.track=preview[at];}else setRow(r,"Track unavailable",String(),false,true);break;}
     case Mode::Settings:{const char* names[]={"Audio Output","Bluetooth","Playback","Display","Refresh Library","Upload / Advanced","About"};setRow(r,names[at],String(),true);break;}
@@ -238,14 +253,49 @@ void playerTick(uint32_t now){
   int connection=g_settings.outRoute==OUT_BT?(bt_connected()?2:1):0;
   if(connection!=shownConnection){shownConnection=connection;header();footer();}
 }
+// Five rows of 40 px keys, with a 44 px action bar. No title list in RAM.
+const char* keyLetters(){return digitKeys?"0123456789":tft.height()<300?(lettersSecond?"qrstuvwxyz":"abcdefghijklmnop"):"abcdefghijklmnopqrstuvwxyz";}
+Rect keyRect(int i){const int cols=tft.height()<300?8:digitKeys?5:6;return {(i%cols)*(tft.width()/cols),76+(i/cols)*40,tft.width()/cols,40};}
+Rect keyBackRect(){return tft.height()<300?Rect{0,156,106,40}:Rect{80,236,80,40};}
+Rect keyDigitsRect(){return tft.height()<300?Rect{212,156,108,40}:Rect{160,236,80,40};}
+void keyFace(const Rect& r,const char* label){
+  tft.fillRect(r.x+1,r.y+1,r.w-2,r.h-2,theme().band);
+  ui_text(String(label),r.cx(),r.cy(),MC_DATUM,theme().text,theme().band,r.w-4);
+}
+void queryPaint(){
+  tft.fillRect(0,44,tft.width(),32,theme().bg);
+  ui_text(String(query[0]?query:"Type a title or artist"),8,60,ML_DATUM,theme().text,theme().bg,tft.width()-54);
+  ui_text(storage_searchFailed()?String("SD!"):storage_searchBusy()?String(storage_searchProgress())+"%":String(storage_searchCount()),tft.width()-6,60,MR_DATUM,theme().dim,theme().bg,42,TYPE_CAPTION);
+}
+void keyboardPaint(){
+  tft.fillRect(0,76,tft.width(),footerY()-76,theme().bg);
+  const char* keys=keyLetters();
+  for(int i=0;keys[i];++i){char label[2]={keys[i],0};keyFace(keyRect(i),label);}
+  keyFace(keyBackRect(),"Delete");keyFace(keyDigitsRect(),digitKeys?"ABC":"123");
+  if(tft.height()<300)keyFace({106,156,106,40},lettersSecond?"A-P":"Q-Z");
+  keyFace({0,footerY(),80,44},"Space");keyFace({80,footerY(),80,44},"Clear");keyFace({160,footerY(),tft.width()-160,44},"Done");
+  queryPaint();
+}
+void editQuery(int target){
+  size_t n=strlen(query);bool changed=true;
+  if(target==KeyDigits){digitKeys=!digitKeys;keyboardPaint();return;}
+  if(target==KeyPage){digitKeys=false;lettersSecond=!lettersSecond;keyboardPaint();return;}
+  if(target==KeyBack){if(n)query[n-1]=0;}
+  else if(target==KeyClear)query[0]=0;
+  else if(n<sizeof(query)-1){query[n]=target==KeySpace?' ':char(target-KeyBase);query[n+1]=0;}
+  else {changed=false;ui_toast("Search text is full (31 characters)");}
+  if(changed){storage_searchStart(query);queryPaint();}
+}
 void enter(){
   bg_stop();seekPreview=false;ready=highlight=-1;gesture=cydclassic::Gesture{};
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
+  if(page().mode==Mode::Search)storage_searchStart(query);
   count=rowCount();tft.fillScreen(theme().bg);header();footer();
   shownVolume=shownConnection=-1;
-  if(page().mode==Mode::Player){playerTrack();playerTransport();lastPlayer=0;playerTick(millis());}
+  if(page().mode==Mode::Keyboard){keyboardPaint();searchShownCount=searchShownProgress=-1;}
+  else if(page().mode==Mode::Player){playerTrack();playerTransport();lastPlayer=0;playerTick(millis());}
   else if(page().mode==Mode::Volume){volumePaint();shownVolume=audio_volume();}
   else if(page().mode==Mode::Message){
     // Bounded, word-wrapped ASCII status text; music labels use cached UTF-8 strips.
@@ -261,6 +311,7 @@ void leave(){
   // ui_go calls leave after a navigation push/pop: current() is the destination.
   // Keep a newly built destination preview, otherwise rebuild lazily on Back.
   if(page().mode!=Mode::SourceSongs||externalReturn)freePreview();
+  if(page().mode!=Mode::Search&&page().mode!=Mode::Keyboard)storage_searchCancel();
 }
 void tick(uint32_t now){
   if(savePending&&int32_t(now-saveAt)>=0)flushSettings();
@@ -276,6 +327,16 @@ void tick(uint32_t now){
     }
     int state=g_settings.outRoute==OUT_BT?(bt_connected()?2:1):0;
     if(state!=shownConnection){shownConnection=state;header();footer();}
+  }
+  if(page().mode==Mode::Search||page().mode==Mode::Keyboard){
+    storage_searchTick();
+    const int n=storage_searchCount(),progress=storage_searchBusy()?storage_searchProgress():101;
+    if(n!=searchShownCount||progress!=searchShownProgress){
+      searchShownCount=n;searchShownProgress=progress;
+      if(page().mode==Mode::Keyboard)queryPaint();
+      else {count=rowCount();invalidate();footer();}
+    }
+    if(page().mode==Mode::Keyboard)return;
   }
   if(page().mode==Mode::Player){playerTick(now);return;}
   if(page().mode==Mode::Volume&&shownVolume!=audio_volume()){shownVolume=audio_volume();volumePaint();}
@@ -297,13 +358,22 @@ void activate(int at){
         const int n=storage_trackCount();if(!n){message("No songs on the SD card.");break;}
         audio_setShuffle(true);g_settings.shuffle=true;
         if(playlist_playView({CatalogKind::Songs,0},esp_random()%n))show(Mode::Player);else message(playlist_memoryRefused()?"Not enough memory, try again":"Unable to start playback.");
-      }else show(Mode::Settings);break;
+      }else if(at==3)show(Mode::Settings);else {storage_searchStart(query);show(Mode::Search);show(Mode::Keyboard);}break;
     case Mode::Music:
       if(at<3){const CatalogKind kinds[]={CatalogKind::Artists,CatalogKind::Albums,CatalogKind::Songs};catalog({kinds[at],0},selected.label);}
-      else if(at==3)sourceMenu(SRC_M3U,"Playlists");else if(at==4)sourceMenu(SRC_FOLDER,"Folders");else openSource(1);break;
+      else if(at==3)sourceMenu(SRC_M3U,"Playlists");else if(at==4)sourceMenu(SRC_FOLDER,"Folders");else if(at==5)openSource(1);else {storage_searchStart(query);show(Mode::Search);show(Mode::Keyboard);}break;
     case Mode::Catalog:
       if(selected.navigates)catalog(selected.child,selected.label);
       else if(playlist_playView(page().view,at))show(Mode::Player);else message(playlist_memoryRefused()?"Not enough memory, try again":"Unable to read songs or allocate queue.");break;
+    case Mode::Search:
+      if(at==0)show(Mode::Keyboard);
+      else if(at-1<storage_searchCount()){
+        if(playlist_playTracks(storage_searchTracks(),storage_searchCount(),at-1,-1)){
+          // A query is ephemeral: resume the selected song in the full Songs queue.
+          g_settings.srcKind=SRC_ALL;settings_save();show(Mode::Player);
+          Serial.println("cmd: search result played (queue committed)");
+        }else message("Unable to start search result. Try again.");
+      }break;
     case Mode::Sources:openSource(selected.source);break;
     case Mode::SourceSongs:
       if(playlist_playTracks(preview,previewCount,at,page().source)){settings_save();show(Mode::Player);}else message("Unable to start this list.");break;
@@ -337,6 +407,15 @@ void activate(int at){
 }
 int targetAt(int x,int y){
   if(y<44)return navigation.depth>1&&x<64?Back:-1;
+  if(page().mode==Mode::Keyboard){
+    if(y>=footerY())return x<80?KeySpace:x<160?KeyClear:KeyDone;
+    if(keyBackRect().contains(x,y))return KeyBack;
+    if(keyDigitsRect().contains(x,y))return KeyDigits;
+    if(tft.height()<300&&Rect{106,156,106,40}.contains(x,y))return KeyPage;
+    const char* keys=keyLetters();
+    for(int i=0;keys[i];++i)if(keyRect(i).contains(x,y))return KeyBase+keys[i];
+    return -1;
+  }
   if(y>=footerY()){
     if(page().mode==Mode::Player)return x<80?Volume:x>=160?Options:-1;
     if(footerRect(Home).contains(x,y))return Home;
@@ -375,7 +454,7 @@ bool press(PressPhase phase,int x,int y){
       seekDuration=audio_durationMs();seekSerial=audio_trackSerial();seekPreviewAt(x);return true;
     }
     if(hit==Prev||hit==Next){pressAt=millis();return true;}
-    highlight=hit>=0?hit-page().top:-1;if(highlight>=0&&highlight<rows()&&cache[highlight].valid)paintRow(highlight,true);
+    highlight=hit>=0&&page().mode!=Mode::Keyboard?hit-page().top:-1;if(highlight>=0&&highlight<rows()&&cache[highlight].valid)paintRow(highlight,true);
     return false;
   }
   if(phase==PRESS_MOVE){
@@ -413,6 +492,7 @@ void touch(TouchEvent ev,int,int){
   const int target=ready;ready=-1;
   // CT-05: a firm, slow press (600 ms to 4 s) that was not claimed by a drag or the 4 s calibration hold acts like a tap.
   if(ev!=TOUCH_TAP&&ev!=TOUCH_LONG_PRESS)return;
+  if(page().mode==Mode::Keyboard&&target!=Back&&target!=-1){if(target==KeyDone)back();else editQuery(target);return;}
   if(target>=0){activate(target);return;}
   switch(target){
     case Back:back();break;

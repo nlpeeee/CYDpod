@@ -128,5 +128,22 @@ int main(){try{
   hostFreeHeap=64000;tap(20,20);check(label("Song 05"),"Back rebuild restores source scroll position");
   tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable");
   std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
+  classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
+  tap(80,242);check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
+  tap(20,216);tap(100,176);tap(60,176);tap(20,136); // song
+  tap(40,300);tap(200,256);check(label("0")&&label("9"),"digit keyboard page");
+  tap(24,96);tap(168,96);tap(216,96);tap(120,256); // 034, backspace -> 03
+  check(calls==before,"incremental search preserves active queue");snapshot("ui-search-digits.svg");
+  tap(200,300);check(label("Song 03")&&storage_searchCount()==1,"filtered result list");snapshot("ui-search-results.svg");
+  tap(80,110);check(playing&&storage_trackLabel(current)=="Song 03"&&calls>before,"result commits playable queue");
+  // Existing 52 px transport and 44 px seek targets include the outer edges.
+  tap(120,222);check(!playing,"large play target upper edge");tap(120,270);check(playing,"large play target lower edge");
+  tap(20,20);tap(80,66);tap(120,300);tap(100,256);tap(200,256); // edit, Clear, Delete on empty, ABC
+  tap(60,256);tap(60,256); // z,z
+  tap(200,300);check(label("No matches"),"empty results are visible");
+  tap(80,66);tft.setRotation(1);ui_redraw();pump();
+  tap(150,176);check(label("q")&&label("z"),"landscape alphabet second page");snapshot("ui-search-landscape.svg");
+  tft.setRotation(0);ui_redraw();pump();
+  std::cout<<"PASS CY-50 search UI: keyboard, incremental results, queue commit, landscape and large targets\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL firmware UI: "<<e.what()<<"\n";return 1;}}

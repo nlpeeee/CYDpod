@@ -85,6 +85,17 @@ int main(){try{
   put("music/Mix/two.m4a",tagged("Mix B","Artist B","Summer",2,1,"Various Artists"));
   check(storage_begin(nullptr)&&storage_catalogReady()&&storage_catalogRebuilt(),"initial catalogue build");
   check(storage_trackCount()==7,"track count");
+  auto finishSearch=[](){for(int i=0;i<2000&&storage_searchBusy();++i)storage_searchTick();check(!storage_searchBusy()&&!storage_searchFailed(),"bounded search completes");};
+  storage_searchStart("ALPHA artist b");check(storage_searchBuilding(),"first search builds compact index");
+  storage_searchTick();storage_searchStart("zEB artist a");finishSearch();check(storage_searchCount()==1,"new key cancels old scan during build; case-insensitive words");
+  check(storage_trackLabel(storage_searchTracks()[0])=="Zebra","title and artist matched");
+  storage_searchStart("ArTiSt");check(!storage_searchBuilding(),"warm search reuses index");finishSearch();check(storage_searchCount()==7,"artist substring across catalogue (including Unknown Artist)");
+  storage_searchStart("nothing matches");finishSearch();check(storage_searchCount()==0,"no matches");
+  storage_searchStart("alpha");storage_searchTick();storage_searchStart("beta");finishSearch();check(storage_searchCount()==1&&storage_trackLabel(storage_searchTracks()[0])=="Beta","latest query wins after partial scan");
+  // Interrupted cache and card-full build are expendable; retry rebuilds.
+  put(".sys/search.idx",Bytes(20,0));hostWriteBudget=0;storage_searchStart("alpha");check(storage_searchFailed(),"index write failure reported");hostWriteBudget=-1;
+  storage_searchStart("ALPHA");finishSearch();check(storage_searchCount()==2,"failed build recovers without changing catalogue");
+
   CatalogView songs{CatalogKind::Songs,0},artists{CatalogKind::Artists,0},albums{CatalogKind::Albums,0};
   check(storage_browseCount(artists)==3&&storage_browseCount(albums)==4,"artist/album groups and same-title separation");
   CatalogEntry e;check(storage_browseEntry(songs,0,e)&&e.label=="alpha","title sort");
@@ -105,7 +116,8 @@ int main(){try{
   // CT-07: a card that mounts but cannot create a folder is used read-only.
   std::filesystem::remove_all(SD.root/"bg");put("music/B/readonly.m4a",tagged("Added while read-only","Artist B","Greatest Hits",4));
   hostReadOnly=true;check(storage_begin(nullptr)&&storage_readOnly()&&storage_catalogReady()&&storage_trackCount()==8&&!storage_catalogRebuilt()&&storage_catalogStale(),"read-only card keeps the existing catalogue (CT-07)");
-  check(!storage_refreshNextBoot(),"no refresh marker on a read-only card");hostReadOnly=false;
+  check(!storage_refreshNextBoot(),"no refresh marker on a read-only card");
+  storage_searchStart("new song");finishSearch();check(storage_searchCount()==1,"read-only search streams catalogue without writing");hostReadOnly=false;
   std::filesystem::remove(SD.root/"music/B/readonly.m4a");check(storage_begin(nullptr)&&!storage_readOnly()&&!storage_catalogRebuilt()&&!storage_catalogStale(),"writable again after the card recovers");
   check(!storage_browseEntry(songs,-1,e)&&!storage_browseEntry(songs,2000,e),"range checks");
   check(storage_browseTracks(songs,ids,1)==0,"queue capacity guarded");
@@ -154,6 +166,10 @@ int main(){try{
   SD.root=std::filesystem::current_path()/("catalog-limit-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   for(int i=0;i<2002;++i){char path[64],name[32];snprintf(path,sizeof(path),"music/G%d/%04d.m4a",i/200,i);snprintf(name,sizeof(name),"L%04d",i);put(path,tagged(name,"Limit Artist","Limit Album",i%99+1));}
   check(storage_begin(nullptr)&&storage_catalogReady()&&storage_trackCount()==2000&&storage_skippedCount()==2,"files beyond 2000 skipped and counted, library still built (CT-02)");
+  storage_searchStart("LIMIT");finishSearch();check(storage_searchCount()==50,"search bounded to 50 results in 2000 tracks");
+  check(std::filesystem::file_size(SD.root/".sys/search.idx")==20+2000*64,"search index is 64 bytes per track plus header");
+  storage_searchStart("limit");hostReadBudget=0;storage_searchTick();check(storage_searchFailed(),"index read failure clears partial results");hostReadBudget=-1;
+  std::cout<<"PASS search: streamed 64-byte keys, word/substrings, case folding, query cancellation, warm reuse, 2000 tracks/50 results, failed writes and read-only fallback\n";
   std::cout<<"PASS catalogue: real/synthetic M4A tags, artists/albums/titles, multidisc, compilations, 1000 tracks, warm cache, full-card recovery, corrupt generation, refresh, queue isolation, gestures and bounded navigation\n";
   return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL catalogue: "<<e.what()<<"\n";return 1;}}

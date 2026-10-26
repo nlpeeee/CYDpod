@@ -30,9 +30,17 @@ $cli = Join-Path $root '.tools/arduino-cli/arduino-cli.exe'
 $config = Join-Path $root '.tools/arduino-cli.yaml'
 if (!(Test-Path $cli) -or !(Test-Path $config)) { throw 'Run powershell -File tools/setup.ps1 first.' }
 $lock = Get-Content (Join-Path $root 'dependencies.lock.json') -Raw | ConvertFrom-Json
-$env:ARDUINO_DIRECTORIES_DATA = Join-Path $root '.deps/arduino'
+# Arduino CLI cannot discover packages through a Windows junction parent.
+# Keep outputs private but point it at the canonical installed dependency tree.
+$dependencyItem = Get-Item -LiteralPath (Join-Path $root '.deps')
+$dependencyRoot = $dependencyItem.FullName
+if ($dependencyItem.LinkType -and $dependencyItem.Target) {
+    $dependencyRoot = @($dependencyItem.Target)[0]
+    if (![IO.Path]::IsPathRooted($dependencyRoot)) { $dependencyRoot = Join-Path $root $dependencyRoot }
+}
+$env:ARDUINO_DIRECTORIES_DATA = Join-Path $dependencyRoot 'arduino'
 $env:ARDUINO_DIRECTORIES_DOWNLOADS = Join-Path $root '.tools/downloads/arduino'
-$env:ARDUINO_DIRECTORIES_USER = Join-Path $root '.deps/sketchbook'
+$env:ARDUINO_DIRECTORIES_USER = Join-Path $dependencyRoot 'sketchbook'
 $env:TEMP = $env:TMP = Join-Path $root '.tools/tmp'
 New-Item -ItemType Directory -Force $env:TEMP,(Join-Path $root '.tools/logs') | Out-Null
 Push-Location $root

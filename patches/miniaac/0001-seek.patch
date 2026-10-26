@@ -1,0 +1,127 @@
+--- a/src/miniaac.c
++++ b/src/miniaac.c
+@@ -24,7 +24,7 @@
+     miniaac_source source;
+     miniaac_info info;
+     HAACDecoder codec;
+-    uint64_t position, mdat_start, mdat_end;
++    uint64_t position, mdat_start, mdat_end; /* ADTS byte offset / M4A seek PCM floor */
+     uint64_t media_frames, trim_start, trim_end, decoded_frames;
+     uint32_t samples, sample, fixed_size;
+     uint32_t chunks, chunk, chunk_samples, in_chunk, stsc_index, next_chunk;
+@@ -100,8 +100,11 @@
+         t->cached_first=(index/n)*n;
+         t->cached_count=t->count-t->cached_first;
+         if(t->cached_count>n) t->cached_count=n;
+-        TRY(read_bytes(d,t->offset+(uint64_t)t->cached_first*t->width,
+-                       t->data,(size_t)t->cached_count*t->width));
++        {
++            miniaac_status rc=read_bytes(d,t->offset+(uint64_t)t->cached_first*t->width,
++                                       t->data,(size_t)t->cached_count*t->width);
++            if(rc!=MINIAAC_OK) { t->cached_count=0; return rc; }
++        }
+     }
+     *out=t->data+(index-t->cached_first)*t->width; return MINIAAC_OK;
+ }
+@@ -382,6 +385,7 @@
+         }
+         begin=d->decoded_frames; end=begin+1024; d->decoded_frames=end;
+         keep_begin=begin<d->trim_start ? d->trim_start : begin;
++        if(!d->adts && keep_begin<d->position) keep_begin=d->position;
+         keep_end=end>d->trim_end ? d->trim_end : end;
+         if(keep_end<=keep_begin) continue;
+         *count=(size_t)(keep_end-keep_begin)*d->info.channels;
+@@ -389,12 +393,68 @@
+         return MINIAAC_OK;
+     }
+ }
++
++int miniaac_seekable(const miniaac *d) { return d && d->magic==MAGIC && !d->adts; }
++miniaac_status miniaac_seek(miniaac *d,uint64_t frame,int16_t *pcm,size_t capacity,size_t *count,
++                           miniaac_seek_hook hook,void *user) {
++    uint64_t raw,skip=0,base=0,span,offset;
++    uint32_t packet,first,next,per=0,map,chunk=0,inside=0,i,bytes;
++    uint8_t *p; miniaac_status rc;
++    if(!count) return MINIAAC_ARGUMENT;
++    *count=0;
++    if(!d || d->magic!=MAGIC || !pcm) return MINIAAC_ARGUMENT;
++    if(capacity<MINIAAC_PCM_SAMPLES) return MINIAAC_OUTPUT_TOO_SMALL;
++    if(d->adts) return MINIAAC_UNSUPPORTED;
++    if(!d->info.total_frames) return MINIAAC_EOF;
++    if(frame>=d->info.total_frames) frame=d->info.total_frames-1;
++    raw=d->trim_start+frame;
++    if(d->chunks==UINT32_MAX) return MINIAAC_FORMAT;
++    packet=(uint32_t)(raw/1024);
++    /* AAC-LC overlap/history warms up in existing PCM storage; tested against
++       sequential reference windows, including short/long block transitions. */
++    packet=packet>8 ? packet-8 : 0;
++    for(map=0;map<d->mappings.count;map++) {
++        if(hook && hook(user)) return MINIAAC_CANCELLED;
++        TRY(entry(d,&d->mappings,map,&p)); first=be32(p); per=be32(p+4);
++        next=d->chunks+1;
++        if(map+1<d->mappings.count) { TRY(entry(d,&d->mappings,map+1,&p)); next=be32(p); }
++        if(!per || next<=first) return MINIAAC_FORMAT;
++        span=(uint64_t)(next-first)*per;
++        if(packet<base+span) {
++            skip=packet-base;chunk=first+(uint32_t)(skip/per);inside=(uint32_t)(skip%per);break;
++        }
++        base+=span;
++    }
++    if(!chunk || chunk>d->chunks || map>=d->mappings.count) return MINIAAC_FORMAT;
++    TRY(entry(d,&d->offsets,chunk-1,&p));offset=d->offsets.width==8 ? be64(p) : be32(p);
++    if(offset<d->mdat_start || offset>d->mdat_end) return MINIAAC_FORMAT;
++    if(d->fixed_size) {
++        skip=(uint64_t)inside*d->fixed_size;
++        if(skip>d->mdat_end-offset) return MINIAAC_FORMAT;
++        offset+=skip;
++    } else for(i=0;i<inside;i++) {
++        if(!(i&63) && hook && hook(user)) return MINIAAC_CANCELLED;
++        TRY(entry(d,&d->sizes,packet-inside+i,&p));bytes=be32(p);
++        if(!bytes || bytes>MINIAAC_INPUT_BYTES || bytes>d->mdat_end-offset) return MINIAAC_FORMAT;
++        offset+=bytes;
++    }
++    if(hook && hook(user)) return MINIAAC_CANCELLED;
++    if(AACFlushCodec(d->codec)) return MINIAAC_CODEC;
++    d->failed=MINIAAC_OK;d->sample=packet;d->chunk=chunk;d->in_chunk=inside;
++    d->chunk_samples=per;d->stsc_index=map+1;d->next_chunk=map+1<d->mappings.count ? next : 0;
++    d->chunk_position=offset;d->decoded_frames=(uint64_t)packet*1024;d->position=raw;
++    rc=miniaac_decode_next(d,pcm,capacity,count);
++    if(hook && hook(user)) { *count=0;return MINIAAC_CANCELLED; }
++    return rc;
++}
++
+ void miniaac_close(miniaac *d) {
+     if(d && d->magic==MAGIC) { d->codec=NULL; d->magic=0; }
+ }
+ const char *miniaac_status_string(miniaac_status rc) {
+     switch(rc) {
+     case MINIAAC_OK:return "ok"; case MINIAAC_EOF:return "end of audio";
++    case MINIAAC_CANCELLED:return "seek superseded";
+     case MINIAAC_ARGUMENT:return "invalid argument/alignment"; case MINIAAC_MEMORY:return "workspace too small";
+     case MINIAAC_IO:return "source read failed"; case MINIAAC_FORMAT:return "malformed/truncated file";
+     case MINIAAC_UNSUPPORTED:return "unsupported format/profile/layout";
+--- a/src/miniaac.h
++++ b/src/miniaac.h
+@@ -17,7 +17,7 @@
+     MINIAAC_ARGUMENT = -1, MINIAAC_MEMORY = -2, MINIAAC_IO = -3,
+     MINIAAC_FORMAT = -4, MINIAAC_UNSUPPORTED = -5,
+     MINIAAC_FRAME_TOO_LARGE = -6, MINIAAC_CODEC = -7,
+-    MINIAAC_OUTPUT_TOO_SMALL = -8
++    MINIAAC_OUTPUT_TOO_SMALL = -8, MINIAAC_CANCELLED = -9
+ } miniaac_status;
+ 
+ /* Return 0 only when ALL requested bytes were read; otherwise nonzero.
+@@ -49,6 +49,13 @@
+  * Single caller per instance; never run this from an ISR/Bluetooth callback. */
+ miniaac_status miniaac_decode_next(miniaac *decoder, int16_t *pcm,
+                                   size_t capacity, size_t *count);
++/* M4A audible-frame seek. Returns first PCM from target in caller storage.
++ * No heap/index growth; ADTS explicitly unsupported. Hook may yield and returns
++ * nonzero to supersede/cancel. State remains reusable by a later seek on cancel. */
++typedef int (*miniaac_seek_hook)(void *user);
++int miniaac_seekable(const miniaac *decoder);
++miniaac_status miniaac_seek(miniaac *decoder,uint64_t frame,int16_t *pcm,size_t capacity,size_t *count,
++                           miniaac_seek_hook hook,void *user);
+ void miniaac_close(miniaac *decoder); /* idempotent; does not free workspace/source */
+ const char *miniaac_status_string(miniaac_status status);
+ 

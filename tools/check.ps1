@@ -67,13 +67,15 @@ try {
     if ((Get-FileHash .deps/sketchbook/libraries/TFT_eSPI/User_Setup.h).Hash.ToLowerInvariant() -ne $lock.tft.sha256) {
         throw 'TFT configuration differs from lock; run setup.ps1.'
     }
+    & python -I tools/stage_miniaac.py
+    if ($LASTEXITCODE -ne 0) { throw 'MiniAAC staging failed.' }
     $jobs = @(
         @{ Name = 'player'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '' },
         @{ Name = 'uploader'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '-DCYD_UPLOADER' }
     )
     # CY-33: the maintained touchscreen player copy (M4A via MiniAAC); MiniAAC is passed as a single --library.
     $jobs += @{ Name = 'cydpod-player'; Sketch = 'firmware/cydpod_player/app'; Flags = ''
-        Library = (Join-Path $root 'vendor/miniaac') }
+        Library = (Join-Path $root '.tools/staging/miniaac-patched') }
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
             throw 'Required AAC probe is missing. Use -SkipProbe only for an explicit stock-baseline check.'
@@ -96,7 +98,7 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "AudioTools overlay failed to apply: $($patch.Name)" }
         }
         $jobs += @{ Name = 'aac-probe'; Sketch = 'firmware/cydpod_probe'; Flags = '-DCYDPOD_AAC_LC_ONLY'
-            Library = (Join-Path $root 'vendor/miniaac') }
+            Library = (Join-Path $root '.tools/staging/miniaac-patched') }
     }
     $results = @()
     foreach ($job in $jobs) {

@@ -164,10 +164,12 @@ void catalog(CatalogView view,const char* name){
 void openSource(int source){
   const size_t bytes=max(1,storage_trackCount())*sizeof(uint16_t);
   const size_t scratch=playlist_kind(source)==SRC_M3U?min(storage_trackCount(),1000)*sizeof(uint32_t):0;
-  if(!catalog_canAllocate(bytes+scratch)){message("Not enough audio memory to browse this list.");return;}
+  catalog_logStage("preview","before",bytes+scratch);
+  if(!catalog_canAllocate(bytes+scratch)){catalog_logStage("preview","refused",bytes+scratch);message("Not enough memory, try again");return;}
   uint16_t* candidate=(uint16_t*)malloc(max(1,storage_trackCount())*sizeof(uint16_t));
-  if(!candidate){message("Not enough memory to browse.");return;}
+  if(!candidate){catalog_logStage("preview","refused",bytes+scratch);message("Not enough memory, try again");return;}
   int n=playlist_preview(source,candidate,max(1,storage_trackCount()));
+  catalog_logStage("preview","after",bytes+scratch);
   if(n<=0){free(candidate);message("No playable songs in this list.");return;}
   freePreview();preview=candidate;previewCount=n;
   Page next{};next.mode=Mode::SourceSongs;next.source=source;
@@ -280,14 +282,14 @@ void activate(int at){
       if(at==0)show(Mode::Music);else if(at==1)show(Mode::Player);else if(at==2){
         const int n=storage_trackCount();if(!n){message("No songs on the SD card.");break;}
         audio_setShuffle(true);g_settings.shuffle=true;
-        if(playlist_playView({CatalogKind::Songs,0},esp_random()%n))show(Mode::Player);else message("Unable to start playback.");
+        if(playlist_playView({CatalogKind::Songs,0},esp_random()%n))show(Mode::Player);else message(playlist_memoryRefused()?"Not enough memory, try again":"Unable to start playback.");
       }else show(Mode::Settings);break;
     case Mode::Music:
       if(at<3){const CatalogKind kinds[]={CatalogKind::Artists,CatalogKind::Albums,CatalogKind::Songs};catalog({kinds[at],0},selected.label);}
       else if(at==3)sourceMenu(SRC_M3U,"Playlists");else if(at==4)sourceMenu(SRC_FOLDER,"Folders");else openSource(1);break;
     case Mode::Catalog:
       if(selected.navigates)catalog(selected.child,selected.label);
-      else if(playlist_playView(page().view,at))show(Mode::Player);else message("Unable to read songs or allocate queue.");break;
+      else if(playlist_playView(page().view,at))show(Mode::Player);else message(playlist_memoryRefused()?"Not enough memory, try again":"Unable to read songs or allocate queue.");break;
     case Mode::Sources:openSource(selected.source);break;
     case Mode::SourceSongs:
       if(playlist_playTracks(preview,previewCount,at,page().source)){settings_save();show(Mode::Player);}else message("Unable to start this list.");break;

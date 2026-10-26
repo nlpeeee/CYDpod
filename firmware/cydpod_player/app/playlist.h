@@ -47,6 +47,8 @@ bool playlist_select(int i);
 // Preview writes caller-owned memory only; never changes the live queue.
 int playlist_preview(int source, uint16_t* tracks, int capacity);
 bool playlist_playTracks(const uint16_t* tracks, int count, int row, int source);
+// True when the last playlist_playView() was refused for lack of memory (not an I/O error).
+bool playlist_memoryRefused();
 bool playlist_playView(CatalogView view, int row);
 
 bool playlist_isFavourite(int track);

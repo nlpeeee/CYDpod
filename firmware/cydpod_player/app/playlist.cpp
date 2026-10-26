@@ -364,15 +364,21 @@ bool playlist_playTracks(const uint16_t* tracks, int n, int row, int source) {
   return true;
 }
 
+static bool memoryRefusal = false;
+bool playlist_memoryRefused() { return memoryRefusal; }
+
 bool playlist_playView(CatalogView view, int row) {
+  memoryRefusal = false;
   const int n = storage_browseCount(view);
   if (n <= 0 || n > queueCap || row < 0 || row >= n) return false;
-  if (!catalog_canAllocate(n * sizeof(uint16_t))) return false;
-  uint16_t* staged = (uint16_t*)malloc(n * sizeof(uint16_t));
-  if (!staged) return false;
+  const size_t bytes = n * sizeof(uint16_t);
+  catalog_logStage("queue", "before", bytes);
+  uint16_t* staged = catalog_canAllocate(bytes) ? (uint16_t*)malloc(bytes) : nullptr;
+  if (!staged) { memoryRefusal = true; catalog_logStage("queue", "refused", bytes); return false; }
   const int got = storage_browseTracks(view, staged, n);
   const bool ok = got == n && playlist_playTracks(staged, n, row, -1);
   free(staged);
+  catalog_logStage("queue", ok ? "after" : "failed", bytes);
   if (ok) {
     g_settings.catalogKind = uint8_t(view.kind); g_settings.catalogGroup = view.group;
     g_settings.catalogCrc = storage_libraryCrc(); settings_save();

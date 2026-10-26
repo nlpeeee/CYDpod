@@ -9,10 +9,18 @@ struct CatalogEntry {
   int track=-1;
   bool navigates=false;
 };
-// Keep the governing 20 KiB internal-heap floor and a 4 KiB contiguous reserve
-// when staging a queue during playback. Failure leaves the live queue intact.
+// Admission floor for staging a queue or preview during playback: 12 KiB of free
+// heap plus the staged bytes, and a contiguous block of the bytes plus 4 KiB.
+// CY-37 measured 28.6 to 37.5 KB free while playing (lifetime minimum 24,540 B), so
+// this admits staging in normal use and refuses only when the heap is really short.
+// A refusal leaves the live queue and playback untouched.
 inline bool catalog_canAllocate(size_t bytes) {
-  return ESP.getFreeHeap() >= bytes + 20u*1024u + 512u && ESP.getMaxAllocHeap() >= bytes + 4096u;
+  return ESP.getFreeHeap() >= bytes + 12u*1024u && ESP.getMaxAllocHeap() >= bytes + 4096u;
+}
+// One serial line before and after each staging, so the real heap behaviour can be read next time.
+inline void catalog_logStage(const char* what, const char* when, size_t bytes) {
+  Serial.printf("stage: %s %s bytes %u free %u largest %u\n", what, when, (unsigned)bytes,
+                (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 }
 bool storage_catalogReady();
 bool storage_catalogStale();

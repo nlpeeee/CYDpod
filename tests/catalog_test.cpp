@@ -106,7 +106,9 @@ int main(){try{
   check(storage_browseTracks(songs,ids,1)==0,"queue capacity guarded");
   playlist_begin();check(playlist_playView(songs,0),"play catalogue selection");
   std::vector<uint16_t> original(liveQueue,liveQueue+liveLength);int before=audioCalls;
-  hostFreeHeap=21000;check(!playlist_playView(songs,0),"heap reserve admission");hostFreeHeap=64000;
+  hostFreeHeap=12000;check(!playlist_playView(songs,0)&&playlist_memoryRefused(),"heap floor refuses staging, reported as memory (CT-08)");hostFreeHeap=64000;
+  check(catalog_canAllocate(16)&&!catalog_canAllocate(60000)&&(hostFreeHeap=13000,catalog_canAllocate(16))&&(hostFreeHeap=12300,!catalog_canAllocate(16)),"floor is 12 KiB plus the staged bytes (CT-08)");hostFreeHeap=64000;
+  hostLargestBlock=4000;check(!playlist_playView(songs,0)&&playlist_memoryRefused(),"contiguous margin kept");hostLargestBlock=64000;
   check(audioCalls==before&&std::equal(original.begin(),original.end(),liveQueue),"low-memory selection preserves playback");
   hostReadBudget=0;check(!playlist_playView(songs,0),"failed queue read rejected");hostReadBudget=-1;
   check(audioCalls==before&&std::equal(original.begin(),original.end(),liveQueue),"failed queue read preserves playback");

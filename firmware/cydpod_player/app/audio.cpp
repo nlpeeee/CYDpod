@@ -5,7 +5,7 @@
 #include "command_queue.h"
 #include "storage.h"
 #include "settings.h"     // RepeatMode
-#include "m4a_track.h"
+#include "codec_track.h"
 #include "small_file.h"
 
 // ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ static void pushFrame(int16_t l, int16_t r) {
   }
 }
 
-static M4aTrack m4a;                          // MiniAAC workspace + PCM block, static: no per-track heap
+static CodecTrack m4a;                        // stateless facade over the single 40 KiB pool
 static File     file;
 
 static void requestFlush() {
@@ -256,16 +256,16 @@ static void decodeTask(void*) {
 
     if (m4a.pending() == 0) {
       const uint32_t r0 = millis();
-      const M4aTrack::Pull pull = m4a.next();
+      const CodecTrack::Pull pull = m4a.next();
       { const uint32_t took = millis() - r0; if (took > diagMaxReadMs) diagMaxReadMs = took; }
-      if (pull == M4aTrack::Pull::error) {
+      if (pull == CodecTrack::Pull::error) {
         reportError(m4a.name(), curTrack);
         Serial.printf("ERR m4a %s %s\n", m4a.name(), storage_trackPath(curTrack).c_str());
         closeTrack();
         failedCommand=serial; failSerial++;
         continue;
       }
-      if (pull == M4aTrack::Pull::eof) {
+      if (pull == CodecTrack::Pull::eof) {
         // End of track: let what is buffered play out, then say so.
         while ((rbUsed() > 0 || !playing) && !requestPending()) vTaskDelay(pdMS_TO_TICKS(10));
         if (!requestPending()) {

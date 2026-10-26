@@ -20,7 +20,8 @@ int main(){
  assert(audio_seekTo(5000));waitIdle();assert(audio_positionMs()>=4999&&audio_positionMs()<=5000);
  assert(!audio_isPlaying()&&audio_currentTrack()==0&&audio_queueLen()==2);
  // Pull must begin at new target, rather than stale frames buffered before seek.
- M4aTrack reference;File ref=SD.open("tail.m4a");assert(reference.begin(ref)==MINIAAC_OK);assert(reference.seek(5000,nullptr,nullptr)==MINIAAC_OK);
+ static uint8_t refWorkspace[MINIAAC_WORKSPACE_BYTES]; static int16_t refPcm[MINIAAC_PCM_SAMPLES];
+ M4aTrack reference(refWorkspace,refPcm);File ref=SD.open("tail.m4a");assert(reference.begin(ref)==MINIAAC_OK);assert(reference.seek(5000,nullptr,nullptr)==MINIAAC_OK);
  audio_togglePause();for(int i=0;i<100&&audio_bufferPct()<10;++i)std::this_thread::sleep_for(std::chrono::milliseconds(2));
  audio_pull(out,128);assert(!silent(out,256));assert(!memcmp(out,reference.pcm(),sizeof(out)));reference.end();ref.close();
  // Track changes supersede old seek; newer seek cannot target an opening file.

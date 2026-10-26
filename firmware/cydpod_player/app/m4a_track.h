@@ -1,7 +1,7 @@
 #pragma once
 // CYDpod: MiniAAC (vendor/miniaac, Arduino library "MinimalAAC") over the one open SD File.
 // Adapted from firmware/cydpod_probe/miniaac_adapter.h (CY-31) without the probe's audio_core.h dependency.
-// No heap use: the workspace and the 4 KiB PCM buffer are members of one static object.
+// Caller owns workspace and PCM; this adapter never allocates.
 #include <FS.h>
 #include "miniaac.h"
 
@@ -12,13 +12,14 @@ class M4aTrack {
   enum class Pull : uint8_t { frames, eof, error };
   static_assert(MINIAAC_WORKSPACE_BYTES % MINIAAC_ALIGNMENT == 0, "8-byte aligned workspace");
   static_assert(MINIAAC_PCM_SAMPLES * sizeof(int16_t) == 4096, "MiniAAC PCM buffer is 2048 int16_t");
+  M4aTrack(uint8_t* workspace, int16_t* pcm) : workspace_(workspace), pcm_(pcm) {}
   ~M4aTrack() { end(); }
   // Opens file (M4A or ADTS, decided by MiniAAC from the content). On failure name() says why and nothing is left open.
   miniaac_status begin(File& file) {
     end();
     name_ = "ok"; frames_ = used_ = 0; total_ = 0; file_ = &file;
     const miniaac_source source{readAt, this, uint64_t(file.size())};
-    miniaac_status rc = miniaac_open(workspace_, sizeof(workspace_), &source, &decoder_);
+    miniaac_status rc = miniaac_open(workspace_, MINIAAC_WORKSPACE_BYTES, &source, &decoder_);
     const char* reason = nullptr;
     if (rc == MINIAAC_OK) {
       miniaac_info info{};
@@ -66,8 +67,8 @@ class M4aTrack {
     if (file->position() != offset && !file->seek(uint32_t(offset))) return 1;
     return file->read(static_cast<uint8_t*>(dst), bytes) == bytes ? 0 : 1;
   }
-  alignas(MINIAAC_ALIGNMENT) uint8_t workspace_[MINIAAC_WORKSPACE_BYTES];
-  alignas(4) int16_t pcm_[MINIAAC_PCM_SAMPLES];
+  uint8_t* workspace_;
+  int16_t* pcm_;
   miniaac* decoder_ = nullptr;
   File* file_ = nullptr;
   size_t frames_ = 0, used_ = 0;

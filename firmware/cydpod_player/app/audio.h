@@ -81,3 +81,5 @@ AudioCommands audio_commands();
 
 // Temporary timer fade multiplier; does not alter or persist user volume.
 void audio_setSleepGain(uint8_t percent);
+
+uint32_t audio_playIntentSerial(); // explicit play/pause/selection intent, loop-task only

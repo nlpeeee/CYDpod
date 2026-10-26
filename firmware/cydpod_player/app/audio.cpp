@@ -38,6 +38,7 @@ static volatile bool seeking = false, canSeek = false;
 static volatile bool decodeBlocked = false; // seek I/O failure: retain track/queue, await retry
 static inline bool requestPending() { return reqTrack >= 0 || reqSeekMs >= 0; }
 static volatile bool     playing   = true;
+static uint32_t playIntentSerial=0; // loop task: explicit play/pause/selection intent
 static volatile uint8_t  volumePct = 40;
 static volatile uint8_t sleepGain=100;
 
@@ -410,6 +411,7 @@ void audio_tick() {
 
 void audio_playTrack(int index) {
   if (!audio_ready() || orderLen == 0){Serial.println("cmd: play ignored (audio unavailable or empty queue)");return;}
+  ++playIntentSerial;
   Serial.printf("cmd: play track %d accepted\n",index);
   index = constrain(index, 0, storage_trackCount() - 1);
   for (int i = 0; i < orderLen; i++)
@@ -437,6 +439,7 @@ void audio_prev() {
 
 void audio_togglePause() {
   if(!audio_ready()||!orderLen){Serial.println("cmd: play/pause ignored (audio unavailable or empty queue)");return;}
+  ++playIntentSerial;
   // A failed seek closes the decode gate; Play must reopen rather than just light up.
   portENTER_CRITICAL(&stateLock);
   const bool retry=!playing&&decodeBlocked;
@@ -497,6 +500,7 @@ void audio_setRepeat(uint8_t mode) { repeatMode = mode % REPEAT_MODE_COUNT;Seria
 bool    audio_shuffle()            { return shuffleOn; }
 uint8_t audio_repeat()             { return repeatMode; }
 
+uint32_t audio_playIntentSerial(){return playIntentSerial;}
 bool     audio_isPlaying()    { return playing; }
 int      audio_currentTrack() { return curTrack; }
 uint8_t  audio_volume()       { return volumePct; }

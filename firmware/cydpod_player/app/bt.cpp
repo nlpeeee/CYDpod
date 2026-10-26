@@ -31,6 +31,7 @@ static volatile bool pairingActive=false;
 static volatile cyd::PairingSession::Phase pairingPhase=cyd::PairingSession::Normal;
 static volatile BtFailure failure=BT_FAIL_NONE;
 static bool bluetoothReady=false,pairResumeWanted=false;
+static uint32_t pairPauseIntent=0;
 
 
 class CydSource : public BluetoothA2DPSource {
@@ -392,7 +393,11 @@ void bt_tick() {
   if(failure!=BT_FAIL_NONE){haveTarget=false;connectDeadline=0;}
   static uint32_t pollAt=0;
   if(int32_t(millis()-pollAt)>=0){pollAt=millis()+250;a2dp.poll();}
-  if(pairResumeWanted&&!pairingActive&&bt_connected()){if(speaker_route()==OUT_BT&&!audio_isPlaying())audio_togglePause();pairResumeWanted=false;}
+  if(pairResumeWanted&&!pairingActive&&bt_connected()){
+    if(speaker_route()==OUT_BT&&!audio_isPlaying()&&cyd::currentCompletion(pairPauseIntent,audio_playIntentSerial()))audio_togglePause();
+    else Serial.println("cmd: pairing resume ignored (newer play intent or changed route)");
+    pairResumeWanted=false;
+  }
 
   // Drain in arrival order, outside the callback lock; producer cannot race a clear.
   for(unsigned i=0;i<16;++i){
@@ -509,6 +514,7 @@ bool bt_requestPairing() {
   portENTER_CRITICAL(&pairingMux);pairingActive=true;portEXIT_CRITICAL(&pairingMux);
   haveTarget=false;pendingKnown=-1;connectDeadline=0;passkey=0;failure=BT_FAIL_NONE;
   if(speaker_route()==OUT_BT&&audio_isPlaying())audio_togglePause();
+  pairPauseIntent=audio_playIntentSerial();
   portENTER_CRITICAL(&devMux);devCount=0;++listSerial;portEXIT_CRITICAL(&devMux);
   Serial.println("cmd: pair queued");return true;
 }
@@ -552,7 +558,7 @@ void bt_connectKnown(int i) {
   if (!bt_known(i, d)){Serial.println("cmd: connect ignored (invalid saved device)");return;}
   Serial.printf("cmd: connect saved %d accepted\n",i);
   if (bt_connected()) {
-    if (memcmp(connectedAddr, d.addr, 6) == 0) return;     // already on it
+    if (memcmp(connectedAddr, d.addr, 6) == 0 && pendingKnown<0){Serial.println("cmd: connect ignored (already connected)");return;}     // already on it
     // Claim the target before dropping the link: it stops the library chasing
     // what we are leaving, and stops our own paging (which still points at the
     // old address until the new one connects) from doing the same.

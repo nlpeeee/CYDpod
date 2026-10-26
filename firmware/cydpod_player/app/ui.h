@@ -174,6 +174,7 @@ bool     ui_pressClaimed();
 // A short message across the bottom of the screen. Goes by itself after `ms`,
 // or at the next tap, which it swallows.
 void ui_toast(Txt text, uint32_t ms = 2500);
+void ui_toast(const char* text, uint32_t ms = 2500);
 
 // A question with Cancel and an action button. `onOk` runs if the owner
 // confirms; either way the screen underneath is redrawn.

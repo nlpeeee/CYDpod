@@ -18,7 +18,7 @@ TFT_eSPI tft;
 Settings g_settings;
 static int current=0,calls=0,volume=32,queueLength=0;
 static uint32_t serial=0,clockNow=0;
-static bool playing=false,shuffle=false,down=false;
+static bool playing=false,shuffle=false,down=false,routeAllowed=true;
 static uint8_t repeatMode=0;
 static const uint16_t* queueData=nullptr;
 static int tx=0,ty=0;
@@ -43,7 +43,7 @@ uint32_t audio_durationMs(){return 240000;}
 uint32_t audio_positionMs(){return 84000;}
 uint32_t audio_trackSerial(){return serial;}
 bool bt_connected(){return true;}
-void speaker_setRoute(uint8_t){}
+bool speaker_setRoute(uint8_t){return routeAllowed;}
 bool calibrate_run(){return true;}
 void display_setRotation(uint8_t r){tft.setRotation(r);}
 void display_setBacklight(uint8_t){}
@@ -52,6 +52,7 @@ bool touch_isDown(){return down;}
 void touch_position(int& x,int& y){x=tx;y=ty;}
 void touch_livePosition(int& x,int& y){x=tx;y=ty;}
 bool titles_load(const String&){return false;}
+void titles_release(){}
 int titles_width(){return 0;}
 void titles_draw(const Rect&,int,int,uint16_t,uint16_t){}
 static void empty(){}
@@ -93,5 +94,17 @@ int main(){try{
   // CT-05: an unclaimed 0.6 to 4 s press activates the row like a tap.
   tx=80;ty=60;down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=900);down=false;ui_touch(TOUCH_LONG_PRESS,80,60);pump();
   check(label("On-board speaker"),"long press activates the row (CT-05)");
+  // CY-43: failed output allocation must not persist/select an unusable route.
+  routeAllowed=false;tap(80,100);check(g_settings.outRoute==OUT_BT,"failed speaker selection retains BT setting");
+  routeAllowed=true;tap(20,20);
+  // Folder preview must be dropped above the source page, then rebuilt at its old scroll position.
+  tap(30,300);tap(80,60);tap(80,220);tap(80,60);
+  tap(135,300);tap(80,60);check(playing,"folder preview starts playback");
+  before=calls;hostFreeHeap=10000;tap(20,20);
+  check(label("Unable to reload list. Check SD card or try again."),"Back rebuild is gated after preview release");
+  check(calls==before,"failed preview rebuild preserves active playback queue");
+  hostFreeHeap=64000;tap(20,20);check(label("Song 05"),"Back rebuild restores source scroll position");
+  tap(80,60);check(playing&&calls>before,"rebuilt preview remains playable");
+  std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL firmware UI: "<<e.what()<<"\n";return 1;}}

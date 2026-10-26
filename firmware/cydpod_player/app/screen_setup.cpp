@@ -159,8 +159,9 @@ static void touch(TouchEvent ev, int x, int y) {
     case ROW_OUTPUT:
       // The switch itself parks one consumer before it starts the other, so
       // it takes a moment; the row is redrawn after, with the route settled.
-      g_settings.outRoute = (g_settings.outRoute + 1) % OUT_ROUTE_COUNT;
-      speaker_setRoute(g_settings.outRoute);
+      if (speaker_setRoute((g_settings.outRoute + 1) % OUT_ROUTE_COUNT))
+        g_settings.outRoute = (g_settings.outRoute + 1) % OUT_ROUTE_COUNT;
+      else ui_toast("Unable to change output");
       break;
     case ROW_BLUETOOTH:
       ui_go(SCR_BLUETOOTH);

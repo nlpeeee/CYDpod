@@ -330,7 +330,9 @@ static int         offX = 0, offY = 0;       // anim pixel -> screen
 static uint32_t    nextAt = 0;
 static uint32_t    framesDrawn = 0, drawMsTotal = 0;
 
-static uint8_t rbuf[1024];                   // read-ahead over the .anim file
+static const size_t READ_BUFFER_BYTES = 1024;
+static uint8_t* rbuf = nullptr;
+static uint16_t* animLine = nullptr; // 240 RGB565 pixels, only while active
 static int     rpos = 0, rlen = 0;
 
 static const int FPS_CAP = 15;
@@ -340,7 +342,7 @@ static bool readBytes(void* dst, int len) {
   uint8_t* p = (uint8_t*)dst;
   while (len > 0) {
     if (rpos == rlen) {
-      rlen = anim.read(rbuf, sizeof(rbuf));
+      rlen = anim.read(rbuf, READ_BUFFER_BYTES);
       rpos = 0;
       if (rlen <= 0) { rlen = 0; return false; }
     }
@@ -380,6 +382,8 @@ void bg_stop() {
   if (anim) anim.close();
   active = false;
   current = 0;
+  free(rbuf); free(animLine); rbuf = nullptr; animLine = nullptr;
+  rpos = rlen = 0;
 }
 
 bool bg_start(int n) {
@@ -395,6 +399,9 @@ bool bg_start(int n) {
     Serial.printf("bg: %s missing or invalid\n", path);
     return false;
   }
+  rbuf = (uint8_t*)malloc(READ_BUFFER_BYTES);
+  animLine = (uint16_t*)malloc(240 * sizeof(uint16_t));
+  if (!rbuf || !animLine) { bg_stop(); Serial.println("bg: no memory for playback"); return false; }
   offX = view.x + (view.w - h.w) / 2;        // centre; negative = crop
   offY = view.y + (view.h - h.h) / 2;
   rpos = rlen = 0;
@@ -428,7 +435,7 @@ void bg_tick(uint32_t now) {
     if (!readBytes(&delayMs, 2)) { bg_stop(); return; }
   }
   const uint32_t startPos = anim.position() - (rlen - rpos);
-  static uint16_t line[240];
+  uint16_t* line = animLine;
   tft.startWrite();
   for (;;) {
     uint16_t hdr[3];

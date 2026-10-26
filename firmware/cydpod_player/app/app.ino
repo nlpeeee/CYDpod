@@ -50,6 +50,7 @@ SET_LOOP_TASK_STACK_SIZE(5 * 1024);
 static const char* FIRMWARE_LABEL = FIRMWARE_VERSION " uploader";
 #else
 static const char* FIRMWARE_LABEL = FIRMWARE_VERSION;
+static bool bluetoothStarted = false;
 #endif
 
 // ---------------------------------------------------------------------------
@@ -213,8 +214,17 @@ void loop() {}
   resumePoint(track, ms);
   audio_begin(track, ms, g_settings.volume, g_settings.shuffle, g_settings.repeat);
   playlist_restore(track);
-  bt_begin();
-  speaker_begin(g_settings.outRoute);
+  audio_start();
+  const uint32_t audioWaitAt = millis();
+  while (!audio_startupComplete() && millis() - audioWaitAt < 5000) delay(10);
+  Serial.printf("heap: after audio startup %u largest %u ready %d\n",
+                ESP.getFreeHeap(), ESP.getMaxAllocHeap(), audio_startupComplete());
+  if (audio_startupComplete()) { bt_begin(); bluetoothStarted = true; }
+  else Serial.println("bt: deferred until initial track open completes");
+  if (!speaker_begin(g_settings.outRoute)) {
+    speaker_setRoute(OUT_BT); g_settings.outRoute = OUT_BT;
+    Serial.println("speaker: startup failed, Bluetooth route selected");
+  }
 
   // Only the Bluetooth route has anything to set up before it can play; the
   // on-board speaker just works, so it lands on the player.
@@ -249,7 +259,8 @@ static void persistResume(uint32_t now) {
 void loop() {
   const uint32_t now = millis();
 
-  bt_tick();
+  if (!bluetoothStarted && audio_startupComplete()) { bt_begin(); bluetoothStarted = true; }
+  if (bluetoothStarted) bt_tick();
   audio_tick();
   persistResume(now);
 

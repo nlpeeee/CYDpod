@@ -6,6 +6,7 @@
 #include "audio.h"
 #include "settings.h"
 #include <SD.h>
+#include "small_file.h"
 #include <esp_rom_crc.h>
 #include <vector>
 #include <algorithm>
@@ -41,12 +42,12 @@ static bool isFav(uint32_t key) { return std::binary_search(favs.begin(), favs.e
 // ---------------------------------------------------------------------------
 static bool readSource(int i, SourceKind& kind, String& name, String& path) {
   if (i < FIXED || i >= sourceCount) return false;
-  File index = SD.open(SOURCE_OFFSETS);
+  File index = openSmallFile(SOURCE_OFFSETS);
   uint32_t offset = 0;
   const bool found = index && index.seek((i-FIXED)*sizeof(offset)) && index.read((uint8_t*)&offset,sizeof(offset)) == sizeof(offset);
   index.close();
   if (!found) return false;
-  File f = SD.open(SOURCES_PATH);
+  File f = openSmallFile(SOURCES_PATH);
   if (!f) return false;
   if (!f.seek(offset)) { f.close(); return false; }
   String line = f.readStringUntil('\n');
@@ -87,7 +88,7 @@ static String baseName(const String& path) {
 
 static void loadFavourites() {
   favs.clear();
-  File f = SD.open(FAV_PATH);
+  File f = openSmallFile(FAV_PATH);
   if (!f) return;
   while (f.available() && (int)favs.size() < MAX_FAV) {
     String line = f.readStringUntil('\n');
@@ -113,7 +114,7 @@ static void scanSources() {
   std::sort(dirs.begin(), dirs.end());
 
   std::vector<String> lists;
-  File d = SD.open(M3U_DIR);
+  File d = openSmallFile(M3U_DIR);
   if (d && d.isDirectory()) {
     for (File f = d.openNextFile(); f; f = d.openNextFile()) {
       if (!f.isDirectory() && isPlaylistFile(f.name())) lists.push_back(String(M3U_DIR) + "/" + f.name());
@@ -125,8 +126,8 @@ static void scanSources() {
 
   SD.remove(SOURCES_PATH);
   SD.remove(SOURCE_OFFSETS);
-  File out = SD.open(SOURCES_PATH, FILE_WRITE);
-  File index = SD.open(SOURCE_OFFSETS, FILE_WRITE);
+  File out = openSmallFile(SOURCES_PATH, FILE_WRITE);
+  File index = openSmallFile(SOURCE_OFFSETS, FILE_WRITE);
   namesCrc = 0;
   sourceCount = FIXED;
   folderSources = playlistSources = 0;
@@ -216,7 +217,7 @@ static void matchM3u(int i, const String& path, const String&) {
 }
 
 static int buildM3u(const String& listPath) {
-  File f = SD.open(listPath);
+  File f = openSmallFile(listPath);
   if (!f) return 0;
   const int cap = min(queueCap, MAX_M3U);
   m3uKeys = (uint32_t*)malloc(cap * sizeof(uint32_t));
@@ -401,7 +402,7 @@ bool playlist_toggleFavourite(int track) {
     favs.erase(std::lower_bound(favs.begin(), favs.end(), key));
     // Rewrite the file without it.
     SD.remove(FAV_TMP);
-    File in = SD.open(FAV_PATH), out = SD.open(FAV_TMP, FILE_WRITE);
+    File in = openSmallFile(FAV_PATH), out = openSmallFile(FAV_TMP, FILE_WRITE);
     if (in && out) {
       while (in.available()) {
         String line = in.readStringUntil('\n');
@@ -418,7 +419,7 @@ bool playlist_toggleFavourite(int track) {
   } else {
     if (playlist_favouritesFull()) return false;
     favs.insert(std::upper_bound(favs.begin(), favs.end(), key), key);
-    File out = SD.open(FAV_PATH, FILE_APPEND);
+    File out = openSmallFile(FAV_PATH, FILE_APPEND);
     if (out) { out.println(path); out.close(); }
   }
 
@@ -433,7 +434,7 @@ bool playlist_toggleFavourite(int track) {
 }
 
 void playlist_forEachName(void (*fn)(const char* text)) {
-  File f = SD.open(SOURCES_PATH);
+  File f = openSmallFile(SOURCES_PATH);
   if (!f) return;
   while (f.available()) {
     const String line = f.readStringUntil('\n');

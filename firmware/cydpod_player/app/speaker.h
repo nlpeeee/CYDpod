@@ -27,9 +27,9 @@
 // Stored in Settings::outRoute, so the values are persisted: do not renumber.
 enum OutRoute : uint8_t { OUT_SPEAKER = 0, OUT_BT = 1, OUT_ROUTE_COUNT = 2 };
 
-void    speaker_begin(uint8_t route);
+bool    speaker_begin(uint8_t route);
 uint8_t speaker_route();
-void    speaker_setRoute(uint8_t route);   // takes ~50 ms: the handoff below
+bool    speaker_setRoute(uint8_t route);   // false preserves the route on allocation/park failure
 bool    speaker_active();                  // the DAC is running right now
 
 // Times the writer task found the DMA still full after half a second. Should

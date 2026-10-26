@@ -1,4 +1,5 @@
 #include "titles.h"
+#include "small_file.h"
 #include "display.h"
 #include "storage.h"
 #include "i18n.h"
@@ -159,6 +160,8 @@ bool titles_prepareAll(TitleProgressFn progress) {
 // ---------------------------------------------------------------------------
 // Playback: load and draw
 // ---------------------------------------------------------------------------
+void titles_release() { free(strip); strip = nullptr; stripW = 0; }
+
 bool titles_load(const String& text) {
   const uint32_t key = keyFor(text);
   if (strip && key == stripKey) return true;
@@ -166,7 +169,7 @@ bool titles_load(const String& text) {
   strip = nullptr;
   stripW = 0;
 
-  File f = SD.open(pathFor(key));
+  File f = openSmallFile(pathFor(key));
   if (!f) return false;
   uint8_t hdr[4];
   if (f.read(hdr, 4) == 4 && hdr[2] == TITLE_STRIP_H && hdr[3] == 2) {

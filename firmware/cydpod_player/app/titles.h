@@ -32,6 +32,7 @@ bool titles_prepareAll(TitleProgressFn progress);
 // Load the strip for `text` into RAM. False if none cached.
 bool titles_load(const String& text);
 bool titles_loaded();
+void titles_release(); // drop the last non-ASCII label on context changes
 int  titles_width();
 
 // Draw the loaded strip into `box`, starting `scrollX` px in. Past the end of

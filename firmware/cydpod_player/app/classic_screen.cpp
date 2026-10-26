@@ -12,6 +12,7 @@
 #include "speaker.h"
 #include "background.h"
 #include "calibrate.h"
+#include "titles.h"
 #include "firmware.h"
 #include <esp_system.h>
 
@@ -161,17 +162,21 @@ void catalog(CatalogView view,const char* name){
   Page next{};next.mode=Mode::Catalog;next.view=view;cydlib::copyText(next.title,name);
   if(navigation.push(next))ui_go(SCR_CLASSIC);
 }
-void openSource(int source){
+bool buildPreview(int source){
   const size_t bytes=max(1,storage_trackCount())*sizeof(uint16_t);
   const size_t scratch=playlist_kind(source)==SRC_M3U?min(storage_trackCount(),1000)*sizeof(uint32_t):0;
   catalog_logStage("preview","before",bytes+scratch);
-  if(!catalog_canAllocate(bytes+scratch)){catalog_logStage("preview","refused",bytes+scratch);message("Not enough memory, try again");return;}
+  if(!catalog_canAllocate(bytes+scratch)){catalog_logStage("preview","refused",bytes+scratch);return false;}
   uint16_t* candidate=(uint16_t*)malloc(max(1,storage_trackCount())*sizeof(uint16_t));
-  if(!candidate){catalog_logStage("preview","refused",bytes+scratch);message("Not enough memory, try again");return;}
+  if(!candidate){catalog_logStage("preview","refused",bytes+scratch);return false;}
   int n=playlist_preview(source,candidate,max(1,storage_trackCount()));
   catalog_logStage("preview","after",bytes+scratch);
-  if(n<=0){free(candidate);message("No playable songs in this list.");return;}
-  freePreview();preview=candidate;previewCount=n;
+  if(n<=0){free(candidate);return false;}
+  freePreview();preview=candidate;previewCount=n;previewDirty=false;
+  return true;
+}
+void openSource(int source){
+  if(!buildPreview(source)){message("Unable to read list or allocate memory. Try again.");return;}
   Page next{};next.mode=Mode::SourceSongs;next.source=source;
   cydlib::copyText(next.title,source==1?"Favourites":playlist_name(source).c_str());
   if(navigation.push(next))ui_go(SCR_CLASSIC);else freePreview();
@@ -232,8 +237,8 @@ void playerTick(uint32_t now){
 }
 void enter(){
   bg_stop();ready=highlight=-1;gesture=cydclassic::Gesture{};
-  if(page().mode==Mode::SourceSongs&&previewDirty&&preview){
-    previewCount=playlist_preview(page().source,preview,max(1,storage_trackCount()));previewDirty=false;
+  if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
+    if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
   count=rowCount();tft.fillScreen(theme().bg);header();footer();
   shownVolume=shownConnection=-1;
@@ -248,7 +253,12 @@ void enter(){
     if(storage_skippedCount())centred(String(storage_skippedCount())+" files skipped",224,theme().dim,theme().bg);}
   else {invalidate();if(!count){centred(storage_readOnly()?"SD card is read-only":storage_catalogStale()?"Library unavailable":"No entries",100,theme().dim,theme().bg);}}
 }
-void leave(){flushSettings();dirty=0;}
+void leave(){
+  flushSettings();dirty=0;titles_release();
+  // ui_go calls leave after a navigation push/pop: current() is the destination.
+  // Keep a newly built destination preview, otherwise rebuild lazily on Back.
+  if(page().mode!=Mode::SourceSongs||externalReturn)freePreview();
+}
 void tick(uint32_t now){
   if(savePending&&int32_t(now-saveAt)>=0)flushSettings();
   if(now-lastStatus>=1000){
@@ -302,7 +312,9 @@ void activate(int at){
       else if(at==2){g_settings.rotation=(g_settings.rotation&2)?0:2;display_setRotation(g_settings.rotation);settings_save();enter();}
       else if(at==3){calibrate_run();enter();}else external(SCR_SETUP);break;
     case Mode::Output:
-      if(at<2){g_settings.outRoute=at==0?OUT_BT:OUT_SPEAKER;speaker_setRoute(g_settings.outRoute);settings_save();invalidate();header();}break;
+      if(at<2){const uint8_t next=at==0?OUT_BT:OUT_SPEAKER;
+        if(!speaker_setRoute(next)){message("Unable to change output. Try again.");break;}
+        g_settings.outRoute=next;settings_save();invalidate();header();}break;
     case Mode::Options:
       if(at==0){
         if(storage_trackCount()){

@@ -5,6 +5,7 @@
 #include "storage.h"
 #include "settings.h"     // RepeatMode
 #include "m4a_track.h"
+#include "small_file.h"
 
 // ---------------------------------------------------------------------------
 // Ring buffer: one producer (decode task), one consumer (audio_pull)
@@ -42,6 +43,7 @@ static volatile bool     starting = false;    // opening a track: no underrun co
 static volatile uint32_t lastPullMs = 0;
 
 static TaskHandle_t decodeHandle = nullptr;
+static volatile bool startupComplete = false;
 static portMUX_TYPE errorLock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t errorSerial = 0;
 static int errorTrack = -1;
@@ -152,7 +154,7 @@ static bool openTrack(int index) {
   posBaseMs = 0;
   framesPlayed = 0;
   const String path = storage_trackPath(index);
-  file = SD.open(path);
+  file = openSmallFile(path);
   if (!file) {
     reportError("cannot_open", index);
     Serial.printf("ERR m4a cannot_open %s\n", path.c_str());
@@ -186,6 +188,10 @@ static volatile uint32_t failSerial  = 0;     // bumped when a track will not op
 static volatile uint32_t diagMaxReadMs = 0;   // diagnostics: slowest SD read
 
 static void decodeTask(void*) {
+  // All permanent audio allocations and playlist restoration precede BT.
+  // The loop task releases this barrier only after playlist_restore().
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  if (reqTrack < 0) startupComplete = true; // empty library
   for (;;) {
     abortDecode = false;
     const int t = reqTrack;
@@ -194,6 +200,7 @@ static void decodeTask(void*) {
       reqStartMs = 0;
       reqSeekMs = -1;
       if (!openTrack(t)) failSerial++;
+      startupComplete = true;
       continue;
     }
     reqSeekMs = -1;                            // seeking is not supported for M4A
@@ -323,12 +330,15 @@ void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle,
     buildOrder(shuffleOn, startTrack);
     request(startTrack, 0);
   }
-  // 6 KB: MiniAAC keeps its state in the static workspace; the stack holds its locals plus the library index read.
-  if (xTaskCreatePinnedToCore(decodeTask, "m4adec", 6144, nullptr, 5, &decodeHandle, 1) != pdPASS) {
+  // CY-37/v3 minimum free stack was >=3964 B on 6144 B: retain ~1.9 KiB observed margin.
+  if (xTaskCreatePinnedToCore(decodeTask, "m4adec", 4096, nullptr, 5, &decodeHandle, 1) != pdPASS) {
     free(rb); free(order); rb = nullptr; order = nullptr; orderLen = 0;
     reportError("audio_task", -1);
   }
 }
+
+void audio_start() { if (decodeHandle) xTaskNotifyGive(decodeHandle); }
+bool audio_startupComplete() { return !decodeHandle || startupComplete; }
 
 void audio_tick() {
   if (endedSerial != seenEnded) {

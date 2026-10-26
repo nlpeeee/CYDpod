@@ -478,6 +478,7 @@ int ui_text(const String& text, int x, int y, uint8_t datum, uint16_t fg, uint16
     titles_draw({ left, top, w, TITLE_STRIP_H }, 0, 0, fg, bg);
     return w;
   }
+  titles_release(); // ASCII/fallback draws must not retain an unrelated CJK strip
   tft.setTextColor(fg, bg);
   tft.setTextDatum(datum);
   const int fh = tft.fontHeight(f);
@@ -639,7 +640,9 @@ static void confirmPress(PressPhase phase, int x, int y) {
 // ---------------------------------------------------------------------------
 static uint32_t toastUntil = 0;
 
-void ui_toast(Txt text, uint32_t ms) {
+void ui_toast(Txt text, uint32_t ms) { ui_toast(tr(text), ms); }
+
+void ui_toast(const char* text, uint32_t ms) {
   const Palette& p = theme();
   const Style&   s = style();
   const int W = tft.width(), H = tft.height();
@@ -648,7 +651,7 @@ void ui_toast(Txt text, uint32_t ms) {
   if (s.shadow) tft.fillRect(r.x + s.shadow, r.y + s.shadow, r.w, r.h, p.outline);
   if (s.radius) tft.fillRoundRect(r.x, r.y, r.w, r.h, s.radius, p.text);
   else          tft.fillRect(r.x, r.y, r.w, r.h, p.text);
-  ui_label(text, r.cx(), r.cy(), MC_DATUM, p.bg, p.text, r.w - SP_XL);
+  ui_text(String(text), r.cx(), r.cy(), MC_DATUM, p.bg, p.text, r.w - SP_XL);
   overlay = OV_TOAST;
   toastUntil = millis() + ms;
 }

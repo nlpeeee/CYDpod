@@ -12,6 +12,10 @@ if not exist out mkdir out
 cd out
 ffmpeg -v error -y -i ..\..\fixtures\stereo-faststart.m4a -c copy -metadata title="Actual tagged fixture" -metadata artist="Fixture Artist" -metadata album="Fixture Album" -metadata track="2/3" metadata-real.m4a
 if errorlevel 1 exit /b 1
+cl /nologo /O2 /EHsc /W4 /std:c++17 /I..\speaker_shim /Fe:speaker_lifecycle_test.exe ..\speaker_lifecycle_test.cpp
+if errorlevel 1 exit /b 1
+.\speaker_lifecycle_test.exe
+if errorlevel 1 exit /b 1
 cl /nologo /O2 /EHsc /W4 /std:c++17 /DCYDPOD_CATALOG_HOST /I..\catalog_shim /I..\..\firmware\cydpod_player\app /Fe:catalog_test.exe ..\catalog_test.cpp ..\..\firmware\cydpod_player\app\storage.cpp ..\..\firmware\cydpod_player\app\playlist.cpp
 if errorlevel 1 exit /b 1
 .\catalog_test.exe

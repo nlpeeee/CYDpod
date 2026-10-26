@@ -18,6 +18,7 @@ static const uint8_t OUT_NONE = 0xFF;
 static volatile uint8_t route  = OUT_NONE;
 static volatile bool    parked = true;        // the writer task is not pulling
 static volatile uint32_t stalls = 0;
+static TaskHandle_t writerHandle = nullptr;
 
 uint8_t speaker_route() { return route; }
 uint32_t speaker_stalls() { return stalls; }
@@ -44,8 +45,8 @@ uint32_t speaker_stalls() { return stalls; }
 // ../../CYD Speaker Test/FINDINGS.md for the sweep this came from.
 static const int32_t CHUNK = 256;
 static dac_continuous_handle_t dac = nullptr;
-static int16_t stereo[CHUNK * 2];
-static uint8_t mono[CHUNK];
+static int16_t* stereo = nullptr;
+static uint8_t* mono = nullptr;
 static uint8_t lastLevel = 128;               // where the ramp starts
 
 bool speaker_active() { return dac != nullptr; }
@@ -120,6 +121,8 @@ static void dacStop() {
 // passages. Carrying the error into the next sample pushes it up out of the
 // way for the cost of two adds.
 static void writerTask(void*) {
+  // Wait until the creator has published the route and unparked state.
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   int32_t err = 0;
   for (;;) {
     if (route != OUT_SPEAKER) {
@@ -127,8 +130,8 @@ static void writerTask(void*) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
+    parked = false; // includes DAC startup: never delete/free during a driver call
     if (!dac && !dacStart()) { route = OUT_NONE; continue; }
-    parked = false;
 
     audio_pull(stereo, CHUNK);
     for (int32_t i = 0; i < CHUNK; i++) {
@@ -152,26 +155,54 @@ static void writerTask(void*) {
 // ---------------------------------------------------------------------------
 // Public
 // ---------------------------------------------------------------------------
-void speaker_begin(uint8_t startRoute) {
-  // Core 0: the decode task and loop() are both on core 1, and this one spends
-  // its life blocked in the DMA write.
-  xTaskCreatePinnedToCore(writerTask, "spkout", 3072, nullptr, 5, nullptr, 0);
-  speaker_setRoute(startRoute);
-}
+bool speaker_begin(uint8_t startRoute) { return speaker_setRoute(startRoute); }
 
-void speaker_setRoute(uint8_t r) {
+bool speaker_setRoute(uint8_t r) {
   if (r >= OUT_ROUTE_COUNT) r = OUT_SPEAKER;
-  if (r == route) return;
-
-  // Park first: whichever consumer was pulling has to be all the way out
-  // before the other one touches the ring. 50 ms covers an A2DP callback
-  // (~2.9 ms); the speaker side says when it is done itself.
+  if (r == route) return true;
+  // Reserve the new buffers before interrupting a working Bluetooth route.
+  int16_t* nextStereo = nullptr;
+  uint8_t* nextMono = nullptr;
+  if (r == OUT_SPEAKER) {
+    nextStereo = (int16_t*)malloc(CHUNK * 2 * sizeof(int16_t));
+    nextMono = (uint8_t*)malloc(CHUNK);
+    if (!nextStereo || !nextMono) {
+      free(nextStereo); free(nextMono);
+      Serial.println("speaker: no memory, route unchanged");
+      return false;
+    }
+  }
+  const uint8_t previous = route;
   route = OUT_NONE;
-  for (int i = 0; i < 30 && !parked; i++) delay(10);
-  delay(50);
-
-  route = r;
-  Serial.printf("speaker: route -> %s\n", r == OUT_SPEAKER ? "speaker" : "bluetooth");
+  // One 500 ms write and eight 200 ms ramp writes can be outstanding.
+  const uint32_t waitAt = millis();
+  while (writerHandle && !parked && millis() - waitAt < 3000) delay(10);
+  if (writerHandle && !parked) {
+    route = previous;
+    free(nextStereo); free(nextMono);
+    Serial.println("speaker: park timed out, route unchanged");
+    return false;
+  }
+  // parked is published only AFTER dacStop() has finished using the buffers.
+  if (writerHandle) { vTaskDelete(writerHandle); writerHandle = nullptr; }
+  free(stereo); free(mono); stereo = nullptr; mono = nullptr;
+  delay(50); // let any in-flight Bluetooth audio_pull finish before the new consumer
+  if (r == OUT_SPEAKER) {
+    stereo = nextStereo; mono = nextMono;
+    parked = false;
+    if (xTaskCreatePinnedToCore(writerTask, "spkout", 3072, nullptr, 5, &writerHandle, 0) != pdPASS) {
+      writerHandle = nullptr; parked = true;
+      free(stereo); free(mono); stereo = nullptr; mono = nullptr;
+      route = previous == OUT_BT ? OUT_BT : OUT_NONE;
+      Serial.println("speaker: task allocation failed");
+      return false;
+    }
+    route = r;
+    xTaskNotifyGive(writerHandle);
+  } else route = r;
+  Serial.printf("speaker: route -> %s  heap %u largest %u\n",
+                r == OUT_SPEAKER ? "speaker" : "bluetooth", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  return true;
 }
 
 #endif  // !CYD_UPLOADER

@@ -90,5 +90,8 @@ int main(){try{
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,60);pump();check(calls==before,"cancelled press stays cancelled");
   tap(30,300);tap(80,180);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
   tap(80,260);check(ui_current()==SCR_SETUP,"advanced settings bridge");ui_go(SCR_PLAYER);pump();check(label("Audio Output"),"legacy Back returns to settings parent");
+  // CT-05: an unclaimed 0.6 to 4 s press activates the row like a tap.
+  tx=80;ty=60;down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=900);down=false;ui_touch(TOUCH_LONG_PRESS,80,60);pump();
+  check(label("On-board speaker"),"long press activates the row (CT-05)");
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL firmware UI: "<<e.what()<<"\n";return 1;}}

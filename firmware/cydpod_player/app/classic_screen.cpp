@@ -354,7 +354,9 @@ bool press(PressPhase phase,int x,int y){
   }return false;
 }
 void touch(TouchEvent ev,int,int){
-  const int target=ready;ready=-1;if(ev!=TOUCH_TAP)return;
+  const int target=ready;ready=-1;
+  // CT-05: a firm, slow press (600 ms to 4 s) that was not claimed by a drag or the 4 s calibration hold acts like a tap.
+  if(ev!=TOUCH_TAP&&ev!=TOUCH_LONG_PRESS)return;
   if(target>=0){activate(target);return;}
   switch(target){
     case Back:back();break;

@@ -28,6 +28,7 @@ installed tools are local ignored build inputs, not part of this source import.
 | ESP-IDF binary SDK | 5.5.4, `735507283d`, ESP32 libs archive 3.3.10 | Espressif/third-party SDK notices apply; archive hash pinned; not represented as wholly LGPL |
 | Xtensa/RISC-V toolchains | esp-x32/esp-rv32 2601, GCC 14.2.0, build 20260121 | Toolchain GPL and runtime/component exceptions/notices retained in installed packages |
 | Arduino CLI | 1.5.1, executable commit `01f3d4f2b` | GPLv3; license copied to `notices/` |
+| miniflac | Header copy from `cowork-ai/go-miniflac` `25a101bc2f8bb8d8462be8e4dc403eeb75e0bfde` (archive SHA256 `1d2fa5a6fda95044ee8c93586b714801c4c90a6817dff95966dec8e27c9fc400`); upstream jprjr/miniflac was unreachable (404) on 2026-10-26 | 0BSD, John Regan; `vendor/miniflac/LICENSE` and header notice retained; unmodified, hashes in `tools/miniflac-files.sha256.json`; compiled into the player (CY-51c) |
 | Package tools | Exact lock/index versions (esptool, GDB, OpenOCD, filesystem tools, dfu-util, Arduino builtins) | Separate upstream licenses in installed packages; pinning is not a relicensing claim |
 
 Copies of the principal library and Helix license texts are in `notices/` so

@@ -60,6 +60,8 @@ try {
         -InventoryPath (Join-Path $root 'tools/audiotools-files.sha256.json')
     Test-FileInventory -Label 'MiniAAC' -SourceRoot (Join-Path $root 'vendor/miniaac') `
         -InventoryPath (Join-Path $root 'tools/miniaac-files.sha256.json')
+    Test-FileInventory -Label 'miniflac' -SourceRoot (Join-Path $root 'vendor/miniflac') `
+        -InventoryPath (Join-Path $root 'tools/miniflac-files.sha256.json')
     if ((Get-FileHash $cli).Hash.ToLowerInvariant() -ne $lock.cli.executableSha256) { throw 'Arduino CLI executable differs from lock.' }
     if ((Get-FileHash .deps/sketchbook/libraries/arduino-libhelix/src/ConfigHelix.h).Hash.ToLowerInvariant() -ne $lock.patches[0].sha256) {
         throw 'Helix config differs from lock; run setup.ps1.'
@@ -127,6 +129,7 @@ try {
                 Copy-Item -LiteralPath $_.FullName -Destination $dest
             }
         }
+        if ($job.Name -eq 'cydpod-player') { Copy-Item -LiteralPath (Join-Path $root 'vendor/miniflac/miniflac.h') -Destination $stage }
         # GCC -w suppresses even local diagnostic-error pragmas. Keep it for
         # stock builds only; the probe enables format errors in its own files.
         $warnings = if ($job.Name -eq 'aac-probe') { 'default' } else { 'none' }

@@ -25,8 +25,9 @@ class M4aTrack {
       miniaac_info info{};
       rc = miniaac_get_info(decoder_, &info);
       if (rc == MINIAAC_OK) {
-        if (info.sample_rate != 44100 || info.channels != 2) { reason = "not_44100_stereo"; rc = MINIAAC_UNSUPPORTED; }
-        else if (info.total_frames != UINT64_MAX) total_ = info.total_frames;
+        if (!info.sample_rate || (info.channels != 1 && info.channels != 2)) { reason = "aac_format"; rc = MINIAAC_UNSUPPORTED; }
+        else { rate_=info.sample_rate;channels_=info.channels; }
+        if (rc==MINIAAC_OK && info.total_frames != UINT64_MAX) total_ = info.total_frames;
       }
     }
     if (rc != MINIAAC_OK) { name_ = reason ? reason : miniaac_status_string(rc); end(); }
@@ -41,25 +42,32 @@ class M4aTrack {
     const miniaac_status rc = miniaac_decode_next(decoder_, pcm_, MINIAAC_PCM_SAMPLES, &count);
     if (rc == MINIAAC_EOF) return Pull::eof;
     if (rc != MINIAAC_OK) { name_ = miniaac_status_string(rc); return Pull::error; }
-    frames_ = count / 2; // stereo only (checked in begin)
+    stereo(count);
     return Pull::frames;
   }
   bool seekable() const { return total_ && miniaac_seekable(decoder_); }
   miniaac_status seek(uint32_t ms, miniaac_seek_hook hook, void* user) {
     size_t count = 0; frames_ = used_ = 0;
-    const uint64_t frame = min<uint64_t>(uint64_t(ms) * 44100 / 1000, total_ ? total_ - 1 : 0);
+    const uint64_t frame = min<uint64_t>(uint64_t(ms) * rate_ / 1000, total_ ? total_ - 1 : 0);
     const miniaac_status rc = miniaac_seek(decoder_, frame, pcm_, MINIAAC_PCM_SAMPLES, &count, hook, user);
-    if (rc == MINIAAC_OK) { frames_ = count / 2; name_ = "ok"; }
+    if (rc == MINIAAC_OK) { stereo(count); name_ = "ok"; }
     else if (rc != MINIAAC_CANCELLED) name_ = miniaac_status_string(rc);
     return rc;
   }
   size_t pending() const { return frames_ - used_; }
   const M4aStereo* pcm() const { return reinterpret_cast<const M4aStereo*>(pcm_) + used_; }
   void consume(size_t frames) { used_ += frames; }
+  uint32_t sampleRate() const { return rate_; }
   uint64_t totalFrames() const { return total_; }   // 0: unknown
   const char* name() const { return name_; }
 
  private:
+  void stereo(size_t count) {
+    frames_=count/channels_;
+    if(channels_==1)for(int i=int(frames_)-1;i>=0;--i)pcm_[2*i+1]=pcm_[2*i]=pcm_[i];
+  }
+  uint32_t rate_=44100;
+  uint8_t channels_=2;
   // MiniAAC asks for absolute offsets; this is the only user of the handle, so seek only when the position differs.
   static int readAt(void* user, uint64_t offset, void* dst, size_t bytes) {
     File* file = static_cast<M4aTrack*>(user)->file_;

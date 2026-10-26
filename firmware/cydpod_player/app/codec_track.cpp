@@ -2,6 +2,9 @@
 #include "codec_track.h"
 #include <new>
 #include "wav_track.h"
+#ifdef ARDUINO
+#include <MP3DecoderHelix.h> // unique public header selects the pinned Arduino library
+#endif
 #include "mp3_pool.h"
 #include <string.h>
 namespace {
@@ -15,7 +18,7 @@ struct PoolLayout {
   CodecState state;
   int16_t pcm[2304];                 // 1152 stereo MP3 frames, also AAC/WAV
   uint8_t input[2048];
-  uint8_t firHistory[524];           // reserved for the streaming FIR
+  FirState fir;
   uint8_t kind; // 0 closed, 1 AAC, 2 WAV, 3 MP3
   File* file;
   size_t frames, used;
@@ -27,17 +30,26 @@ static_assert(sizeof(AacState) + 4608 + 2048 + 524 + 128 <= 40960, "AAC inclusiv
 static_assert(sizeof(Mp3State) + 4608 + 2048 + 524 + 128 <= 40960, "MP3 inclusive pool budget");
 static_assert(sizeof(WavState) + 4608 + 2048 + 524 + 128 <= 40960, "WAV inclusive pool budget");
 static_assert(sizeof(PoolLayout) <= 40960, "inclusive codec pool overflow");
-alignas(8) static uint8_t codecPool[40960]; // the ONLY decoder/PCM/input/FIR allocation
-PoolLayout& pool() { return *reinterpret_cast<PoolLayout*>(codecPool); }
+union alignas(8) DecoderPool {
+  PoolLayout layout;
+  uint8_t bytes[40960];
+  DecoderPool() : layout{} {}
+  ~DecoderPool() {}
+};
+static_assert(sizeof(DecoderPool)==40960,"single inclusive pool size");
+static DecoderPool codecPool; // the ONLY decoder/PCM/input/FIR allocation (.bss)
+PoolLayout& pool() { return codecPool.layout; }
 }
 miniaac_status CodecTrack::begin(File& file) {
-  end(); pool().file=&file; pool().error="ok"; pool().rate=44100;
+  end(); pool().fir.reset(); pool().file=&file; pool().error="ok"; pool().rate=44100;
   uint8_t magic[4]={};
   if (WavState::readAt(file,0,magic,4) && !memcmp(magic,"RIFF",4)) {
     pool().kind=2; new (&pool().state.wav) WavState{};
     const char* error=pool().state.wav.open(file);
     if (error) { pool().error=error; return MINIAAC_UNSUPPORTED; }
-    pool().rate=pool().state.wav.rate; pool().total=pool().state.wav.bytes/pool().state.wav.align;
+    pool().rate=pool().state.wav.rate;
+    if(pool().rate!=44100 && !firBank(pool().rate)){pool().error="wav_sample_rate";return MINIAAC_UNSUPPORTED;}
+    pool().total=pool().state.wav.bytes/pool().state.wav.align;
     return MINIAAC_OK;
   }
   if (!memcmp(magic,"ID3",3) || (magic[0]==255 && (magic[1]&224)==224 && ((magic[1]>>1)&3)==1)) {
@@ -54,11 +66,16 @@ miniaac_status CodecTrack::begin(File& file) {
     pool().rate=pool().state.mp3.rate;pool().total=pool().state.mp3.total;return MINIAAC_OK;
   }
   new (&pool().state.aac) AacState(pool().pcm); pool().kind=1;
-  return pool().state.aac.track.begin(file);
+  const miniaac_status rc=pool().state.aac.track.begin(file);
+  if(rc!=MINIAAC_OK)return rc;
+  pool().rate=pool().state.aac.track.sampleRate();
+  if(pool().rate!=44100 && !firBank(pool().rate)){pool().error="aac_sample_rate";return MINIAAC_UNSUPPORTED;}
+  return MINIAAC_OK;
 }
 void CodecTrack::end() {
   if (pool().kind==1) pool().state.aac.~AacState();
-  memset(codecPool, 0, sizeof(codecPool));
+  memset(codecPool.bytes, 0, sizeof(codecPool));
+  new (&codecPool.layout) PoolLayout{};
 }
 CodecTrack::Pull CodecTrack::next() {
   if(pool().kind==1) return pool().state.aac.track.next();
@@ -78,6 +95,7 @@ CodecTrack::Pull CodecTrack::next() {
 }
 bool CodecTrack::seekable() const { return pool().kind==1 && pool().state.aac.track.seekable(); }
 miniaac_status CodecTrack::seek(uint32_t ms, miniaac_seek_hook hook, void* user) {
+  pool().fir.reset();
   return pool().kind==1 ? pool().state.aac.track.seek(ms,hook,user) : MINIAAC_UNSUPPORTED;
 }
 size_t CodecTrack::pending() const { return pool().kind==1 ? pool().state.aac.track.pending() : pool().frames-pool().used; }
@@ -87,5 +105,18 @@ const M4aStereo* CodecTrack::pcm() const {
 void CodecTrack::consume(size_t frames) { if(pool().kind==1) pool().state.aac.track.consume(frames); else pool().used+=frames; }
 uint64_t CodecTrack::totalFrames() const { return pool().kind==1 ? pool().state.aac.track.totalFrames() : pool().total; }
 uint32_t CodecTrack::sampleRate() const { return pool().rate; }
-const char* CodecTrack::name() const { return pool().kind==1 ? pool().state.aac.track.name() : pool().error?pool().error:"closed"; }
+bool CodecTrack::output(int16_t l,int16_t r,PcmSink sink,void* user) {
+  if(pool().rate==44100)return sink(user,l,r);
+  const FirBank* b=firBank(pool().rate);
+  return b && pool().fir.push(l,r,*b,sink,user);
+}
+bool CodecTrack::drain(PcmSink sink,void* user) {
+  if(pool().rate==44100)return true;
+  const FirBank* b=firBank(pool().rate);if(!b)return false;
+  // Causal zero-start FIR retains its ~63.5-source-frame delay. Flush 127
+  // zero frames once at EOF; track switches/seek discard history instead.
+  for(unsigned i=0;i<127;++i)if(!pool().fir.push(0,0,*b,sink,user))return false;
+  pool().fir.reset();return true;
+}
+const char* CodecTrack::name() const { if(pool().error && strcmp(pool().error,"ok"))return pool().error;return pool().kind==1 ? pool().state.aac.track.name() : pool().error?pool().error:"closed"; }
 #endif

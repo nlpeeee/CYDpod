@@ -14,3 +14,10 @@ for rate in (48000,44100,32000,24000,22050,16000,12000,11025,8000):
    cmd=[exe,'-v','error','-f','lavfi','-i',f'sine=frequency=997:sample_rate={rate}:duration=0.2','-ac',str(channels),'-c:a','libmp3lame']
    cmd+=['-q:a','5'] if mode=='vbr' else ['-b:a','128k' if rate>=32000 else '32k']
    subprocess.run(cmd+['-y',output],check=True)
+
+for channels in (1,2):
+ p=out/f'48000-{channels}.m4a'
+ if not p.exists():
+  output=str(p)
+  if exe.lower().endswith('.exe') and sys.platform!='win32':output=subprocess.check_output(['wslpath','-w',str(p.resolve())],text=True).strip()
+  subprocess.run([exe,'-v','error','-f','lavfi','-i','sine=frequency=997:sample_rate=48000:duration=0.2','-ac',str(channels),'-c:a','aac','-y',output],check=True)

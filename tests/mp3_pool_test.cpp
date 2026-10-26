@@ -21,6 +21,11 @@ int main(int argc,char** argv){
    for(int i=0;i<info.outputSamps/info.nChans;++i){auto pcm=*track.pcm();assert(pcm.l==reference[i*info.nChans]&&pcm.r==reference[i*info.nChans+info.nChans-1]);track.consume(1);++count;}
   }
   assert(count>0&&helixHostAllocations==before);track.end();f.close();MP3FreeDecoder(stock);
+  // Malformed tag and truncated final frame reject deterministically.
+  auto save=[&](const std::vector<unsigned char>& bytes){FILE* out=fopen("tests/out/bad.mp3","wb");assert(out);assert(fwrite(bytes.data(),1,bytes.size(),out)==bytes.size());fclose(out);};
+  auto bad=data;bad.pop_back();save(bad);f=File("tests/out/bad.mp3","r");assert(track.begin(f)==MINIAAC_OK);bool failed=false;
+  for(;;){auto rc=track.next();if(rc==CodecTrack::Pull::error){failed=true;break;}if(rc==CodecTrack::Pull::eof)break;track.consume(track.pending());}assert(failed);track.end();f.close();
+  bad={'I','D','3',4,0,0,128,0,0,0};save(bad);f=File("tests/out/bad.mp3","r");assert(track.begin(f)!=MINIAAC_OK);assert(!strcmp(track.name(),"mp3_id3"));track.end();f.close();
   printf("PASS MP3 bit-exact stock Helix, eight allocations replaced, zero pool allocations: %s frames=%zu\n",argv[arg],count);
  }
 }

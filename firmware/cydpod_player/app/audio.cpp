@@ -126,6 +126,7 @@ static void pushFrame(int16_t l, int16_t r) {
   }
 }
 
+static bool ringSink(void*,int16_t l,int16_t r) { pushFrame(l,r);return !abortDecode; }
 static CodecTrack m4a;                        // stateless facade over the single 40 KiB pool
 static File     file;
 
@@ -156,7 +157,7 @@ static void seekTrack(uint32_t ms, uint32_t serial) {
   if (commandSerial != serial || rc == MINIAAC_CANCELLED){portEXIT_CRITICAL(&stateLock);return;}
   if (rc != MINIAAC_OK) {decodeBlocked = true; playing = false;}
   else {
-    posBaseMs = uint32_t(min<uint64_t>(uint64_t(ms) * 44100 / 1000, m4a.totalFrames() - 1) * 1000 / 44100);
+    posBaseMs = uint32_t(min<uint64_t>(uint64_t(ms) * m4a.sampleRate() / 1000, m4a.totalFrames() - 1) * 1000 / m4a.sampleRate());
     framesPlayed = 0; starting = true;decodeBlocked = false;
   }
   portEXIT_CRITICAL(&stateLock);
@@ -266,6 +267,7 @@ static void decodeTask(void*) {
         continue;
       }
       if (pull == CodecTrack::Pull::eof) {
+        m4a.drain(ringSink,nullptr);
         // End of track: let what is buffered play out, then say so.
         while ((rbUsed() > 0 || !playing) && !requestPending()) vTaskDelay(pdMS_TO_TICKS(10));
         if (!requestPending()) {
@@ -277,7 +279,7 @@ static void decodeTask(void*) {
     }
     while (m4a.pending() > 0 && !abortDecode) {
       const M4aStereo* f = m4a.pcm();
-      pushFrame(f->l, f->r);
+      m4a.output(f->l, f->r,ringSink,nullptr);
       if (abortDecode) break;
       m4a.consume(1);
     }

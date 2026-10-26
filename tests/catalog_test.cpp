@@ -170,6 +170,11 @@ int main(){try{
   storage_searchStart("LIMIT");finishSearch();check(storage_searchCount()==50,"search bounded to 50 results in 2000 tracks");
   check(std::filesystem::file_size(SD.root/".sys/search.idx")==20+2000*64,"search index is 64 bytes per track plus header");
   storage_searchStart("limit");hostReadBudget=0;storage_searchTick();check(storage_searchFailed(),"index read failure clears partial results");hostReadBudget=-1;
+  SD.root=std::filesystem::current_path()/("catalog-codecs-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  put("music/a.MP3",Bytes(12,0));put("music/b.WAV",Bytes(12,0));put("music/c.m4a",tagged("AAC","Artist","Album",1));
+  put("music/._ignored.mp3",Bytes(12,0));put("music/no.txt",Bytes(12,0));
+  check(storage_begin(nullptr)&&storage_trackCount()==3,"MP3/WAV/M4A case-insensitive file filter with fallback titles");
+  std::cout<<"PASS catalogue codec filter: MP3/WAV/M4A listed, dotfiles ignored, filename fallback titles\n";
   std::cout<<"PASS search: streamed 64-byte keys, word/substrings, case folding, query cancellation, warm reuse, 2000 tracks/50 results, failed writes and read-only fallback\n";
   std::cout<<"PASS catalogue: real/synthetic M4A tags, artists/albums/titles, multidisc, compilations, 1000 tracks, warm cache, full-card recovery, corrupt generation, refresh, queue isolation, gestures and bounded navigation\n";
   return 0;

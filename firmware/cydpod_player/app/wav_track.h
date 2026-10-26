@@ -43,7 +43,8 @@ struct WavState {
   int read(File& f, uint8_t* input, int16_t* pcm) {
     if (cursor==bytes) return 0;
     const uint32_t remaining=bytes-cursor;
-    const size_t n=remaining<2048 ? remaining : 2048/align*align;
+    const size_t capacity=(2048/align<1152?2048/align:1152)*align;
+    const size_t n=remaining<capacity ? remaining : capacity;
     if (!readAt(f,data+cursor,input,n)) return -1;
     const size_t frames=n/align, step=bits/8;
     for(size_t i=0;i<frames;++i) {

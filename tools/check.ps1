@@ -74,7 +74,7 @@ try {
         @{ Name = 'uploader'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '-DCYD_UPLOADER' }
     )
     # CY-33: the maintained touchscreen player copy (M4A via MiniAAC); MiniAAC is passed as a single --library.
-    $jobs += @{ Name = 'cydpod-player'; Sketch = 'firmware/cydpod_player/app'; Flags = ''
+    $jobs += @{ Name = 'cydpod-player'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYDPOD_AAC_LC_ONLY'
         Library = (Join-Path $root '.tools/staging/miniaac-patched') }
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
@@ -171,6 +171,15 @@ try {
                 throw "Wrong program in $($job.Name) image (upstream marker check)."
             }
         }
+        if ($job.Name -eq 'cydpod-player') {
+            $nm = Join-Path $dependencyRoot 'arduino/packages/esp32/tools/esp-x32/2601/bin/xtensa-esp32-elf-nm.exe'
+            $symbols = & $nm -S --defined-only (Join-Path $root '.tools/build/cydpod-player/app.ino.elf')
+            $poolSymbols = @($symbols | Where-Object { $_ -match ' codecPool$|codecPoolE$' })
+            if ($poolSymbols.Count -ne 1 -or $poolSymbols[0] -notmatch '\s0000a000\s[bB]\s') { throw 'Expected exactly one 40960 B codec pool in .bss.' }
+            if ($symbols -match 'xmp3_AllocateBuffers|xmp3_FreeBuffers| MP3InitDecoder$| MP3FreeDecoder$') { throw 'Heap-based MP3 decoder allocation unexpectedly linked.' }
+            $poolSymbols | Set-Content (Join-Path $root '.tools/logs/codec-pool-map.txt')
+            Write-Host ('PASS single pool: ' + $poolSymbols[0])
+        }
         $results += [pscustomobject]@{ name=$job.Name; bytes=$binary.Length;
             sha256=(Get-FileHash $binary.FullName).Hash.ToLowerInvariant(); log=$log }
     }
@@ -179,6 +188,8 @@ try {
         & cmd.exe /d /c tests\build_catalog.cmd
         if ($LASTEXITCODE -ne 0) { throw 'Catalogue/navigation host checks failed.' }
         if (!(Test-Path tools/media_check.py)) { throw 'Required host media check is missing.' }
+        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_codec_pool.sh')
+        if ($LASTEXITCODE -ne 0) { throw 'WAV/MP3 pool/FIR host checks failed.' }
         & python tools/media_check.py
         if ($LASTEXITCODE -ne 0) { throw 'Host media checks failed. See output above.' }
     }

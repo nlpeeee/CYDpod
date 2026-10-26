@@ -250,12 +250,17 @@ static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,Storage
   return ok&&validate(CATALOGS[slot],checked);
 }
 
+// Each FAT file slot reserves about 4.1 KB for the life of the mount (CY-41), so the pool
+// is the smallest that covers every path: at most four regular files are ever open at once
+// (audio + catalogue + two favourites/sources writers; the catalogue build holds three).
+// Directory handles use a separate allocation. The host SD shim enforces the same limit.
+static const int kMaxFiles=4;
 bool storage_mount(){
   if(!mutex)mutex=xSemaphoreCreateMutex();if(!mutex)return false;
 #ifndef CYDPOD_CATALOG_HOST
   static SPIClass sdSPI(VSPI);sdSPI.begin(CYD_SD_SCK_PIN,CYD_SD_MISO_PIN,CYD_SD_MOSI_PIN,CYD_SD_CS_PIN);
-  bool ok=SD.begin(CYD_SD_CS_PIN,sdSPI,20000000,"/sd",8);
-  if(!ok){SD.end();ok=SD.begin(CYD_SD_CS_PIN,sdSPI,4000000,"/sd",8);}if(!ok)return false;
+  bool ok=SD.begin(CYD_SD_CS_PIN,sdSPI,20000000,"/sd",kMaxFiles);
+  if(!ok){SD.end();ok=SD.begin(CYD_SD_CS_PIN,sdSPI,4000000,"/sd",kMaxFiles);}if(!ok)return false;
 #endif
   readOnly=false;
   for(const char* d:{"/music","/bg","/playlists","/.sys"})if(!SD.exists(d)&&!SD.mkdir(d))readOnly=true;

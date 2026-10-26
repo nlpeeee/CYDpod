@@ -1,12 +1,12 @@
 # Classic Touch: live pairing and seeking, v7 ready
 
-2026-10-26. Implemented the saved plan in `docs/specs/classic-touch-pairing-seek.md` following the user's “proceed”. Source `2c50573c5d2f25e8e9e12ef237970cfa98f0487f` on `cydpod/pairing-seek`, in `E:/dev/.worktrees/CYDpod/cy43-heap`. Full compile/host checks pass. **No flash, erase, serial port, board or SD-card operation was performed.** Main checkout tracked source and its pre-existing build-baseline edit were not changed; vendor/core/dependencies remain pinned.
+2026-10-26. Implemented the saved plan in `docs/specs/classic-touch-pairing-seek.md` following the user's “proceed”. Source `ba27e7f35a0535e7a93cdb5aba24471736045d1f` on `cydpod/pairing-seek`, in `E:/dev/.worktrees/CYDpod/cy43-heap`. Full compile/host checks pass. **No flash, erase, serial port, board or SD-card operation was performed.** Main checkout tracked source and its pre-existing build-baseline edit were not changed; vendor/core/dependencies remain pinned.
 
 ## Saved state and delivery
 
 V5 rollback image and source history were saved before implementation under `.tools/backup/pre-pairing-seek/` (`classic-touch-ready-v5`, `source.bundle`). These are local source/image backups, not a device/NVS backup. The older CY-43 v4 backup remains available. Original v5 application SHA256 is `8ac3c01e93b1b2a2aa39986eea68c3b6bc5d6e04ba03b64fde8fb14aa85562e0`.
 
-Recommended image: `.tools/images/classic-touch-ready-v7/`. It contains app, bootloader, partition table, boot_app0, ELF/map, source/file SHA256 manifest, check evidence and `flash-command.txt`. All source application files match the final build staging copy byte-for-byte. Binary: **1,377,168 B**, SHA256 `02518e5c8b07c871b7d85b4276db87c20b9826397fafb02d07b6b89a63c5ff7e`, below the 1,966,080 B slot limit.
+Recommended image: `.tools/images/classic-touch-ready-v7/`. It contains app, bootloader, partition table, boot_app0, ELF/map, source/file SHA256 manifest, check evidence and `flash-command.txt`. All source application files match the final build staging copy byte-for-byte. Binary: **1,377,312 B**, SHA256 `422b268c8e046c0afd44d01ebfceba52997c9db0443df031a4b767125b7f210b`, below the 1,966,080 B slot limit.
 
 An earlier independent pairing-only comparison image was frozen as v6 from `e6c3fd9`. It intentionally retains v5 seeking behavior; later pairing-progress/immediate-cancel/inquiry-start edge fixes are included in v7. Use v7 for the complete fixes; v5 is the saved pre-change rollback. No image is claimed hardware-tested.
 

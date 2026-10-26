@@ -3,7 +3,7 @@
 #include <new>
 #include "wav_track.h"
 #ifdef ARDUINO
-#include <MP3DecoderHelix.h> // unique public header selects the pinned Arduino library
+#include <cydpod_helix_mp3.h> // unique header selects the byte-identical MP3-only staged core
 #endif
 #include "mp3_pool.h"
 #include <string.h>

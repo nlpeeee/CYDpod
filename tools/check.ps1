@@ -69,6 +69,8 @@ try {
     }
     & python -I tools/stage_miniaac.py
     if ($LASTEXITCODE -ne 0) { throw 'MiniAAC staging failed.' }
+    & python -I tools/stage_helix_mp3.py
+    if ($LASTEXITCODE -ne 0) { throw 'Pinned MP3 core staging failed.' }
     $jobs = @(
         @{ Name = 'player'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '' },
         @{ Name = 'uploader'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '-DCYD_UPLOADER' }
@@ -76,6 +78,8 @@ try {
     # CY-33: the maintained touchscreen player copy (M4A via MiniAAC); MiniAAC is passed as a single --library.
     $jobs += @{ Name = 'cydpod-player'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYDPOD_AAC_LC_ONLY'
         Library = (Join-Path $root '.tools/staging/miniaac-patched') }
+    # Only MP3 C is staged: the stock wrapper's second AAC core conflicts with MiniAAC.
+    $jobs[-1].Flags += ' -fwrapv -fno-strict-aliasing'
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
             throw 'Required AAC probe is missing. Use -SkipProbe only for an explicit stock-baseline check.'
@@ -133,6 +137,7 @@ try {
             $arguments += @('--build-property', "compiler.cpp.extra_flags=$($job.Flags)",
                 '--build-property', "compiler.c.extra_flags=$($job.Flags)")
         }
+        if ($job.Name -eq 'cydpod-player') { $arguments += @('--build-property', 'compiler.c.elf.extra_flags=-Wl,--wrap=xmp3_UnpackFrameHeader', '--library', (Join-Path $root '.tools/staging/helix-mp3-core')) }
         if ($job.Library) { $arguments += @('--library', $job.Library) }
         $arguments += $stage
         $log = Join-Path $root ".tools/logs/$($job.Name).log"

@@ -17,6 +17,7 @@ inline bool catalog_canAllocate(size_t bytes) {
 bool storage_catalogReady();
 bool storage_catalogStale();
 bool storage_catalogRebuilt();
+int storage_skippedCount();  // files left out of the catalogue (path too long or over 2,000 tracks)
 bool storage_refreshNextBoot();
 int storage_browseCount(CatalogView view);
 bool storage_browseEntry(CatalogView view,int row,CatalogEntry& entry);

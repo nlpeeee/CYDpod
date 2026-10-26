@@ -21,6 +21,7 @@ static SemaphoreHandle_t mutex=nullptr;
 static uint32_t scanCrc=0;
 static int scanned=0;
 static bool scanOk=true;
+static int skipped=0;  // files left out of the catalogue: path too long or over MaxTracks
 // Shared boot scratch, not a whole-library cache.
 static Record work[2];
 // One open handle on the active catalogue plus the last record read through it
@@ -86,14 +87,16 @@ static void scanDir(const String& path,int depth,File* output,StorageProgressFn 
       }else{
         String low=p;low.toLowerCase();
         if(low.endsWith(".m4a")){
-          if(scanned>=MaxTracks||p.length()>=256){scanOk=false;f.close();break;}
-          const uint32_t size=f.size(),modified=uint32_t(f.getLastWrite());
-          scanCrc=crc(scanCrc,p.c_str(),p.length()+1);scanCrc=crc(scanCrc,&size,4);scanCrc=crc(scanCrc,&modified,4);
-          if(output){Record& r=work[0];memset(&r,0,sizeof(r));copyText(r.path,p.c_str());Tags tags(tagRead,&f,size);
-            if(!tags.parse(r)){memset(r.title,0,sizeof(r)-sizeof(r.path));Serial.printf("catalog: tags unavailable %s\n",p.c_str());}
-            fallback(r);if(output->write((const uint8_t*)&r,sizeof(r))!=sizeof(r))scanOk=false;
+          if(scanned>=MaxTracks||p.length()>=256)++skipped;  // CT-02: skip the file, keep building
+          else{
+            const uint32_t size=f.size(),modified=uint32_t(f.getLastWrite());
+            scanCrc=crc(scanCrc,p.c_str(),p.length()+1);scanCrc=crc(scanCrc,&size,4);scanCrc=crc(scanCrc,&modified,4);
+            if(output){Record& r=work[0];memset(&r,0,sizeof(r));copyText(r.path,p.c_str());Tags tags(tagRead,&f,size,(uint8_t*)&work[1]);
+              if(!tags.parse(r)){memset(r.title,0,sizeof(r)-sizeof(r.path));Serial.printf("catalog: tags unavailable %s\n",p.c_str());}
+              fallback(r);if(output->write((const uint8_t*)&r,sizeof(r))!=sizeof(r))scanOk=false;
+            }
+            ++scanned;if(progress&&output)progress(scanned,0);
           }
-          ++scanned;if(progress&&output)progress(scanned,0);
         }
       }
     }
@@ -136,10 +139,10 @@ static bool appendFile(File& dst,const char* path,uint32_t& offset){
   while(ok&&src.available()){size_t n=src.read(b,512);if(!n||!writeAll(dst,b,n)){ok=false;break;}offset+=n;}
   src.close();return ok;
 }
-static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,StorageProgressFn progress){
+static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,StorageProgressFn progress,Header& checked){
   File f=SD.open(CATALOGS[slot],"w+");if(!f)return false;
   Header h{};memcpy(h.magic,"CYDCAT1",8);h.signature=signature;h.generation=generation;
-  bool ok=writeAll(f,&h,sizeof(h));scanned=0;scanCrc=0;scanOk=true;
+  bool ok=writeAll(f,&h,sizeof(h));scanned=0;scanCrc=0;scanOk=true;skipped=0;
   if(ok)scanDir("/music",0,&f,progress);
   h.tracks=scanned;ok=ok&&scanOk&&scanCrc==signature;
   uint16_t* ids=(uint16_t*)malloc(std::max<int>(1,h.tracks)*2);
@@ -165,7 +168,7 @@ static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,Storage
   }
   h.headerChecksum=crc(0,&h,sizeof(h));
   if(ok)ok=f.seek(0)&&writeAll(f,&h,sizeof(h));f.flush();f.close();
-  Header checked{};return ok&&validate(CATALOGS[slot],checked);
+  return ok&&validate(CATALOGS[slot],checked);
 }
 
 bool storage_mount(){
@@ -185,14 +188,17 @@ bool storage_begin(StorageProgressFn progress){
   active=-1;header={};stale=rebuilt=false;
   Header a{},b{};const bool va=validate(CATALOGS[0],a),vb=validate(CATALOGS[1],b);
   if(va||vb){active=vb&&(!va||int32_t(b.generation-a.generation)>0)?1:0;header=active?b:a;}
-  scanned=0;scanCrc=0;scanOk=true;scanDir("/music",0,nullptr,nullptr);
-  if(!scanOk){stale=true;Serial.println("catalog: scan failed, over 2000 tracks or path too long; previous catalogue retained");return true;}
-  const bool force=SD.exists(REFRESH);
+  scanned=0;scanCrc=0;scanOk=true;skipped=0;scanDir("/music",0,nullptr,nullptr);
+  // CT-04: the marker has done its job once this boot has read it. Removing it before
+  // the build means a build that keeps failing cannot repeat on every boot.
+  const bool force=SD.exists(REFRESH);if(force)SD.remove(REFRESH);
+  if(!scanOk){stale=true;Serial.println("catalog: Library stale: cannot read /music, previous catalogue kept");return true;}
+  if(skipped)Serial.printf("catalog: skipped %d\n",skipped);
   if(active>=0&&!force&&scanCrc==header.signature&&scanned==header.tracks)return true;
   const int target=active==0?1:0;const uint32_t generation=header.generation+1;
-  if(buildCatalog(target,scanCrc,generation,progress)){
-    Header candidate{};if(validate(CATALOGS[target],candidate)){active=target;header=candidate;rebuilt=true;SD.remove(REFRESH);}
-  }else{stale=true;Serial.println("catalog: rebuild failed; previous catalogue retained");}
+  Header candidate{};
+  if(buildCatalog(target,scanCrc,generation,progress,candidate)){active=target;header=candidate;rebuilt=true;}
+  else{stale=true;Serial.println("catalog: Library stale: rebuild failed, previous catalogue kept");}
   Serial.printf("catalog: %u tracks %u artists %u albums, generation %lu%s\n",header.tracks,header.artists,header.albums,
     (unsigned long)header.generation,stale?" (stale)":"");
   return true;
@@ -202,6 +208,7 @@ uint32_t storage_libraryCrc(){return header.checksum;}
 bool storage_catalogReady(){return active>=0;}
 bool storage_catalogStale(){return stale;}
 bool storage_catalogRebuilt(){return rebuilt;}
+int storage_skippedCount(){return skipped;}
 bool storage_refreshNextBoot(){File f=SD.open(REFRESH,FILE_WRITE);if(!f)return false;bool ok=f.print("refresh\n")>0;f.close();return ok;}
 
 // The *Locked helpers need `mutex`; their results are valid until it is released.

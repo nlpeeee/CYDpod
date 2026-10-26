@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdlib.h>
 #include <ctype.h>
 
 namespace cydlib {
@@ -119,6 +120,7 @@ using ReadAt=bool(*)(void*,uint64_t,void*,size_t);
 class Tags {
   struct Box { uint64_t payload,end;uint32_t type; };
   ReadAt read_;void* user_;uint64_t size_;unsigned boxes_=0,bytes_=0;
+  uint8_t* scratch_;  // 264 B item buffer; callers on a small stack pass boot scratch (CY-39 CT-01)
   bool read(uint64_t at,void* p,size_t n) {
     if(at>size_||n>size_-at||bytes_+n>65536)return false;
     bytes_+=unsigned(n);return read_(user_,at,p,n);
@@ -161,7 +163,9 @@ class Tags {
     uint64_t at=item.payload;Box data;
     while(at<item.end){if(!next(at,item.end,data))return false;if(data.type!=fcc('d','a','t','a'))continue;
       if(data.end-data.payload<8)return false;
-      uint8_t b[264]={};size_t n=size_t(data.end-data.payload);if(n>sizeof(b))n=sizeof(b);
+      struct Own{uint8_t* p=nullptr;~Own(){free(p);}} own;uint8_t* b=scratch_;
+      if(!b){own.p=b=(uint8_t*)malloc(264);if(!b)return false;}
+      memset(b,0,264);size_t n=size_t(data.end-data.payload);if(n>264)n=264;
       if(!read(data.payload,b,n))return false;unsigned encoding=be32(b)&0xffffff;
       const uint8_t* p=b+8;size_t count=n-8;
       switch(item.type){
@@ -186,7 +190,7 @@ class Tags {
     }return true;
   }
  public:
-  Tags(ReadAt reader,void* user,uint64_t size):read_(reader),user_(user),size_(size){}
+  Tags(ReadAt reader,void* user,uint64_t size,uint8_t* scratch=nullptr):read_(reader),user_(user),size_(size),scratch_(scratch){}
   bool parse(Record& r){return walk(0,size_,0,false,r);}
 };
 } // namespace cydlib

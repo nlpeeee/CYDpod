@@ -80,7 +80,9 @@ int main(){try{
   auto mix=child(albums,"Summer");check(storage_browseTracks(mix,ids,20)==2,"compilation shares album");
   check(storage_begin(nullptr)&&!storage_catalogRebuilt(),"warm cache reuse");
   check(storage_refreshNextBoot(),"refresh marker");hostWriteBudget=0;check(storage_begin(nullptr)&&storage_catalogStale()&&storage_trackCount()==7,"card-full retains previous generation");hostWriteBudget=-1;
-  check(storage_begin(nullptr)&&storage_catalogRebuilt(),"retry forced rebuild");
+  check(!std::filesystem::exists(SD.root/".sys/library.refresh"),"refresh marker removed before the failing build (CT-04)");
+  check(storage_begin(nullptr)&&!storage_catalogRebuilt()&&!storage_catalogStale()&&storage_trackCount()==7,"failed build is not repeated on the next boot");
+  check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"explicit refresh rebuilds");
   // Damage newest B header; A remains readable and can be used without rewriting music.
   put(".sys/library-b.cat",Bytes(12,0));check(storage_begin(nullptr)&&storage_catalogReady()&&storage_trackCount()==7,"damaged newest falls back");
   put("music/B/new.m4a",tagged("A new song","Artist B","Greatest Hits",3));check(storage_begin(nullptr)&&storage_catalogRebuilt()&&storage_trackCount()==8,"new file triggers rebuild");
@@ -105,6 +107,10 @@ int main(){try{
   check(storage_begin(nullptr)&&storage_trackCount()==1000&&storage_browseCount(artists)==10&&storage_browseCount(albums)==20,"1000-track catalogue");
   check(storage_browseEntry(songs,0,e)&&e.label=="Song 0000","large title index");
   check(storage_begin(nullptr)&&!storage_catalogRebuilt(),"large warm boot");
+  // CT-02: 2,002 files: the extra two are skipped and counted, the library still builds. (A 256+ character path cannot be created by the MSVC host shim, so that branch is covered by reading only.)
+  SD.root=std::filesystem::current_path()/("catalog-limit-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  for(int i=0;i<2002;++i){char path[64],name[32];snprintf(path,sizeof(path),"music/G%d/%04d.m4a",i/200,i);snprintf(name,sizeof(name),"L%04d",i);put(path,tagged(name,"Limit Artist","Limit Album",i%99+1));}
+  check(storage_begin(nullptr)&&storage_catalogReady()&&storage_trackCount()==2000&&storage_skippedCount()==2,"files beyond 2000 skipped and counted, library still built (CT-02)");
   std::cout<<"PASS catalogue: real/synthetic M4A tags, artists/albums/titles, multidisc, compilations, 1000 tracks, warm cache, full-card recovery, corrupt generation, refresh, queue isolation, gestures and bounded navigation\n";
   return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL catalogue: "<<e.what()<<"\n";return 1;}}

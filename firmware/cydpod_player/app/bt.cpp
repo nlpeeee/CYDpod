@@ -25,6 +25,7 @@
 // 2. Reporting what happened. Pairing results reach ESP_LOG only, which an
 //    Arduino build compiles out, so a failure was invisible and the screen
 //    just said "connecting" forever.
+static portMUX_TYPE pairingMux=portMUX_INITIALIZER_UNLOCKED;
 static volatile bool pairingActive=false;
 static volatile cyd::PairingSession::Phase pairingPhase=cyd::PairingSession::Normal;
 static volatile BtFailure failure=BT_FAIL_NONE;
@@ -37,9 +38,12 @@ class CydSource : public BluetoothA2DPSource {
   struct Request {uint32_t generation;uint8_t addr[6];char name[33];};
   CydSource(){owner=this;}
   bool post(Command cmd,const uint8_t* addr=nullptr,const char* name=""){
-    Request q{};q.generation=++submitted;
+    Request q{};
+    portENTER_CRITICAL(&pairingMux);q.generation=++submitted;portEXIT_CRITICAL(&pairingMux);
     if(addr)memcpy(q.addr,addr,6);strlcpy(q.name,name,sizeof(q.name));
-    return bt_app_work_dispatch(dispatch,cmd,&q,sizeof(q),nullptr);
+    const bool queued=bt_app_work_dispatch(dispatch,cmd,&q,sizeof(q),nullptr);
+    if(!queued){portENTER_CRITICAL(&pairingMux);if(submitted==q.generation)--submitted;portEXIT_CRITICAL(&pairingMux);}
+    return queued;
   }
   void poll(){bt_app_work_dispatch(dispatch,Tick,nullptr,0,nullptr);}
   bool connectNow(const uint8_t addr[6],const char* name){return post(Select,addr,name);}
@@ -107,7 +111,14 @@ class CydSource : public BluetoothA2DPSource {
   uint8_t lastPeer[6]{};
   cyd::PairingSession session;
   static void dispatch(uint16_t event,void* p){owner->command((Command)event,(Request*)p);}
-  void publish(){pairingPhase=session.phase;pairingActive=session.pairing;}
+  void publish(){
+    portENTER_CRITICAL(&pairingMux);
+    pairingPhase=session.phase;
+    // A queued UI command owns its claim until BtAppT accepts it. An older
+    // Tick/connection callback must not reopen saved-device paging meanwhile.
+    if(accepted==submitted)pairingActive=session.pairing;
+    portEXIT_CRITICAL(&pairingMux);
+  }
   void fixedGap(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param);
   static void dispatchGap(uint16_t event,void* p){owner->fixedGap((esp_bt_gap_cb_event_t)event,(esp_bt_gap_cb_param_t*)p);}
   void command(Command cmd,Request* p){
@@ -487,7 +498,8 @@ bool bt_requestPairing() {
   if(!bluetoothReady)return false;
   if(!pairingActive)pairResumeWanted=speaker_route()==OUT_BT&&audio_isPlaying();
   if(!a2dp.post(CydSource::Pair,g_settings.btAddr)){failure=BT_FAIL_TIMEOUT;return false;}
-  pairingActive=true;haveTarget=false;pendingKnown=-1;connectDeadline=0;passkey=0;failure=BT_FAIL_NONE;
+  portENTER_CRITICAL(&pairingMux);pairingActive=true;portEXIT_CRITICAL(&pairingMux);
+  haveTarget=false;pendingKnown=-1;connectDeadline=0;passkey=0;failure=BT_FAIL_NONE;
   if(speaker_route()==OUT_BT&&audio_isPlaying())audio_togglePause();
   portENTER_CRITICAL(&devMux);devCount=0;++listSerial;portEXIT_CRITICAL(&devMux);
   Serial.println("bt: pair new requested (no restart)");return true;

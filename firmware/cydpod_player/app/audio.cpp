@@ -2,6 +2,7 @@
 #ifndef CYD_UPLOADER
 
 #include "audio.h"
+#include "command_queue.h"
 #include "storage.h"
 #include "settings.h"     // RepeatMode
 #include "m4a_track.h"
@@ -34,7 +35,7 @@ static volatile int      reqTrack  = -1;      // UI -> decode task
 static volatile int32_t  reqSeekMs = -1;
 static volatile uint32_t reqStartMs = 0, commandSerial = 0, seekGoalMs = 0;
 static volatile bool seeking = false, canSeek = false;
-static bool decodeBlocked = false; // seek I/O failure: retain track/queue, await retry
+static volatile bool decodeBlocked = false; // seek I/O failure: retain track/queue, await retry
 static inline bool requestPending() { return reqTrack >= 0 || reqSeekMs >= 0; }
 static volatile bool     playing   = true;
 static volatile uint8_t  volumePct = 40;
@@ -149,17 +150,18 @@ static void seekTrack(uint32_t ms, uint32_t serial) {
   const uint32_t at = millis();
   Serial.printf("seek: starting track %d target %lu\n",int(curTrack),(unsigned long)ms);
   const miniaac_status rc = m4a.seek(ms, seekHook, &context);
-  if (commandSerial != serial || rc == MINIAAC_CANCELLED) return;
+  portENTER_CRITICAL(&stateLock);
+  if (commandSerial != serial || rc == MINIAAC_CANCELLED){portEXIT_CRITICAL(&stateLock);return;}
+  if (rc != MINIAAC_OK) {decodeBlocked = true; playing = false;}
+  else {
+    posBaseMs = uint32_t(min<uint64_t>(uint64_t(ms) * 44100 / 1000, m4a.totalFrames() - 1) * 1000 / 44100);
+    framesPlayed = 0; starting = true;decodeBlocked = false;
+  }
+  portEXIT_CRITICAL(&stateLock);
   if (rc != MINIAAC_OK) {
-    decodeBlocked = true; playing = false;
     reportError(m4a.name(), curTrack);
     Serial.printf("seek: failed %s target %lu took %lu ms heap %u\n", m4a.name(), (unsigned long)ms, (unsigned long)(millis()-at), ESP.getFreeHeap());
   } else {
-    portENTER_CRITICAL(&stateLock);
-    posBaseMs = uint32_t(min<uint64_t>(uint64_t(ms) * 44100 / 1000, m4a.totalFrames() - 1) * 1000 / 44100);
-    framesPlayed = 0; starting = true;
-    portEXIT_CRITICAL(&stateLock);
-    decodeBlocked = false;
     Serial.printf("seek: track %d target %lu actual %lu took %lu ms heap %u\n",
                   int(curTrack), (unsigned long)ms, (unsigned long)posBaseMs,
                   (unsigned long)(millis() - at), ESP.getFreeHeap());
@@ -218,6 +220,7 @@ static bool openTrack(int index) {
 // It opens what it is asked to open and reports when a track has run out; it
 // never decides what plays next. Play order (shuffle, repeat) is the UI task's
 // business in audio_tick(), so the order table needs no locking.
+static volatile uint32_t endedCommand=0, failedCommand=0;
 static volatile uint32_t endedSerial = 0;     // bumped when a track finishes
 static volatile uint32_t failSerial  = 0;     // bumped when a track will not open
 static volatile uint32_t diagMaxReadMs = 0;   // diagnostics: slowest SD read
@@ -236,9 +239,10 @@ static void decodeTask(void*) {
     reqTrack = -1; reqSeekMs = -1;
     portEXIT_CRITICAL(&stateLock);
     if (t >= 0) {
+      Serial.printf("cmd: track %d consumed serial %lu\n",t,(unsigned long)serial);
       const bool opened = openTrack(t);
       if (serial == commandSerial) {
-        if (!opened) { failSerial++; finishCommand(serial); }
+        if (!opened) { failedCommand=serial; failSerial++; finishCommand(serial); }
         else if (startMs && canSeek) seekTrack(startMs, serial);
         else finishCommand(serial);
       }
@@ -256,7 +260,7 @@ static void decodeTask(void*) {
         reportError(m4a.name(), curTrack);
         Serial.printf("ERR m4a %s %s\n", m4a.name(), storage_trackPath(curTrack).c_str());
         closeTrack();
-        failSerial++;
+        failedCommand=serial; failSerial++;
         continue;
       }
       if (pull == M4aTrack::Pull::eof) {
@@ -264,7 +268,7 @@ static void decodeTask(void*) {
         while ((rbUsed() > 0 || !playing) && !requestPending()) vTaskDelay(pdMS_TO_TICKS(10));
         if (!requestPending()) {
           closeTrack();
-          endedSerial++;
+          endedCommand=serial; endedSerial++;
         }
         continue;
       }
@@ -327,7 +331,9 @@ static void request(int track, uint32_t startMs = 0) {
   portENTER_CRITICAL(&stateLock);
   reqStartMs = startMs; seekGoalMs = startMs; reqSeekMs = -1; reqTrack = track;
   ++commandSerial; seeking = true; canSeek = false;
+  const uint32_t serial=commandSerial;
   portEXIT_CRITICAL(&stateLock);
+  Serial.printf("cmd: track %d queued serial %lu start %lu\n",track,(unsigned long)serial,(unsigned long)startMs);
 }
 
 static void advance(bool trackFinished) {
@@ -387,19 +393,21 @@ bool audio_startupComplete() { return !decodeHandle || startupComplete; }
 void audio_tick() {
   if (endedSerial != seenEnded) {
     seenEnded = endedSerial;
-    failStreak = 0;
-    advance(true);
+    if(cyd::currentCompletion(endedCommand,commandSerial)){failStreak = 0;advance(true);}
+    else Serial.println("cmd: eof ignored (superseded)");
   }
   if (failSerial != seenFail) {
     seenFail = failSerial;
     // Skip unreadable files, but stop rather than spin if none will open.
-    if (++failStreak < orderLen) advance(false);
-    else playing = false;
+    if(cyd::currentCompletion(failedCommand,commandSerial)){
+      if (++failStreak < orderLen) advance(false);else playing = false;
+    }else Serial.println("cmd: failure ignored (superseded)");
   }
 }
 
 void audio_playTrack(int index) {
-  if (orderLen == 0) return;
+  if (!audio_ready() || orderLen == 0){Serial.println("cmd: play ignored (audio unavailable or empty queue)");return;}
+  Serial.printf("cmd: play track %d accepted\n",index);
   index = constrain(index, 0, storage_trackCount() - 1);
   for (int i = 0; i < orderLen; i++)
     if (order[i] == index) { orderPos = i; break; }
@@ -409,30 +417,45 @@ void audio_playTrack(int index) {
 }
 
 void audio_next() {
+  if(!audio_ready()||!orderLen){Serial.println("cmd: next ignored (empty queue)");return;}
+  Serial.println("cmd: next accepted");
   failStreak = 0;
   advance(false);
 }
 
 void audio_prev() {
-  if (orderLen == 0) return;
+  if (!audio_ready()||!orderLen){Serial.println("cmd: previous ignored (empty queue)");return;}
+  Serial.println("cmd: previous accepted");
   failStreak = 0;
-  if (audio_positionMs() > 3000) { request(curTrack); return; }
+  if (!requestPending() && !seeking && audio_positionMs() > 3000) { request(curTrack); return; }
   orderPos = orderPos <= 0 ? orderLen - 1 : orderPos - 1;
   request(order[orderPos]);
 }
 
-void audio_togglePause()        { playing = !playing; }
-void audio_setVolume(uint8_t p) { volumePct = min<uint8_t>(p, 100); }
+void audio_togglePause() {
+  if(!audio_ready()||!orderLen){Serial.println("cmd: play/pause ignored (audio unavailable or empty queue)");return;}
+  // A failed seek closes the decode gate; Play must reopen rather than just light up.
+  portENTER_CRITICAL(&stateLock);
+  const bool retry=!playing&&decodeBlocked;
+  playing=!playing;
+  const int track=curTrack;
+  portEXIT_CRITICAL(&stateLock);
+  if(retry)request(track);
+  Serial.printf("cmd: %s accepted%s\n",playing?"play":"pause",retry?" (retry after seek failure)":"");
+}
+void audio_setVolume(uint8_t p) { volumePct = min<uint8_t>(p, 100);Serial.printf("cmd: volume %u executed\n",unsigned(volumePct)); }
 
 bool audio_canSeek() { return canSeek && durationMs && reqTrack < 0; }
 bool audio_isSeeking() { return seeking; }
 bool audio_seekTo(uint32_t ms) {
   portENTER_CRITICAL(&stateLock);
-  if (!canSeek || !durationMs || reqTrack >= 0) { portEXIT_CRITICAL(&stateLock); return false; }
+  if (!canSeek || !durationMs || reqTrack >= 0) { portEXIT_CRITICAL(&stateLock); Serial.println("cmd: seek ignored (track opening or unsupported)");return false; }
   seekGoalMs = min<uint32_t>(ms, min<uint32_t>(durationMs - 1, INT32_MAX));
   reqSeekMs = int32_t(seekGoalMs);
   ++commandSerial; seeking = true;
+  const uint32_t goal=seekGoalMs,serial=commandSerial;
   portEXIT_CRITICAL(&stateLock);
+  Serial.printf("cmd: seek %lu queued serial %lu (latest wins)\n",(unsigned long)goal,(unsigned long)serial);
   return true;
 }
 void audio_seekRelative(int seconds) {
@@ -443,6 +466,7 @@ void audio_seekRelative(int seconds) {
 }
 
 void audio_setShuffle(bool on) {
+  Serial.printf("cmd: shuffle %s %s\n",on?"on":"off",orderLen?"executed":"ignored (empty queue)");
   if (on == shuffleOn || orderLen == 0) return;
   shuffleOn = on;
   buildOrder(on, curTrack);
@@ -464,7 +488,7 @@ int audio_queueLen()             { return orderLen; }
 int audio_queueTrack(int pos)    { return (pos >= 0 && pos < orderLen) ? queueAt(pos) : -1; }
 int audio_queuePos(int track)    { return queueFind(track); }
 
-void audio_setRepeat(uint8_t mode) { repeatMode = mode % REPEAT_MODE_COUNT; }
+void audio_setRepeat(uint8_t mode) { repeatMode = mode % REPEAT_MODE_COUNT;Serial.printf("cmd: repeat %u executed\n",unsigned(repeatMode)); }
 bool    audio_shuffle()            { return shuffleOn; }
 uint8_t audio_repeat()             { return repeatMode; }
 
@@ -489,6 +513,11 @@ uint32_t audio_positionMs() {
   return (duration && ms > duration) ? duration : ms;
 }
 
+AudioCommands audio_commands(){
+  portENTER_CRITICAL(&stateLock);
+  AudioCommands out{int(reqTrack),int32_t(reqSeekMs),uint32_t(commandSerial),bool(starting),bool(seeking),bool(decodeBlocked)};
+  portEXIT_CRITICAL(&stateLock);return out;
+}
 uint32_t audio_decodeStackFree() {
   return decodeHandle ? uxTaskGetStackHighWaterMark(decodeHandle) : 0;
 }

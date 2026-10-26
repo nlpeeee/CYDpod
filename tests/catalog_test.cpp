@@ -1,3 +1,4 @@
+#include "command_queue.h"
 #include "catalog.h"
 #include "storage.h"
 #include "playlist.h"
@@ -70,6 +71,10 @@ int main(){try{
   check(utf16Parser.parse(utf16Tags)&&!strcmp(utf16Tags.title,"\xe4\xbd\xa0\xe5\xa5\xbd"),"UTF-16BE tags");
   for(size_t n=1;n<16;++n){Bytes truncated(utf.begin(),utf.begin()+n);Tags p(readVector,&truncated,truncated.size());Record r{};check(!p.parse(r),"reject truncated headers");}
   Bytes bad={0,0,0,4,'m','o','o','v'};Record r{};Tags malformed(readVector,&bad,bad.size());check(!malformed.parse(r),"reject undersized atom");
+  {cyd::CommandQueue<3> q;uint8_t key=0;
+   check(q.push(0x44)&&q.push(0x4b)&&q.push(0x4c)&&!q.push(0x46),"AVRCP full queue refuses without overwrite");
+   check(q.pop(key)&&key==0x44&&q.push(0x46)&&q.pop(key)&&key==0x4b&&q.pop(key)&&key==0x4c&&q.pop(key)&&key==0x46&&!q.pop(key),"AVRCP FIFO wrap and empty");
+   check(!cyd::currentCompletion(2,3)&&cyd::currentCompletion(3,3),"stale decoder completion cannot replace explicit command");}
   SD.root=std::filesystem::current_path()/("catalog-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   put("music/A/Disc 1/z.m4a",tagged("Zebra","Artist A","Greatest Hits",1,1));
   put("music/A/Disc 2/a.m4a",tagged("alpha","Artist A","Greatest Hits",1,2));

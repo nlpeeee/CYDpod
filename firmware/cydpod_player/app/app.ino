@@ -284,11 +284,12 @@ void loop() {
     bg_takeMax(maxMs, maxBytes);
     Serial.printf("diag: sd read max %u ms  bg frame max %u ms %u KB  dac stalls %u\n",
                   audio_takeMaxReadMs(), maxMs, maxBytes / 1024, speaker_stalls());
-    Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u req %d  "
+    const AudioCommands commands=audio_commands();
+    Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u pullMax %d pendingTrack %d pendingSeek %ld cmdSerial %lu opening %d seeking %d blocked %d  "
                   "bg %d %u.%u fps %u ms  %s  %s  pulls %u frames %u\n",
                   ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(),
                   audio_decodeStackFree(), (unsigned)uxTaskGetStackHighWaterMark(nullptr),
-                  audio_bufferPct(), audio_underruns(), audio_maxRequest(),
+                  audio_bufferPct(), audio_underruns(), audio_maxRequest(),commands.track,(long)commands.seekMs,(unsigned long)commands.serial,commands.opening,commands.seeking,commands.blocked,
                   bg_current(), frames * 1000 / (now - lastStat),
                   (frames * 10000 / (now - lastStat)) % 10, avgMs,
                   g_settings.outRoute == OUT_SPEAKER

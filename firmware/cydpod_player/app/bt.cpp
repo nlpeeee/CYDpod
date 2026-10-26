@@ -3,6 +3,7 @@
 
 #include "bt.h"
 #include "audio.h"
+#include "command_queue.h"
 #include "speaker.h"
 #include "settings.h"
 #include "BluetoothA2DPSource.h"
@@ -294,10 +295,15 @@ static void onState(esp_a2d_connection_state_t s, void*) {
 static const uint8_t AVRC_VOL_UP = 0x41, AVRC_VOL_DOWN = 0x42, AVRC_PLAY = 0x44,
                      AVRC_STOP = 0x45, AVRC_PAUSE = 0x46, AVRC_FORWARD = 0x4B,
                      AVRC_BACKWARD = 0x4C;
-static volatile uint8_t pendingKey = 0;
+static cyd::CommandQueue<16> speakerKeys;
+static portMUX_TYPE keyMux=portMUX_INITIALIZER_UNLOCKED;
 
 static void onSpeakerKey(uint8_t key, bool isReleased) {
-  if (isReleased) pendingKey = key;          // one action per press
+  if (!isReleased) return; // one action per press
+  portENTER_CRITICAL(&keyMux);
+  const bool queued=speakerKeys.push(key);
+  portEXIT_CRITICAL(&keyMux);
+  Serial.printf("cmd: avrcp 0x%02x %s\n",key,queued?"queued":"ignored (queue full)");
 }
 
 static void handleSpeakerKey(uint8_t key) {
@@ -314,10 +320,10 @@ static void handleSpeakerKey(uint8_t key) {
     case AVRC_VOL_UP:   audio_setVolume(min(100, audio_volume() + 5)); break;
     case AVRC_VOL_DOWN: audio_setVolume(max(0, audio_volume() - 5)); break;
     default:
-      Serial.printf("bt: speaker key 0x%02x ignored\n", key);
+      Serial.printf("cmd: avrcp 0x%02x ignored (unsupported)\n", key);
       return;
   }
-  Serial.printf("bt: speaker key 0x%02x\n", key);
+  Serial.printf("cmd: avrcp 0x%02x executed\n", key);
 }
 
 // Frame is {int16_t channel1, channel2}, packed: the interleaved layout
@@ -388,9 +394,11 @@ void bt_tick() {
   if(int32_t(millis()-pollAt)>=0){pollAt=millis()+250;a2dp.poll();}
   if(pairResumeWanted&&!pairingActive&&bt_connected()){if(speaker_route()==OUT_BT&&!audio_isPlaying())audio_togglePause();pairResumeWanted=false;}
 
-  const uint8_t key = pendingKey;
-  if (key) {
-    pendingKey = 0;
+  // Drain in arrival order, outside the callback lock; producer cannot race a clear.
+  for(unsigned i=0;i<16;++i){
+    uint8_t key=0;
+    portENTER_CRITICAL(&keyMux);const bool have=speakerKeys.pop(key);portEXIT_CRITICAL(&keyMux);
+    if(!have)break;
     handleSpeakerKey(key);
   }
 
@@ -495,19 +503,19 @@ uint32_t  bt_passkey()  { return passkey; }
 uint32_t bt_listSerial() { return listSerial; }
 
 bool bt_requestPairing() {
-  if(!bluetoothReady)return false;
+  if(!bluetoothReady){Serial.println("cmd: pair ignored (Bluetooth not ready)");return false;}
   if(!pairingActive)pairResumeWanted=speaker_route()==OUT_BT&&audio_isPlaying();
-  if(!a2dp.post(CydSource::Pair,g_settings.btAddr)){failure=BT_FAIL_TIMEOUT;return false;}
+  if(!a2dp.post(CydSource::Pair,g_settings.btAddr)){failure=BT_FAIL_TIMEOUT;Serial.println("cmd: pair ignored (queue busy)");return false;}
   portENTER_CRITICAL(&pairingMux);pairingActive=true;portEXIT_CRITICAL(&pairingMux);
   haveTarget=false;pendingKnown=-1;connectDeadline=0;passkey=0;failure=BT_FAIL_NONE;
   if(speaker_route()==OUT_BT&&audio_isPlaying())audio_togglePause();
   portENTER_CRITICAL(&devMux);devCount=0;++listSerial;portEXIT_CRITICAL(&devMux);
-  Serial.println("bt: pair new requested (no restart)");return true;
+  Serial.println("cmd: pair queued");return true;
 }
 bool bt_cancelPairing() {
-  if(!a2dp.post(CydSource::Cancel)){failure=BT_FAIL_TIMEOUT;return false;}
+  if(!a2dp.post(CydSource::Cancel)){failure=BT_FAIL_TIMEOUT;Serial.println("cmd: cancel pair ignored (queue busy)");return false;}
   haveTarget=false;connectDeadline=0;passkey=0;
-  Serial.println("bt: cancel pairing requested (no restart)");return true;
+  Serial.println("cmd: cancel pair queued");return true;
 }
 
 int bt_deviceCount() {
@@ -541,7 +549,8 @@ bool bt_known(int i, BtDevice& out) {
 
 void bt_connectKnown(int i) {
   BtDevice d;
-  if (!bt_known(i, d)) return;
+  if (!bt_known(i, d)){Serial.println("cmd: connect ignored (invalid saved device)");return;}
+  Serial.printf("cmd: connect saved %d accepted\n",i);
   if (bt_connected()) {
     if (memcmp(connectedAddr, d.addr, 6) == 0) return;     // already on it
     // Claim the target before dropping the link: it stops the library chasing

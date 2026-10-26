@@ -75,3 +75,6 @@ int32_t  audio_maxRequest();       // largest frame count Bluetooth asked for at
 uint8_t  audio_bufferPct();
 bool     audio_bufferLow();         // below half: background drawing backs off
 uint32_t audio_decodeStackFree();
+
+struct AudioCommands {int track;int32_t seekMs;uint32_t serial;bool opening,seeking,blocked;};
+AudioCommands audio_commands();

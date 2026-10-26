@@ -6,7 +6,7 @@
 namespace {
 const uint32_t screenSeconds[]={0,30,60,300};
 const uint8_t timerMinutes[]={0,15,30,60,90};
-uint32_t lastTouch=0,timerEnd=0;
+uint32_t lastTouch=0,sleepDeadline=0;
 bool initialized=false,swallow=false,blocked=false,forcedOff=false,timerArmed=false,fading=false;
 int applied=-1;
 void light(int level){if(applied!=level){applied=level;display_setBacklight(level);}}
@@ -18,7 +18,7 @@ void sleep_begin(uint32_t now){
 void sleep_setTimer(uint8_t choice,uint32_t now){
   choice=choice<5?choice:0;g_settings.sleepTimer=choice;
   timerArmed=choice!=0;fading=false;audio_setSleepGain(100);
-  timerEnd=now+uint32_t(timerMinutes[choice])*60000;
+  sleepDeadline=now+uint32_t(timerMinutes[choice])*60000;
   Serial.printf("cmd: sleep timer %u minutes %s\n",unsigned(timerMinutes[choice]),timerArmed?"armed":"off");
 }
 void sleep_tick(uint32_t now,bool down){
@@ -29,9 +29,9 @@ void sleep_tick(uint32_t now,bool down){
     if(forcedOff||applied<int(g_settings.brightness)){swallow=blocked=true;Serial.println("cmd: wake accepted (touch swallowed)");}
     forcedOff=false;lastTouch=now;light(g_settings.brightness);
   }else if(swallow){blocked=true;swallow=false;}
-  if(timerArmed&&int32_t(now-timerEnd)>=0){
+  if(timerArmed&&int32_t(now-sleepDeadline)>=0){
     if(!fading){fading=true;Serial.println("cmd: sleep timer fading (3 seconds)");}
-    const uint32_t elapsed=now-timerEnd;
+    const uint32_t elapsed=now-sleepDeadline;
     audio_setSleepGain(elapsed>=3000?0:100-elapsed/30);
     if(elapsed>=3000){
       if(audio_isPlaying())audio_togglePause();
@@ -47,7 +47,7 @@ void sleep_tick(uint32_t now,bool down){
 }
 bool sleep_touchBlocked(){return blocked;}
 bool sleep_screenOff(){return applied==0;}
-uint16_t sleep_remainingMinutes(uint32_t now){return timerArmed?(int32_t(timerEnd-now)>0?uint16_t((timerEnd-now+59999)/60000):1):0;}
+uint16_t sleep_remainingMinutes(uint32_t now){return timerArmed?(int32_t(sleepDeadline-now)>0?uint16_t((sleepDeadline-now+59999)/60000):1):0;}
 const char* sleep_timeoutLabel(uint8_t c){const char* labels[]={"Off","30 s (dim at 15 s)","1 min (dim at 30 s)","5 min (dim at 2.5 min)"};return labels[c<4?c:2];}
 const char* sleep_timerLabel(uint8_t c){const char* labels[]={"Off","15 minutes","30 minutes","60 minutes","90 minutes"};return labels[c<5?c:0];}
 #endif

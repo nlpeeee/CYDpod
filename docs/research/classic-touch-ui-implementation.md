@@ -51,12 +51,16 @@ The maintained application now uses `/.sys/library-a.cat` and
 has a 60-byte header, 712-byte fixed track records, three sorted 16-bit ID arrays
 and 10-byte group records. The packed format is little endian. Limits excluding
 terminators: path 255, title/album 127 and artist/album-artist 95 UTF-8 bytes.
-Long paths reject rebuilding rather than silently addressing another file.
+Paths of 256 characters or more cannot be stored; before CY-39 one such file made the
+whole scan fail, since CY-39 the file is skipped and counted (see "After CY-39").
 
 Startup validates bounds, IDs, records and header/body CRCs, then compares a
 path/size/modification-time scan signature. Changed media builds the inactive
 generation and publishes its header last; interrupted/full-card builds retain
-the previous valid generation. FAT rename is not assumed transactional.
+the previous valid generation (**not measured on hardware**: the host test only
+simulates a failed write on a host filesystem, there was no power cut on FAT; the
+design relies on the header CRC, `f.size()==at` and the body CRC in `validate`).
+FAT rename is not assumed transactional.
 Refresh Library writes a request marker and reboots into a forced rescan,
 covering same-size retags that signature heuristics can miss. Music files are
 never retagged or transcoded. Card-full/corrupt-index states remain recoverable.
@@ -70,10 +74,10 @@ Folder/playlist names have an on-card offset index as well.
 
 Existing playback queue buffers remain two bytes per track. A catalogue queue
 is staged temporarily (at most 4,000 bytes); a source preview can retain at most
-4,000 bytes until its browse branch closes. Admission reserves a 20 KiB heap
-floor plus working allowance and a 4 KiB contiguous-block margin, including
-existing M3U matching scratch where needed. This is defensive admission, not a
-measured device heap result.
+4,000 bytes until its browse branch closes. Admission originally reserved a 20 KiB heap
+floor plus working allowance and a 4 KiB contiguous-block margin (changed in CY-39:
+12 KiB plus the staged bytes, see below). This is defensive admission, not a
+measured device heap result (**not measured on hardware**).
 
 ## Checks and evidence
 
@@ -103,6 +107,17 @@ checks, not CYD photographs, audio or latency measurements.
 MSVC emits narrowing/CRT warnings and the existing foreign-GCC-pragma warnings;
 compile/test failures remain fatal. The existing Helix/ADTS fixture matrix is
 separate from MiniAAC M4A/device playback acceptance.
+
+## Claims not measured on hardware
+
+These statements in this document have a design argument or a host test, but no
+hardware test or measurement: interrupted-build recovery on FAT (no power cut was
+ever tried); "one row per loop with backoff when the audio ring is low" (the host
+tests mock `audio_bufferLow`; no underrun, `sd read max` or latency figure exists);
+"bounded stack" (estimated from compiled frame sizes, `loop M` in the `stat:` line
+is the first real number); heap behaviour and the queue-staging floor; "UI never
+starves audio" (the SD bus is shared, so SD latency, not CPU, is the risk); and
+2,000 tracks (the host tests have 1,000 and 2,002 files, with no timing).
 
 ## Remaining qualification
 
@@ -157,3 +172,31 @@ image is `classic-implemented-v2-review.png` in the chat scratch folder.
 The pre-existing build-baseline document SHA256 remains
 `982ca7992c7176050821a0ad315237fcee41e177829f757b7504ee3efa9089a7`.
 No commit/push or hardware operation was performed.
+
+## After CY-39 (audit fixes CT-01 to CT-10)
+
+Source: `docs/research/cy39-classic-ui-fixes.md` in the hq repo has per-finding detail
+and numbers. All items below are host-tested or compile-checked only; none is
+measured on hardware.
+
+- **CT-01 stack**: the catalogue is read through one open handle and a one-record
+  cache, so no 712 B `Record` lives on the 5 KB loop-task stack; `validate`, the
+  build loops and the tag parser use the boot scratch `work[]`. Frame sizes fell
+  (validate 1,312 to 96 B, storage_begin 848 to 432 B, browseEntry 848 to 144 B,
+  trackPath/Label/findTrack 752 to 32 B, tick 864 to 384 B).
+- **CT-02**: files with a path of 256+ characters or beyond the 2,000th are skipped
+  and counted (`catalog: skipped N`, shown on About), the rest is built.
+- **CT-03**: the rebuild screen names each phase with a percentage; sorting uses a
+  24 B in-RAM key per track and reads records only for ties; long loops yield.
+- **CT-04**: the refresh marker is removed before building; a failed build keeps the
+  previous generation and prints/shows "Library stale".
+- **CT-05**: an unclaimed `TOUCH_LONG_PRESS` activates like a tap.
+- **CT-06**: one catalogue handle (opened by `storage_begin`, guarded by the storage
+  mutex) plus a one-record cache replaces open/seek/close per lookup.
+- **CT-07**: a card whose folders cannot be created is used read-only ("SD card is
+  read-only"); nothing is written and Refresh Library is unavailable in that mode.
+- **CT-08**: queue staging needs free heap of 12 KiB plus the staged bytes (was
+  20.5 KiB) and the unchanged 4 KiB contiguous margin; a refusal says "Not enough
+  memory, try again" and leaves playback untouched. `stage:` serial lines print free
+  heap and largest block before and after each staging.
+- **CT-10**: the storage mutex rule is documented at its declaration in `storage.cpp`.

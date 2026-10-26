@@ -27,14 +27,13 @@ void ui_icon(Icon icon, int cx, int cy, int s, uint16_t fg, uint16_t bg) {
       tft.fillRect(cx + h / 4, cy - h, h / 2 + 1, s, fg);
       break;
     case ICON_NEXT:
-      tft.fillTriangle(cx - h, cy - h, cx - h, cy + h, cx + h / 3, cy, fg);
-      tft.fillTriangle(cx - h / 3, cy - h, cx - h / 3, cy + h, cx + h, cy, fg);
-      tft.fillRect(cx + h - 1, cy - h, 3, s, fg);
+      // A separated stop bar and one filled triangle; exact mirror of Previous.
+      tft.fillTriangle(cx-h,cy-h,cx-h,cy+h,cx+h/2,cy,fg);
+      tft.fillRect(cx+h-2,cy-h,max(3,s/7),s,fg);
       break;
     case ICON_PREV:
-      tft.fillTriangle(cx + h, cy - h, cx + h, cy + h, cx - h / 3, cy, fg);
-      tft.fillTriangle(cx + h / 3, cy - h, cx + h / 3, cy + h, cx - h, cy, fg);
-      tft.fillRect(cx - h - 2, cy - h, 3, s, fg);
+      tft.fillTriangle(cx+h,cy-h,cx+h,cy+h,cx-h/2,cy,fg);
+      tft.fillRect(cx-h-max(3,s/7)+3,cy-h,max(3,s/7),s,fg);
       break;
     case ICON_VOL_DOWN:
       speaker(cx - 2, cy, s, fg);
@@ -238,7 +237,7 @@ static uint16_t ui_face(const Rect& r, bool active, bool pressed, uint16_t surfa
 
 void ui_button(const Rect& r, Icon icon, bool active, bool pressed) {
   const uint16_t face = ui_face(r, active, pressed, theme().bg);
-  ui_icon(icon, r.cx(), r.cy(), min(r.w, r.h) * 9 / 20, faceInk(active, pressed), face);
+  ui_icon(icon, r.cx(), r.cy(), min(r.w, r.h) * 3 / 5, faceInk(active, pressed), face);
 }
 
 void ui_textButton(const Rect& r, Txt label, bool primary, bool pressed, int32_t surface) {

@@ -6,6 +6,7 @@
 #include <cydpod_helix_mp3.h> // unique header selects the byte-identical MP3-only staged core
 #endif
 #include "mp3_pool.h"
+#include "flac_pool.h"
 #include <string.h>
 namespace {
 struct AacState {
@@ -13,13 +14,13 @@ struct AacState {
   M4aTrack track;
   AacState(int16_t* pcm) : track(workspace, pcm) {}
 };
-union CodecState { AacState aac; WavState wav; Mp3State mp3; CodecState() {} ~CodecState() {} };
+union CodecState { AacState aac; WavState wav; Mp3State mp3; FlacState flac; CodecState() {} ~CodecState() {} };
 struct PoolLayout {
   CodecState state;
   int16_t pcm[2304];                 // 1152 stereo MP3 frames, also AAC/WAV
   uint8_t input[2048];
   FirState fir;
-  uint8_t kind; // 0 closed, 1 AAC, 2 WAV, 3 MP3
+  uint8_t kind; // 0 closed, 1 AAC, 2 WAV, 3 MP3, 4 FLAC
   File* file;
   size_t frames, used;
   uint64_t total;
@@ -29,6 +30,7 @@ struct PoolLayout {
 static_assert(sizeof(AacState) + 4608 + 2048 + 524 + 128 <= 40960, "AAC inclusive pool budget");
 static_assert(sizeof(Mp3State) + 4608 + 2048 + 524 + 128 <= 40960, "MP3 inclusive pool budget");
 static_assert(sizeof(WavState) + 4608 + 2048 + 524 + 128 <= 40960, "WAV inclusive pool budget");
+static_assert(sizeof(FlacState) + 4608 + 2048 + 524 + 128 <= 40960, "FLAC inclusive pool budget");
 static_assert(sizeof(PoolLayout) <= 40960, "inclusive codec pool overflow");
 union alignas(8) DecoderPool {
   PoolLayout layout;
@@ -50,6 +52,15 @@ miniaac_status CodecTrack::begin(File& file) {
     pool().rate=pool().state.wav.rate;
     if(pool().rate!=44100 && !firBank(pool().rate)){pool().error="wav_sample_rate";return MINIAAC_UNSUPPORTED;}
     pool().total=pool().state.wav.bytes/pool().state.wav.align;
+    return MINIAAC_OK;
+  }
+  if (!memcmp(magic,"fLaC",4)) {
+    pool().kind=4; new (&pool().state.flac) FlacState{};
+    const char* error=pool().state.flac.open(file,pool().input);
+    if (error) { pool().error=error; return MINIAAC_UNSUPPORTED; }
+    pool().rate=pool().state.flac.rate;
+    if(pool().rate!=44100 && !firBank(pool().rate)){pool().error="flac_sample_rate";return MINIAAC_UNSUPPORTED;}
+    pool().total=pool().state.flac.total;
     return MINIAAC_OK;
   }
   if (!memcmp(magic,"ID3",3) || (magic[0]==255 && (magic[1]&224)==224 && ((magic[1]>>1)&3)==1)) {
@@ -87,15 +98,29 @@ CodecTrack::Pull CodecTrack::next() {
     if(pool().rate!=pool().state.mp3.rate){pool().error="mp3_rate_change";return Pull::error;}
     pool().frames=size_t(n);return n?Pull::frames:Pull::eof;
   }
+  if(pool().kind==4) {
+    pool().used=pool().frames=0;
+    const int n=pool().state.flac.read(*pool().file,pool().input,pool().pcm,pool().error);
+    if(n<0)return Pull::error;
+    pool().frames=size_t(n);return n?Pull::frames:Pull::eof;
+  }
   if(pool().kind!=2) return Pull::error;
   pool().used=pool().frames=0;
   const int n=pool().state.wav.read(*pool().file,pool().input,pool().pcm);
   if(n<0) {pool().error="wav_read";return Pull::error;}
   pool().frames=size_t(n); return n?Pull::frames:Pull::eof;
 }
-bool CodecTrack::seekable() const { return pool().kind==1 && pool().state.aac.track.seekable(); }
+bool CodecTrack::seekable() const { return pool().kind==1 ? pool().state.aac.track.seekable() : pool().kind==4 && pool().total; }
 miniaac_status CodecTrack::seek(uint32_t ms, miniaac_seek_hook hook, void* user) {
   pool().fir.reset();
+  if(pool().kind==4) {
+    pool().frames=pool().used=0;
+    switch(pool().state.flac.seek(*pool().file,pool().input,ms,hook,user,pool().error)) {
+      case FlacState::Seek::ok: pool().error="ok"; return MINIAAC_OK;
+      case FlacState::Seek::cancelled: return MINIAAC_CANCELLED;
+      default: return MINIAAC_IO;
+    }
+  }
   return pool().kind==1 ? pool().state.aac.track.seek(ms,hook,user) : MINIAAC_UNSUPPORTED;
 }
 size_t CodecTrack::pending() const { return pool().kind==1 ? pool().state.aac.track.pending() : pool().frames-pool().used; }

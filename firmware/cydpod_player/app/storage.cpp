@@ -118,7 +118,7 @@ static void scanDir(const String& path,int depth,File* output,StorageProgressFn 
         f.close();if(depth<2)scanDir(p,depth+1,output,progress);
       }else{
         String low=p;low.toLowerCase();
-        if(low.endsWith(".m4a") || low.endsWith(".wav") || low.endsWith(".mp3"))addTrack(p,f,output,progress);
+        if(low.endsWith(".m4a") || low.endsWith(".wav") || low.endsWith(".mp3") || low.endsWith(".flac"))addTrack(p,f,output,progress);
       }
     }
     f.close();if(!scanOk)break;

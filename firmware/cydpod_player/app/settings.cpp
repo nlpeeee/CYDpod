@@ -20,6 +20,8 @@ void settings_begin() {
   s.skin       = prefs.getUChar ("skin",   s.skin);
   s.style      = prefs.getUChar ("style",  s.style);
   s.lang       = prefs.getUChar ("lang",   s.lang) % LANG_COUNT;
+  s.screenTimeout = min<uint8_t>(prefs.getUChar("screenTime",s.screenTimeout),3);
+  s.sleepTimer = min<uint8_t>(prefs.getUChar("sleepTime",s.sleepTimer),4);
   s.volume     = min<uint8_t>(prefs.getUChar("vol", s.volume), 100);
   s.outRoute   = prefs.getUChar ("out",    s.outRoute) % OUT_ROUTE_COUNT;
   s.lastTrack  = prefs.getUShort("track",  s.lastTrack);
@@ -88,6 +90,8 @@ void settings_save() {
   prefs.putUChar ("skin",     s.skin);
   prefs.putUChar ("style",    s.style);
   prefs.putUChar ("lang",     s.lang);
+  prefs.putUChar ("screenTime",s.screenTimeout);
+  prefs.putUChar ("sleepTime",s.sleepTimer);
   prefs.putUChar ("vol",      s.volume);
   prefs.putUChar ("out",      s.outRoute);
   prefs.putUShort("track",    s.lastTrack);

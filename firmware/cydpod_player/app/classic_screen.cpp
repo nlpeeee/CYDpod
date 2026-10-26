@@ -7,6 +7,7 @@
 #include "storage.h"
 #include "playlist.h"
 #include "audio.h"
+#include "sleep_mode.h"
 #include "settings.h"
 #include "bt.h"
 #include "speaker.h"
@@ -43,7 +44,7 @@ bool externalReturn=false;
 bool seekPreview=false,seekCancelled=false;
 uint32_t seekMs=0,seekDuration=0,seekSerial=0,pressAt=0;
 char notice[128]={};
-char query[32]={};bool digitKeys=false,lettersSecond=false;
+char query[32]={};bool digitKeys=false,lettersSecond=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44,KeyPage=-45;
 constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27,Seek=-28;
@@ -92,7 +93,8 @@ void footer(){
   }
   if(page().mode==Mode::Player){
     text("Volume",{0,footerY(),80,44},p.text,p.band);
-    text((String(audio_volume())+"%").c_str(),{80,footerY(),80,44},p.dim,p.band,TYPE_CAPTION);
+    const uint16_t remaining=sleep_remainingMinutes(screenNow);
+    text((remaining?String(remaining)+" min":String(audio_volume())+"%").c_str(),{80,footerY(),80,44},p.dim,p.band,TYPE_CAPTION);
     text("Options",{160,footerY(),tft.width()-160,44},p.text,p.band);
   }else{
     text("Home",footerRect(Home),p.text,p.band);
@@ -136,7 +138,7 @@ int rowCount(){
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
-    case Mode::Settings:return 7;case Mode::Playback:return 2;case Mode::Display:return 5;case Mode::Output:return 4;
+    case Mode::Settings:return 7;case Mode::Playback:return 4;case Mode::Display:return 5;case Mode::Output:return 4;
     case Mode::Options:return 4;case Mode::Refresh:return 2;
     default:return 0;
   }
@@ -159,7 +161,9 @@ void loadRow(int i){
     case Mode::Sources:{int source=sourceId(at);setRow(r,playlist_name(source).c_str(),String(),true,source<0);r.source=source;break;}
     case Mode::SourceSongs:{String title,artist;if(preview&&at<previewCount&&storage_trackSummary(preview[at],title,artist)){setRow(r,title.c_str(),artist);r.track=preview[at];}else setRow(r,"Track unavailable",String(),false,true);break;}
     case Mode::Settings:{const char* names[]={"Audio Output","Bluetooth","Playback","Display","Refresh Library","Upload / Advanced","About"};setRow(r,names[at],String(),true);break;}
-    case Mode::Playback:setRow(r,at==0?"Shuffle":"Repeat",at==0?String(audio_shuffle()?"On":"Off"):String(audio_repeat()==REPEAT_ONE?"One":audio_repeat()==REPEAT_ALL?"All":"Off"));break;
+    case Mode::Playback:
+      if(at<2)setRow(r,at==0?"Shuffle":"Repeat",at==0?String(audio_shuffle()?"On":"Off"):String(audio_repeat()==REPEAT_ONE?"One":audio_repeat()==REPEAT_ALL?"All":"Off"));
+      else setRow(r,at==2?"Screen timeout":"Sleep timer",at==2?String(sleep_timeoutLabel(g_settings.screenTimeout)):String(sleep_timerLabel(g_settings.sleepTimer)));break;
     case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Flip portrait","Calibrate touch","Panel / Advanced"};setRow(r,names[at],at<2?String(g_settings.brightness)+"%":String(),at>=3);break;}
     case Mode::Output:{const char* names[]={"Bluetooth","On-board speaker","Stereo line out","Headphones"};setRow(r,names[at],at<2?String((at==0)==(g_settings.outRoute==OUT_BT)?"Selected":""):String("Hardware path pending"),false,at>=2);break;}
     case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):String(),at==3);break;}
@@ -251,7 +255,9 @@ void playerTick(uint32_t now){
     ui_text(busy?String("Seeking..."):ui_time(pos),12,barY+16,ML_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);
     ui_text(String("-")+ui_time(duration>pos?duration-pos:0,duration>0),tft.width()-12,barY+16,MR_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);}
   int connection=g_settings.outRoute==OUT_BT?(bt_connected()?2:1):0;
-  if(connection!=shownConnection){shownConnection=connection;header();footer();}
+  static uint16_t shownSleep=UINT16_MAX;
+  const uint16_t remaining=sleep_remainingMinutes(now);
+  if(connection!=shownConnection||remaining!=shownSleep){shownSleep=remaining;shownConnection=connection;header();footer();}
 }
 // Five rows of 40 px keys, with a 44 px action bar. No title list in RAM.
 const char* keyLetters(){return digitKeys?"0123456789":tft.height()<300?(lettersSecond?"qrstuvwxyz":"abcdefghijklmnop"):"abcdefghijklmnopqrstuvwxyz";}
@@ -314,6 +320,7 @@ void leave(){
   if(page().mode!=Mode::Search&&page().mode!=Mode::Keyboard)storage_searchCancel();
 }
 void tick(uint32_t now){
+  screenNow=now;
   if(savePending&&int32_t(now-saveAt)>=0)flushSettings();
   if(now-lastStatus>=1000){
     lastStatus=now;char error[48];int track=-1;
@@ -380,7 +387,10 @@ void activate(int at){
     case Mode::Settings:
       if(at==0)show(Mode::Output);else if(at==1)external(SCR_BLUETOOTH);else if(at==2)show(Mode::Playback);else if(at==3)show(Mode::Display);
       else if(at==4)show(Mode::Refresh);else if(at==5)external(SCR_SETUP);else show(Mode::About);break;
-    case Mode::Playback:if(at==0)cycleShuffle();else cycleRepeat();break;
+    case Mode::Playback:
+      if(at==0)cycleShuffle();else if(at==1)cycleRepeat();
+      else if(at==2){g_settings.screenTimeout=(g_settings.screenTimeout+1)%4;settings_save();invalidate();}
+      else {sleep_setTimer((g_settings.sleepTimer+1)%5,screenNow);settings_save();invalidate();}break;
     case Mode::Display:
       if(at<2){g_settings.brightness=constrain(int(g_settings.brightness)+(at?10:-10),10,100);display_setBacklight(g_settings.brightness);settings_save();invalidate();}
       else if(at==2){g_settings.rotation=(g_settings.rotation&2)?0:2;display_setRotation(g_settings.rotation);settings_save();enter();}

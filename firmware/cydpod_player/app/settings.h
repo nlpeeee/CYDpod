@@ -48,6 +48,8 @@ struct Settings {
   uint8_t  lang       = LANG_EN;
 
   // Player
+  uint8_t  screenTimeout = 2;             // Off / 30 s / 1 min / 5 min; dim halfway
+  uint8_t  sleepTimer = 0;                  // Off / 15 / 30 / 60 / 90 minutes
   uint8_t  volume     = 40;                 // 0-100
   // Where the sound comes out: OUT_SPEAKER / OUT_BT (speaker.h). The on-board
   // speaker by default, so a board that has never been paired makes a noise.

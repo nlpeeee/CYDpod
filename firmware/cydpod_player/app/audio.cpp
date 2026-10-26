@@ -39,6 +39,7 @@ static volatile bool decodeBlocked = false; // seek I/O failure: retain track/qu
 static inline bool requestPending() { return reqTrack >= 0 || reqSeekMs >= 0; }
 static volatile bool     playing   = true;
 static volatile uint8_t  volumePct = 40;
+static volatile uint8_t sleepGain=100;
 
 static volatile int      curTrack  = 0;
 static volatile uint32_t posBaseMs = 0;       // where in the track the ring started
@@ -86,7 +87,7 @@ void audio_pull(int16_t* out, int32_t frames) {
   portENTER_CRITICAL(&stateLock);
   int32_t i = 0;
   if (playing && !seeking) {
-    const int32_t gain = (int32_t)volumePct * volumePct;   // perceptual-ish, /10000
+    const int32_t gain = (int32_t)volumePct * volumePct * sleepGain / 100;   // perceptual-ish, /10000
     uint32_t tail = rbTail;
     const int32_t n = min<int32_t>(frames, (rbHead - tail) & (RB_FRAMES - 1));
     for (; i < n; i++) {
@@ -447,6 +448,7 @@ void audio_togglePause() {
 }
 void audio_setVolume(uint8_t p) { volumePct = min<uint8_t>(p, 100);Serial.printf("cmd: volume %u executed\n",unsigned(volumePct)); }
 
+void audio_setSleepGain(uint8_t percent){sleepGain=min<uint8_t>(percent,100);}
 bool audio_canSeek() { return canSeek && durationMs && reqTrack < 0; }
 bool audio_isSeeking() { return seeking; }
 bool audio_seekTo(uint32_t ms) {

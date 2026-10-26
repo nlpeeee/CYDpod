@@ -39,6 +39,7 @@
 #include "firmware.h"
 #include "catalog.h"
 #include "classic_screen.h"
+#include "sleep_mode.h"
 #include <esp_system.h>
 
 // The loop task (which also runs setup: calibration, title rendering) measured
@@ -268,7 +269,7 @@ void loop() {
   const TouchEvent ev = touch_poll(&x, &y);
   // A drag is routed like any other gesture -- ui_touch() swallows it -- even
   // when it ran long enough to read as the recalibrate hold.
-  if (ev == TOUCH_RECALIBRATE && !ui_pressClaimed()) {
+  if (ev == TOUCH_RECALIBRATE && !ui_pressClaimed() && !sleep_touchBlocked()) {
     calibrate_run();
     ui_redraw();
   } else if (ev != TOUCH_NONE) {

@@ -2,6 +2,7 @@
 #include "display.h"
 #include "theme.h"
 #include "titles.h"
+#include "sleep_mode.h"
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -697,18 +698,22 @@ static bool syncPress() {
 
 bool ui_pressClaimed() { return pressDown && pressClaimed; }
 
+static uint32_t uiNow=0;
 void ui_tick(uint32_t now) {
+  uiNow=now;sleep_tick(now,touch_isDown());
   if (!entered) return;
   // touch_poll() ran first this loop. If it saw a release that made an event,
   // ui_touch() has already synced; here we catch releases that made none.
-  syncPress();
+  if(!sleep_touchBlocked())syncPress();
+  if(sleep_screenOff())return;
   if (overlay == OV_TOAST && (int32_t)(now - toastUntil) >= 0) closeOverlay();
   if (overlay != OV_NONE) return;        // nothing may paint over an overlay
   if (SCREENS[current]->tick) SCREENS[current]->tick(now);
 }
 
 void ui_touch(TouchEvent ev, int x, int y) {
-  if (!entered) return;
+  sleep_tick(uiNow,touch_isDown());
+  if (!entered||sleep_touchBlocked()) return;
   // Restore whatever the press lit BEFORE the event runs: the event may move
   // to another screen, which must not then be drawn over.
   if (syncPress()) return;

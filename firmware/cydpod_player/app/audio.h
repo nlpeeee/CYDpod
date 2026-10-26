@@ -78,3 +78,6 @@ uint32_t audio_decodeStackFree();
 
 struct AudioCommands {int track;int32_t seekMs;uint32_t serial;bool opening,seeking,blocked;};
 AudioCommands audio_commands();
+
+// Temporary timer fade multiplier; does not alter or persist user volume.
+void audio_setSleepGain(uint8_t percent);

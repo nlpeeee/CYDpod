@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "sleep_mode.h"
 #include "display.h"
 #include "classic_screen.h"
 #include "settings.h"
@@ -19,7 +20,8 @@ TFT_eSPI tft;
 Settings g_settings;
 static int current=0,calls=0,volume=32,queueLength=0;
 static uint32_t serial=0,clockNow=0,lastSeek=0;
-static int seekCalls=0,relativeSeek=0;
+static int seekCalls=0,relativeSeek=0,backlight=100,fadeGain=100;
+void audio_setSleepGain(uint8_t p){fadeGain=p;}
 static bool seekAllowed=true;
 static bool playing=false,shuffle=false,down=false,routeAllowed=true;
 static uint8_t repeatMode=0;
@@ -53,7 +55,7 @@ bool bt_connected(){return true;}
 bool speaker_setRoute(uint8_t){return routeAllowed;}
 bool calibrate_run(){return true;}
 void display_setRotation(uint8_t r){tft.setRotation(r);}
-void display_setBacklight(uint8_t){}
+void display_setBacklight(uint8_t p){backlight=p;}
 void bg_stop(){}
 bool touch_isDown(){return down;}
 void touch_position(int& x,int& y){x=tx;y=ty;}
@@ -74,7 +76,7 @@ static void tap(int x,int y){tx=x;ty=y;down=true;ui_tick(clockNow+=130);down=fal
 static bool label(const char* s){return std::find(tft.labels.begin(),tft.labels.end(),s)!=tft.labels.end();}
 static void snapshot(const char* path){tft.save(path);}
 int main(){try{
-  g_settings.theme=8;g_settings.style=7;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
+  g_settings.screenTimeout=0;g_settings.theme=8;g_settings.style=7;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
   SD.root=std::filesystem::current_path()/("ui-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::create_directories(SD.root/"music/Example");
   std::ifstream input("metadata-real.m4a",std::ios::binary);std::vector<char> original((std::istreambuf_iterator<char>(input)),{});
@@ -144,6 +146,24 @@ int main(){try{
   tap(80,66);tft.setRotation(1);ui_redraw();pump();
   tap(150,176);check(label("q")&&label("z"),"landscape alphabet second page");snapshot("ui-search-landscape.svg");
   tft.setRotation(0);ui_redraw();pump();
-  std::cout<<"PASS CY-50 search UI: keyboard, incremental results, queue commit, landscape and large targets\n";
+  classic_home();ui_go(SCR_CLASSIC);pump();tap(80,198);tap(80,154);check(label("Screen timeout")&&label("Sleep timer"),"Playback exposes both sleep settings");snapshot("ui-playback-sleep.svg");
+  tap(80,154);check(g_settings.screenTimeout==1,"screen timeout cycles and persists setting");
+  tap(80,198);check(g_settings.sleepTimer==1,"sleep timer cycles setting");sleep_setTimer(0,clockNow);
+  classic_home();ui_go(SCR_CLASSIC);pump();tap(80,110);playing=true;
+  g_settings.screenTimeout=2;sleep_begin(clockNow);
+  ui_tick(clockNow+=29999);check(backlight==100&&playing,"screen awake before default dim deadline");
+  ui_tick(++clockNow);check(backlight==20&&playing,"default dim at 30 seconds preserves playback");
+  ui_tick(clockNow+=30000);check(backlight==0&&playing,"default screen off at 60 seconds preserves playback");
+  tx=120;ty=246;down=true;ui_tick(++clockNow);check(backlight==100&&sleep_touchBlocked(),"touch wakes screen and is claimed");
+  down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(playing,"wake touch does not pause");
+  tap(120,246);check(!playing,"next touch operates transport");
+  playing=true;const int savedVolume=volume;sleep_setTimer(1,clockNow);
+  ui_tick(clockNow+=900000);check(fadeGain==100&&playing,"sleep fade starts at 15 minutes");
+  ui_tick(clockNow+=1500);check(fadeGain==50&&playing,"three-second fade midpoint");
+  ui_tick(clockNow+=1500);check(!playing&&backlight==0&&volume==savedVolume&&fadeGain==100&&!sleep_remainingMinutes(clockNow),"timer pauses, restores user gain, turns screen off and disarms");
+  sleep_tick(++clockNow,true);sleep_tick(++clockNow,false);sleep_tick(++clockNow,false);
+  g_settings.screenTimeout=0;ui_tick(clockNow+=600000);check(backlight==100,"Off disables screen timeout");
+  g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
+  std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL firmware UI: "<<e.what()<<"\n";return 1;}}

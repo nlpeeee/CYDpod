@@ -7,6 +7,7 @@
 #define FILE_APPEND "a"
 inline int64_t hostWriteBudget=-1;
 inline int64_t hostReadBudget=-1;
+inline bool hostReadOnly=false;  // write-protected card: mkdir, remove, rename and any non-read open fail
 class File {
   struct Handle {
     FILE* file=nullptr;std::filesystem::path path;std::string name;
@@ -42,10 +43,10 @@ class File {
 };
 struct HostSD {
   std::filesystem::path root;
-  File open(const String& p,const char* mode="r"){return File(root/std::filesystem::path(p.c_str()).relative_path(),mode);}
+  File open(const String& p,const char* mode="r"){if(hostReadOnly&&strcmp(mode,"r"))return File();return File(root/std::filesystem::path(p.c_str()).relative_path(),mode);}
   bool exists(const String& p){return std::filesystem::exists(root/std::filesystem::path(p.c_str()).relative_path());}
-  bool mkdir(const String& p){return std::filesystem::create_directories(root/std::filesystem::path(p.c_str()).relative_path());}
-  bool remove(const String& p){return std::filesystem::remove(root/std::filesystem::path(p.c_str()).relative_path());}
-  bool rename(const String& a,const String& b){std::error_code e;std::filesystem::rename(root/std::filesystem::path(a.c_str()).relative_path(),root/std::filesystem::path(b.c_str()).relative_path(),e);return !e;}
+  bool mkdir(const String& p){if(hostReadOnly)return false;return std::filesystem::create_directories(root/std::filesystem::path(p.c_str()).relative_path());}
+  bool remove(const String& p){if(hostReadOnly)return false;return std::filesystem::remove(root/std::filesystem::path(p.c_str()).relative_path());}
+  bool rename(const String& a,const String& b){if(hostReadOnly)return false;std::error_code e;std::filesystem::rename(root/std::filesystem::path(a.c_str()).relative_path(),root/std::filesystem::path(b.c_str()).relative_path(),e);return !e;}
 };
 inline HostSD SD;

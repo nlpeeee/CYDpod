@@ -28,6 +28,7 @@ static const char* reportPhase="";
 static void report(int done,int total){if(reportFn)reportFn(reportPhase,done,total);}
 static void phase(const char* name){reportPhase=name;report(0,-1);}
 static void breathe(){delay(1);}
+static bool readOnly=false;  // card mounted but a folder could not be created: never write (CT-07)
 static int skipped=0;  // files left out of the catalogue: path too long or over MaxTracks
 // Shared boot scratch, not a whole-library cache.
 static Record work[2];
@@ -251,7 +252,8 @@ bool storage_mount(){
   bool ok=SD.begin(CYD_SD_CS_PIN,sdSPI,20000000,"/sd",8);
   if(!ok){SD.end();ok=SD.begin(CYD_SD_CS_PIN,sdSPI,4000000,"/sd",8);}if(!ok)return false;
 #endif
-  for(const char* d:{"/music","/bg","/playlists","/.sys"})if(!SD.exists(d)&&!SD.mkdir(d))return false;
+  readOnly=false;
+  for(const char* d:{"/music","/bg","/playlists","/.sys"})if(!SD.exists(d)&&!SD.mkdir(d))readOnly=true;
   return true;
 }
 bool storage_begin(StorageProgressFn progress){
@@ -264,11 +266,13 @@ bool storage_begin(StorageProgressFn progress){
   scanned=0;scanCrc=0;scanOk=true;skipped=0;scanDir("/music",0,nullptr,nullptr);
   // CT-04: the marker has done its job once this boot has read it. Removing it before
   // the build means a build that keeps failing cannot repeat on every boot.
-  const bool force=SD.exists(REFRESH);if(force)SD.remove(REFRESH);
+  const bool force=SD.exists(REFRESH);if(force&&!readOnly)SD.remove(REFRESH);
   if(!scanOk){stale=true;Serial.println("catalog: Library stale: cannot read /music, previous catalogue kept");return true;}
   if(skipped)Serial.printf("catalog: skipped %d\n",skipped);
   plannedTracks=scanned;
   if(active>=0&&!force&&scanCrc==header.signature&&scanned==header.tracks)return true;
+  if(readOnly){  // CT-07: nothing may be written, so keep whatever catalogue there is
+    stale=true;Serial.println("catalog: SD card is read-only, no rebuild; Library stale");return true;}
   const int target=active==0?1:0;const uint32_t generation=header.generation+1;
   Header candidate{};
   if(buildCatalog(target,scanCrc,generation,progress,candidate)){active=target;header=candidate;rebuilt=true;}
@@ -283,7 +287,8 @@ bool storage_catalogReady(){return active>=0;}
 bool storage_catalogStale(){return stale;}
 bool storage_catalogRebuilt(){return rebuilt;}
 int storage_skippedCount(){return skipped;}
-bool storage_refreshNextBoot(){File f=SD.open(REFRESH,FILE_WRITE);if(!f)return false;bool ok=f.print("refresh\n")>0;f.close();return ok;}
+bool storage_readOnly(){return readOnly;}
+bool storage_refreshNextBoot(){if(readOnly)return false;File f=SD.open(REFRESH,FILE_WRITE);if(!f)return false;bool ok=f.print("refresh\n")>0;f.close();return ok;}
 
 // The *Locked helpers need `mutex`; their results are valid until it is released.
 static uint32_t recordAt(int i){return sizeof(Header)+uint32_t(i)*sizeof(Record);}

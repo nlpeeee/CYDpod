@@ -97,6 +97,11 @@ int main(){try{
   put("music/B/new.m4a",tagged("A new song","Artist B","Greatest Hits",3));check(storage_begin(progressSeen)&&storage_catalogRebuilt()&&storage_trackCount()==8,"new file triggers rebuild");
   {const std::vector<std::string> want={"Reading song tags","Preparing to sort","Sorting songs","Sorting artists","Sorting albums","Grouping artists","Grouping albums","Finishing","Checking library"};
    check(phasesSeen==want,"progress names every rebuild phase (CT-03)");}
+  // CT-07: a card that mounts but cannot create a folder is used read-only.
+  std::filesystem::remove_all(SD.root/"bg");put("music/B/readonly.m4a",tagged("Added while read-only","Artist B","Greatest Hits",4));
+  hostReadOnly=true;check(storage_begin(nullptr)&&storage_readOnly()&&storage_catalogReady()&&storage_trackCount()==8&&!storage_catalogRebuilt()&&storage_catalogStale(),"read-only card keeps the existing catalogue (CT-07)");
+  check(!storage_refreshNextBoot(),"no refresh marker on a read-only card");hostReadOnly=false;
+  std::filesystem::remove(SD.root/"music/B/readonly.m4a");check(storage_begin(nullptr)&&!storage_readOnly()&&!storage_catalogRebuilt()&&!storage_catalogStale(),"writable again after the card recovers");
   check(!storage_browseEntry(songs,-1,e)&&!storage_browseEntry(songs,2000,e),"range checks");
   check(storage_browseTracks(songs,ids,1)==0,"queue capacity guarded");
   playlist_begin();check(playlist_playView(songs,0),"play catalogue selection");

@@ -25,6 +25,7 @@
 typedef void (*StorageProgressFn)(const char* phase, int done, int total);
 
 bool storage_mount();                              // card + folders only; false if no card
+bool storage_readOnly();                           // mounted, but a folder could not be created: write nothing
 bool storage_begin(StorageProgressFn progress);   // mount, then scan and index /music
 
 int      storage_trackCount();

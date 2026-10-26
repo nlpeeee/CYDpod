@@ -102,6 +102,10 @@ static void loadFavourites() {
 
 // List every folder and playlist into the sources file.
 static void scanSources() {
+  if (storage_readOnly()) {                       // CT-07: sources.txt cannot be written
+    sourceCount = FIXED; folderSources = playlistSources = 0; namesCrc = 0;
+    return;
+  }
   std::vector<String> dirs;
   folders = &dirs;
   storage_forEach(collectFolders);

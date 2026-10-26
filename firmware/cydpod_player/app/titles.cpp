@@ -135,6 +135,7 @@ static void renderMissing(const char* text) {
   if(renderingProgress) renderingProgress(++renderedCount,missingCount);
 }
 bool titles_prepareAll(TitleProgressFn progress) {
+  if (storage_readOnly()) return true;           // CT-07: strips already on the card still load
   if (!SD.exists(STRIP_DIR)) SD.mkdir(STRIP_DIR);
   if (upToDate()) return true;
   missingCount=renderedCount=failedCount=0;

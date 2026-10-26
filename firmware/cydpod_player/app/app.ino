@@ -167,8 +167,9 @@ void setup() {
 
 #ifdef CYD_UPLOADER
   // The uploader image: WiFi file manager only. Does not return.
-  while (!storage_mount()) {
-    centreMessage("No SD card", "insert a FAT32 card", theme().warn);
+  while (!storage_mount() || storage_readOnly()) {
+    centreMessage(storage_readOnly() ? "SD card is read-only" : "No SD card",
+                  storage_readOnly() ? "the uploader needs a writable card" : "insert a FAT32 card", theme().warn);
     delay(2000);
   }
   uploadmode_run();
@@ -180,6 +181,16 @@ void loop() {}
 
   while (!storage_begin(libraryProgress)) {
     centreMessage("No SD card", "insert a FAT32 card with /music", theme().warn);
+    delay(2000);
+  }
+
+  // A card that mounts but cannot be written (CT-07), or a rebuild that failed (CT-04):
+  // say so for a moment, then carry on with whatever catalogue there is.
+  if (storage_readOnly()) {
+    centreMessage("SD card is read-only", "library may be out of date", theme().warn);
+    delay(2500);
+  } else if (storage_catalogStale()) {
+    centreMessage("Library stale", "using the previous list", theme().warn);
     delay(2000);
   }
 

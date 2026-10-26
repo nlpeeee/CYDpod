@@ -11,6 +11,7 @@
 #include <algorithm>
 
 static const char* SOURCES_PATH = "/.sys/sources.txt";
+static const char* SOURCE_OFFSETS = "/.sys/sources.idx";
 static const char* FAV_PATH     = "/.sys/fav.txt";
 static const char* FAV_TMP      = "/.sys/fav.tmp";
 static const char* M3U_DIR      = "/playlists";
@@ -21,6 +22,7 @@ static const int   MAX_M3U      = 1000;       // entries read from one playlist
 static uint16_t* queue = nullptr;             // library indices, list order
 static int       queueCap = 0;
 static int       sourceCount = FIXED;
+static int       folderSources = 0, playlistSources = 0;
 static int       current = 0;
 static uint32_t  namesCrc = 0;
 static std::vector<uint32_t> favs;            // sorted path keys
@@ -39,10 +41,15 @@ static bool isFav(uint32_t key) { return std::binary_search(favs.begin(), favs.e
 // ---------------------------------------------------------------------------
 static bool readSource(int i, SourceKind& kind, String& name, String& path) {
   if (i < FIXED || i >= sourceCount) return false;
+  File index = SD.open(SOURCE_OFFSETS);
+  uint32_t offset = 0;
+  const bool found = index && index.seek((i-FIXED)*sizeof(offset)) && index.read((uint8_t*)&offset,sizeof(offset)) == sizeof(offset);
+  index.close();
+  if (!found) return false;
   File f = SD.open(SOURCES_PATH);
   if (!f) return false;
-  String line;
-  for (int n = 0; n <= i - FIXED && f.available(); n++) line = f.readStringUntil('\n');
+  if (!f.seek(offset)) { f.close(); return false; }
+  String line = f.readStringUntil('\n');
   f.close();
   const int a = line.indexOf('\t'), b = a < 0 ? -1 : line.indexOf('\t', a + 1);
   if (b < 0) return false;
@@ -113,19 +120,29 @@ static void scanSources() {
   std::sort(lists.begin(), lists.end());
 
   SD.remove(SOURCES_PATH);
+  SD.remove(SOURCE_OFFSETS);
   File out = SD.open(SOURCES_PATH, FILE_WRITE);
+  File index = SD.open(SOURCE_OFFSETS, FILE_WRITE);
   namesCrc = 0;
   sourceCount = FIXED;
-  if (out) {
+  folderSources = playlistSources = 0;
+  bool sourcesOk = bool(out) && bool(index);
+  if (out && index) {
     auto put = [&](SourceKind kind, const String& name, const String& path) {
-      out.printf("%u\t%s\t%s\n", kind, name.c_str(), path.c_str());
+      if (!sourcesOk) return;
+      const uint32_t offset = out.position();
+      if (!out.printf("%u\t%s\t%s\n", kind, name.c_str(), path.c_str()) ||
+          index.write((const uint8_t*)&offset,sizeof(offset)) != sizeof(offset)) { sourcesOk = false; return; }
       namesCrc = esp_rom_crc32_le(namesCrc, (const uint8_t*)name.c_str(), name.length());
       sourceCount++;
+      if (kind == SRC_FOLDER) ++folderSources; else ++playlistSources;
     };
     for (const String& dir : dirs) put(SRC_FOLDER, dir, "/music/" + dir);
     for (const String& p : lists) put(SRC_M3U, baseName(p), p);
     out.close();
   }
+  index.close();
+  if (!sourcesOk) { sourceCount = FIXED; folderSources = playlistSources = 0; }
   Serial.printf("playlist: %u folders, %u playlists, %u favourites\n", (unsigned)dirs.size(),
                 (unsigned)lists.size(), (unsigned)favs.size());
 }
@@ -259,6 +276,11 @@ static void remember(int i) {
 // Public
 // ---------------------------------------------------------------------------
 int        playlist_count()   { return sourceCount; }
+int        playlist_sourceCount(SourceKind kind) { return kind == SRC_FOLDER ? folderSources : kind == SRC_M3U ? playlistSources : 0; }
+int        playlist_sourceAt(SourceKind kind, int row) {
+  if (row < 0 || row >= playlist_sourceCount(kind)) return -1;
+  return FIXED + (kind == SRC_M3U ? folderSources : 0) + row;
+}
 int        playlist_current() { return current; }
 
 SourceKind playlist_kind(int i) {
@@ -276,6 +298,12 @@ String playlist_name(int i) {
 }
 
 void playlist_restore(int resumeTrack) {
+  if (g_settings.srcKind == SRC_CATALOG && g_settings.catalogCrc == storage_libraryCrc() &&
+      g_settings.catalogKind <= uint8_t(CatalogKind::ArtistAlbumSongs)) {
+    CatalogView view{CatalogKind(g_settings.catalogKind), g_settings.catalogGroup};
+    const int n = storage_browseTracks(view, queue, queueCap);
+    if (n > 0) { current = -1; audio_setQueue(queue, n, resumeTrack, false); return; }
+  }
   int found = 0;
   if (g_settings.srcKind == SRC_FAVOURITES) found = 1;
   else if (g_settings.srcKind != SRC_ALL) {
@@ -306,6 +334,46 @@ bool playlist_select(int i) {
   audio_setQueue(identity ? nullptr : queue, n, audio_currentTrack(), true);
   settings_save();
   return true;
+}
+
+int playlist_preview(int source, uint16_t* tracks, int capacity) {
+  if (!tracks || source < 0 || source >= sourceCount || capacity < queueCap) return 0;
+  // build() is UI-task-only. Its destination is temporarily caller-owned.
+  uint16_t* live = queue;
+  queue = tracks;
+  bool identity = false;
+  const int n = build(source, &identity);
+  queue = live;
+  if (identity) for (int j = 0; j < n; ++j) tracks[j] = j;
+  return n;
+}
+
+bool playlist_playTracks(const uint16_t* tracks, int n, int row, int source) {
+  if (!audio_ready() || !queue || !tracks || n <= 0 || n > queueCap || row < 0 || row >= n) return false;
+  for (int j = 0; j < n; ++j) if (tracks[j] >= storage_trackCount()) return false;
+  const int selected = tracks[row];
+  memcpy(queue, tracks, n * sizeof(uint16_t));
+  if (source >= 0) remember(source);
+  else { current = -1; g_settings.srcKind = SRC_CATALOG; }
+  audio_setQueue(queue, n, selected, false);
+  audio_playTrack(selected);
+  return true;
+}
+
+bool playlist_playView(CatalogView view, int row) {
+  const int n = storage_browseCount(view);
+  if (n <= 0 || n > queueCap || row < 0 || row >= n) return false;
+  if (!catalog_canAllocate(n * sizeof(uint16_t))) return false;
+  uint16_t* staged = (uint16_t*)malloc(n * sizeof(uint16_t));
+  if (!staged) return false;
+  const int got = storage_browseTracks(view, staged, n);
+  const bool ok = got == n && playlist_playTracks(staged, n, row, -1);
+  free(staged);
+  if (ok) {
+    g_settings.catalogKind = uint8_t(view.kind); g_settings.catalogGroup = view.group;
+    g_settings.catalogCrc = storage_libraryCrc(); settings_save();
+  }
+  return ok;
 }
 
 bool playlist_isFavourite(int track) {

@@ -2,7 +2,11 @@
 
 A CYD music player project for the original ESP32-2432S028 family, built around existing firmware and libraries. Required media is **AAC-LC, 44,100 Hz, stereo**. Required outputs are **AirPods Pro 2 over Bluetooth** and **external stereo DAC line/headphone output over I2S**.
 
-Development is at the reproducible-build and minimal audio-probe stage. The touchscreen product integration follows successful audio tests on the actual CYD. No actual AirPods, wired output or battery result is claimed yet.
+The maintained player now implements a portrait classic iPod-inspired touch UI
+with Artist/Album/Song browsing from a cached SD catalogue. Build and host UI
+tests are available; actual AirPods, external stereo output, device memory/touch
+performance and battery qualification remain pending. See the
+[implementation evidence and limits](docs/research/classic-touch-ui-implementation.md).
 
 ## Build on Windows
 
@@ -13,7 +17,7 @@ powershell -File tools/setup.ps1
 powershell -File tools/check.ps1
 ```
 
-The check compiles the vendored stock player, its separate uploader and the CYDpod AAC probe. It never uploads, erases, opens a serial monitor or chooses a COM port. Build logs and images are generated under ignored `.tools/`; dependencies are under ignored `.deps/`. Exact versions, hashes, the provisional board profile and app-slot sizes are in [dependencies.lock.json](dependencies.lock.json).
+The check compiles the stock player/uploader, maintained CYDpod player and AAC probe, and runs catalogue, firmware UI and media host checks. It never uploads, erases, opens a serial monitor or chooses a COM port. Build logs and images are generated under ignored `.tools/`; dependencies are under ignored `.deps/`. Exact versions, hashes, the provisional board profile and app-slot sizes are in [dependencies.lock.json](dependencies.lock.json).
 
 Host verification additionally requires FFmpeg/ffprobe and installed Visual Studio C++ Build Tools:
 

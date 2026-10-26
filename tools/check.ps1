@@ -166,6 +166,8 @@ try {
     }
     $results | ConvertTo-Json | Set-Content .tools/logs/build-results.json
     if (!$SkipHostMedia) {
+        & cmd.exe /d /c tests\build_catalog.cmd
+        if ($LASTEXITCODE -ne 0) { throw 'Catalogue/navigation host checks failed.' }
         if (!(Test-Path tools/media_check.py)) { throw 'Required host media check is missing.' }
         & python tools/media_check.py
         if ($LASTEXITCODE -ne 0) { throw 'Host media checks failed. See output above.' }

@@ -19,6 +19,9 @@
 #include <Arduino.h>
 
 void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle, uint8_t repeat);
+// Starts paused. Allocation/task failures are recoverable UI errors.
+bool audio_ready();
+uint32_t audio_error(char* message, size_t capacity, int* track = nullptr);
 
 // Call from loop(): moves on when a track ends, following shuffle and repeat.
 void audio_tick();

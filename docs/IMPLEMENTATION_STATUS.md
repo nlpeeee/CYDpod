@@ -1,12 +1,37 @@
 # CYDpod implementation checkpoint
 
-Updated: 2026-10-23. The user approved proceeding with the researched plan.
+Updated: 2026-10-25. The user approved portrait Classic Touch and required
+Artist/Album/Song browsing, then authorized implementation while AFK.
+
+## Current UI checkpoint
+
+Implemented in the current `cydpod/miniaac` checkout: portrait Home/Music/Now
+Playing, touch/drag/page navigation, Artist/Album/Song views, independent source
+previews and queue commits, volume/options/settings, track-path persistence and
+recoverable two-generation SD catalogue refresh. Existing display/touch/audio/
+Bluetooth services and pinned vendor inputs are retained. See
+[implementation evidence](research/classic-touch-ui-implementation.md) and
+[the UI specification](specs/classic-touch-ui-plan.md).
+
+The repository check passes, including the actual maintained UI/catalogue code,
+1,000 tracks, metadata/grouping, recovery and queue/input host tests. Final output
+is `.tools/logs/classic-touch-final-check.txt`. No device/serial operation was
+performed by this UI implementation task.
+
+Hardware qualification remains open: actual AirPods Pro 2, external stereo
+line/headphone output and integrated UI playback/memory/touch measurements.
+Artwork and M4A seeking/position resume are not implemented. The stock uploader
+remains MP3-only; load AAC through the SD card. Build artifacts do not establish
+the firmware currently installed on the device.
+
+The bootstrap details below are historical. Consult newer CY-13c/CY-33 reports
+before hardware work. No historical dispatch lifecycle was changed in this task.
 
 ## Required result
 
 Owned ESP32-2432S028 CYD playing AAC-LC at 44,100 Hz, two channels, from SD to actual AirPods Pro 2 or a selectable external stereo I2S DAC with line/headphone output. Preserve the original music files. Full scope and acceptance are in [the specification](specs/cydpod-plan.md).
 
-## Current work
+## Historical bootstrap work (2026-10-23)
 
 Implementation is on local branch `cydpod/bootstrap`. No hardware has been flashed or reset. No upstream branch has been pushed. There is no verified DAC harness or battery wiring yet.
 
@@ -22,14 +47,14 @@ Close-out 2026-10-23: the C1 and C2/C4 worker terminals had exited (`worker-show
 
 The coordinator owns root README/status/specification and orchestration. Future reviewers report findings without editing implementation workers' files. Workers must not flash devices or mutate Git state in these assignments.
 
-## Hardware and media inputs still needed
+## Historical intake list (superseded by newer device/media reports)
 
 - Exact board display/touch revision and flash/PSRAM observations.
 - Which serial port is the CYD. Initial discovery found only COM8 with FTDI identity; that is **not** an identification of the CYD. Do not flash it by assumption.
 - A user-selected local folder with representative AAC originals, or equivalent supplied files. No music folders have been searched. Until then, test generated synthetic AAC fixtures and label them as such.
 - Actual wired headphone/load and DAC/amp module choice. GPIO22/27/17 is provisional; GPIO17 may need a verified solder pickup and LED isolation.
 
-## Current evidence
+## Historical bootstrap evidence
 
 Planning/research/review checks passed; see [planning validation](research/planning-validation.md). Helix supports AAC-LC/stereo, but combined CYD memory/timing, actual containers and AirPods interoperability still need executable evidence. Compile success does not pass those hardware gates.
 

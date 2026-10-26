@@ -20,8 +20,9 @@
 #pragma once
 
 #include <Arduino.h>
+#include "catalog.h"
 
-enum SourceKind : uint8_t { SRC_ALL = 0, SRC_FAVOURITES = 1, SRC_FOLDER = 2, SRC_M3U = 3 };
+enum SourceKind : uint8_t { SRC_ALL = 0, SRC_FAVOURITES = 1, SRC_FOLDER = 2, SRC_M3U = 3, SRC_CATALOG = 4 };
 
 // Boot, after storage_begin() and before titles_prepareAll() (which renders
 // the names) and Bluetooth (which takes the heap the queue needs).
@@ -33,6 +34,8 @@ void playlist_begin();
 void playlist_restore(int resumeTrack);
 
 int        playlist_count();              // All + Favourites + folders + playlists
+int        playlist_sourceCount(SourceKind kind);
+int        playlist_sourceAt(SourceKind kind, int row);
 SourceKind playlist_kind(int i);
 String     playlist_name(int i);          // "" for All and Favourites: use tr()
 int        playlist_current();
@@ -41,6 +44,10 @@ int        playlist_current();
 // list, otherwise starts the list. False (and nothing changes) when the
 // source holds nothing playable.
 bool playlist_select(int i);
+// Preview writes caller-owned memory only; never changes the live queue.
+int playlist_preview(int source, uint16_t* tracks, int capacity);
+bool playlist_playTracks(const uint16_t* tracks, int count, int row, int source);
+bool playlist_playView(CatalogView view, int row);
 
 bool playlist_isFavourite(int track);
 // Star or unstar. Returns the new state; false also when the list is full.

@@ -133,7 +133,7 @@ String ui_time(uint32_t ms, bool known = true);
 // ---------------------------------------------------------------------------
 // Screens
 // ---------------------------------------------------------------------------
-enum ScreenId : uint8_t { SCR_PLAYER, SCR_SETUP, SCR_BLUETOOTH, SCR_LIBRARY, SCR_SOURCES, SCR_COUNT };
+enum ScreenId : uint8_t { SCR_PLAYER, SCR_SETUP, SCR_BLUETOOTH, SCR_LIBRARY, SCR_SOURCES, SCR_CLASSIC, SCR_COUNT };
 
 // What a finger is doing right now, for feedback while it is down. Gestures
 // (TouchEvent) are classified on release; this is everything before that.
@@ -152,6 +152,7 @@ struct Screen {
 };
 
 extern const Screen SCREEN_PLAYER, SCREEN_SETUP, SCREEN_BLUETOOTH, SCREEN_LIBRARY, SCREEN_SOURCES;
+extern const Screen SCREEN_CLASSIC;
 
 void     ui_go(ScreenId id);          // leave the current screen, enter this one
 ScreenId ui_current();

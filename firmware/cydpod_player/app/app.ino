@@ -37,6 +37,8 @@
 #include "playlist.h"
 #include "uploadmode.h"
 #include "firmware.h"
+#include "catalog.h"
+#include "classic_screen.h"
 #include <esp_system.h>
 
 // The loop task (which also runs setup: calibration, title rendering) measured
@@ -95,8 +97,10 @@ static void centreMessage(const char* line1, const char* line2, uint16_t colour)
 // boot), so start the NEXT track from its beginning instead.
 static void resumePoint(int& track, uint32_t& ms) {
   const int count = storage_trackCount();
-  const bool resumable = g_settings.lastTrack < count;
-  track = resumable ? g_settings.lastTrack : 0;
+  const int saved = g_settings.lastPath.length() ? storage_findTrack(g_settings.lastPath) :
+                    (storage_catalogRebuilt() ? -1 : int(g_settings.lastTrack));
+  const bool resumable = saved >= 0 && saved < count;
+  track = resumable ? saved : 0;
   ms = resumable ? g_settings.lastPosMs : 0;
   const esp_reset_reason_t why = esp_reset_reason();
   if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT ||
@@ -109,11 +113,11 @@ static void resumePoint(int& track, uint32_t& ms) {
 
 static void libraryProgress(int done, int total) {
   const Palette& p = theme();
-  if (done == 1) centreMessage("CYD MP3", "Reading song tags", p.accent);
+  if (done == 1) centreMessage("CYDpod", "Reading song tags", p.accent);
   tft.fillRect(0, tft.height() / 2 + 34, tft.width(), 20, p.bg);
   tft.setTextColor(p.dim, p.bg);
   tft.setTextDatum(MC_DATUM);
-  tft.drawString(String(done) + " / " + String(total), tft.width() / 2, tft.height() / 2 + 44, 2);
+  tft.drawString(total ? String(done) + " / " + String(total) : String(done) + " songs", tft.width() / 2, tft.height() / 2 + 44, 2);
 }
 
 static void titleProgress(int done, int total) {
@@ -178,7 +182,7 @@ void loop() {}
   playlist_begin();
   // Both need RAM only available before Bluetooth starts: see the header.
   titles_prepareAll(titleProgress);
-  bg_convertAll(conversionProgress);
+  // Classic Touch uses direct, bounded drawing; GIFs do not consume audio SD bandwidth.
   Serial.printf("heap before audio + bt: %u  largest %u\n",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
@@ -195,7 +199,8 @@ void loop() {}
   // on-board speaker just works, so it lands on the player.
   const bool needSpeaker = g_settings.outRoute == OUT_BT &&
                            (bt_pairingBoot() || bt_speakerName().isEmpty());
-  ui_go(needSpeaker ? SCR_BLUETOOTH : SCR_PLAYER);
+  classic_home();
+  ui_go(needSpeaker ? SCR_BLUETOOTH : SCR_CLASSIC);
 }
 
 // Keep the resume point current: at once when the track changes, every 30 s
@@ -214,6 +219,7 @@ static void persistResume(uint32_t now) {
   wasPlaying = playing;
   if (!save) return;
   g_settings.lastTrack = track;
+  g_settings.lastPath = storage_trackPath(track);
   g_settings.lastPosMs = pos;
   settings_saveResume();
   lastSave = now;

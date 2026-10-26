@@ -521,12 +521,13 @@ String ui_time(uint32_t ms, bool known) {
 
 #ifndef CYD_UPLOADER
 #include "background.h"
+#include "classic_screen.h"
 
 // ---------------------------------------------------------------------------
 // Screen switcher
 // ---------------------------------------------------------------------------
 static const Screen* SCREENS[SCR_COUNT] = { &SCREEN_PLAYER, &SCREEN_SETUP, &SCREEN_BLUETOOTH,
-                                            &SCREEN_LIBRARY, &SCREEN_SOURCES };
+                                            &SCREEN_LIBRARY, &SCREEN_SOURCES, &SCREEN_CLASSIC };
 static ScreenId current = SCR_PLAYER;
 static bool     entered = false;
 
@@ -540,6 +541,9 @@ static bool pressOrphaned = false;   // the screen changed under it: ignore it
 static int  pressX = 0, pressY = 0;
 
 void ui_go(ScreenId id) {
+  // Legacy pairing/setup screens return through the new portrait navigation.
+  if (id == SCR_PLAYER) { classic_preparePlayer(); id = SCR_CLASSIC; }
+  if (id == SCR_LIBRARY || id == SCR_SOURCES) { classic_prepareLibrary(); id = SCR_CLASSIC; }
   if (entered && SCREENS[current]->leave) SCREENS[current]->leave();
   // A screen can change from a tick (Bluetooth moves on once the speaker
   // pairs) with a finger still down. That press belonged to the old screen;

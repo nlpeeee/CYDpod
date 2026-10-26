@@ -68,6 +68,10 @@ static const Style STYLES[] = {
     /*highlight*/ false, /*bevel*/ false,
     BTN_OUTLINE, DIV_HAIRLINE, BAR_DOTS,
     /*fonts*/ 2, 2, 2, /*framePx*/ 0 },
+  { "Classic Touch", "經典觸控", 8,
+    RADIUS_SOFT, 3, 1, 0, true, false,
+    BTN_PILL, DIV_HAIRLINE, BAR_SOLID,
+    2, 2, 1, 0 },
 };
 static const int COUNT = sizeof(STYLES) / sizeof(STYLES[0]);
 

@@ -54,6 +54,7 @@ struct Settings {
   uint8_t  outRoute   = 0;                  // OUT_SPEAKER
   uint16_t lastTrack  = 0;                  // resume point: track index...
   uint32_t lastPosMs  = 0;                  // ...and position in it
+  String lastPath;                         // stable identity across catalogue rebuilds
   uint8_t  timeMode   = TIME_ELAPSED;
   bool     shuffle    = false;
   uint8_t  repeat     = REPEAT_ALL;
@@ -62,6 +63,9 @@ struct Settings {
   // a folder is added.
   uint8_t  srcKind    = 0;                  // SRC_ALL
   uint32_t srcKey     = 0;
+  uint8_t catalogKind = 2;
+  uint16_t catalogGroup = 0;
+  uint32_t catalogCrc = 0;
 
   // Background: 0 = off, N = /bg/bgN.gif
   uint8_t  bgIndex    = 1;

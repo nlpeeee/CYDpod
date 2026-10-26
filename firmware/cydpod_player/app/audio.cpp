@@ -42,6 +42,25 @@ static volatile bool     starting = false;    // opening a track: no underrun co
 static volatile uint32_t lastPullMs = 0;
 
 static TaskHandle_t decodeHandle = nullptr;
+static portMUX_TYPE errorLock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t errorSerial = 0;
+static int errorTrack = -1;
+static char errorMessage[48] = {};
+static void reportError(const char* message, int track) {
+  portENTER_CRITICAL(&errorLock);
+  snprintf(errorMessage, sizeof(errorMessage), "%s", message);
+  errorTrack = track; ++errorSerial;
+  portEXIT_CRITICAL(&errorLock);
+}
+uint32_t audio_error(char* message, size_t capacity, int* track) {
+  portENTER_CRITICAL(&errorLock);
+  if (message && capacity) snprintf(message, capacity, "%s", errorMessage);
+  if (track) *track = errorTrack;
+  const uint32_t serial = errorSerial;
+  portEXIT_CRITICAL(&errorLock);
+  return serial;
+}
+bool audio_ready() { return rb && decodeHandle; }
 
 // ---------------------------------------------------------------------------
 // Consumer
@@ -49,6 +68,7 @@ static TaskHandle_t decodeHandle = nullptr;
 static volatile int32_t maxRequest = 0;
 
 void audio_pull(int16_t* out, int32_t frames) {
+  if (!rb) { memset(out, 0, frames * 2 * sizeof(int16_t)); return; }
   lastPullMs = millis();
   if (frames > maxRequest) maxRequest = frames;
   if (flushReq) {
@@ -130,11 +150,13 @@ static bool openTrack(int index) {
   const String path = storage_trackPath(index);
   file = SD.open(path);
   if (!file) {
+    reportError("cannot_open", index);
     Serial.printf("ERR m4a cannot_open %s\n", path.c_str());
     trackSerial++;
     return false;
   }
   if (m4a.begin(file) != MINIAAC_OK) {
+    reportError(m4a.name(), index);
     Serial.printf("ERR m4a %s %s\n", m4a.name(), path.c_str());
     file.close();
     trackSerial++;
@@ -178,6 +200,7 @@ static void decodeTask(void*) {
       const M4aTrack::Pull pull = m4a.next();
       { const uint32_t took = millis() - r0; if (took > diagMaxReadMs) diagMaxReadMs = took; }
       if (pull == M4aTrack::Pull::error) {
+        reportError(m4a.name(), curTrack);
         Serial.printf("ERR m4a %s %s\n", m4a.name(), storage_trackPath(curTrack).c_str());
         closeTrack();
         failSerial++;
@@ -279,10 +302,15 @@ static void advance(bool trackFinished) {
 // Public
 // ---------------------------------------------------------------------------
 void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle, uint8_t repeat) {
+  playing = false;
   rb = (int16_t*)malloc(RB_FRAMES * 2 * sizeof(int16_t));
   orderLen = storage_trackCount();
   // Sized for the whole library: a playlist's queue is never longer.
   order = (uint16_t*)malloc(max(1, orderLen) * sizeof(uint16_t));
+  if (!rb || !order) {
+    free(rb); free(order); rb = nullptr; order = nullptr; orderLen = 0;
+    reportError("audio_memory", -1); return;
+  }
   volumePct = min<uint8_t>(volume, 100);
   shuffleOn = shuffle;
   repeatMode = repeat % REPEAT_MODE_COUNT;
@@ -292,7 +320,10 @@ void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle,
     request(startTrack, 0);
   }
   // 6 KB: MiniAAC keeps its state in the static workspace; the stack holds its locals plus the library index read.
-  xTaskCreatePinnedToCore(decodeTask, "m4adec", 6144, nullptr, 5, &decodeHandle, 1);
+  if (xTaskCreatePinnedToCore(decodeTask, "m4adec", 6144, nullptr, 5, &decodeHandle, 1) != pdPASS) {
+    free(rb); free(order); rb = nullptr; order = nullptr; orderLen = 0;
+    reportError("audio_task", -1);
+  }
 }
 
 void audio_tick() {
@@ -344,7 +375,7 @@ void audio_setShuffle(bool on) {
 }
 
 void audio_setQueue(const uint16_t* tracks, int n, int keepTrack, bool jump) {
-  if (n <= 0) return;
+  if (n <= 0 || !audio_ready()) return;
   queue = tracks;
   orderLen = min(n, storage_trackCount());
   buildOrder(shuffleOn, keepTrack);

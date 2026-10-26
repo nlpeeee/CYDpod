@@ -9,7 +9,7 @@
 #endif
 #include <SD.h>
 #include <esp_rom_crc.h>
-#include <vector>
+#include "catalog.h"
 
 // Strip file: u16 width, u8 height, u8 bits-per-pixel (2), then height rows of
 // width pixels, 2 bits each, packed MSB-first, row-major.
@@ -68,13 +68,6 @@ static bool renderOne(TFT_eSprite& spr, const String& text, const String& path) 
   return ok;
 }
 
-// Boot-time pass state, shared with the storage_forEach callback.
-static std::vector<String>* pending = nullptr;
-
-static void collectMissing(int, const String&, const String& label) {
-  if (!SD.exists(pathFor(keyFor(label)))) pending->push_back(label);
-}
-
 // A marker holding the library checksum the strips were last made for. When it
 // matches, every title already has its strip and the per-title check -- one
 // SD lookup per track -- is skipped.
@@ -114,64 +107,52 @@ static void markDone() {
   if (f) { f.print(doneStamp()); f.close(); }
 }
 
-static void collectUiText(const char* text) {
-  const String s = text;
-  if (!SD.exists(pathFor(keyFor(s)))) pending->push_back(s);
+// Stream metadata labels one at a time; no vector of all titles/artists/albums.
+static void eachLabel(void (*fn)(const char*)) {
+  storage_forEachText(fn);
+  i18n_forEachChinese(fn);
+  for (int i=0;i<theme_count();++i) fn(theme_at(i).nameZh);
+  for (int i=0;i<style_count();++i) fn(style_at(i).nameZh);
+#ifndef CYD_UPLOADER
+  playlist_forEachName(fn);
+#endif
 }
-
-// Folder and playlist names: only the ones the built-in font cannot draw.
-static void collectName(const char* text) {
-  for (const char* c = text; *c; c++)
-    if ((uint8_t)*c >= 0x80) { collectUiText(text); return; }
+static int missingCount=0,renderedCount=0,failedCount=0;
+static TFT_eSprite* renderingSprite=nullptr;
+static TitleProgressFn renderingProgress=nullptr;
+static bool nonAscii(const char* text) {
+  for(;*text;++text) if((uint8_t)*text>=0x80) return true;
+  return false;
 }
-
+static void countMissing(const char* text) {
+  if(nonAscii(text)&&!SD.exists(pathFor(keyFor(String(text))))) ++missingCount;
+}
+static void renderMissing(const char* text) {
+  if(!nonAscii(text)) return;
+  String path=pathFor(keyFor(String(text)));
+  if(SD.exists(path)) return;
+  if(!renderOne(*renderingSprite,String(text),path)) ++failedCount;
+  if(renderingProgress) renderingProgress(++renderedCount,missingCount);
+}
 bool titles_prepareAll(TitleProgressFn progress) {
   if (!SD.exists(STRIP_DIR)) SD.mkdir(STRIP_DIR);
   if (upToDate()) return true;
-
-  std::vector<String> missing;
-  pending = &missing;
-  storage_forEach(collectMissing);
-  i18n_forEachChinese(collectUiText);
-  for (int i = 0; i < theme_count(); i++) collectUiText(theme_at(i).nameZh);
-  for (int i = 0; i < style_count(); i++) collectUiText(style_at(i).nameZh);
-#ifndef CYD_UPLOADER
-  playlist_forEachName(collectName);
-#endif
-  pending = nullptr;
-  if (missing.empty()) { markDone(); return true; }
-
-  if (!SD.exists(FONT_PATH)) {
-    Serial.printf("titles: %u titles need rendering but %s is missing -- ASCII fallback\n",
-                  (unsigned)missing.size(), FONT_PATH);
+  missingCount=renderedCount=failedCount=0;
+  eachLabel(countMissing);
+  if(!missingCount){markDone();return true;}
+  if(!SD.exists(FONT_PATH)) {
+    Serial.printf("titles: %d labels need %s -- ASCII fallback\n",missingCount,FONT_PATH);
     return false;
   }
-
-  const uint32_t t0 = millis();
-  TFT_eSprite spr(&tft);
-  spr.setColorDepth(8);
-  if (!spr.createSprite(MAX_W, TITLE_STRIP_H)) {
-    Serial.println("titles: no memory for the render sprite");
-    return false;
-  }
-  spr.loadFont(FONT_NAME, SD);
-  Serial.printf("titles: font loaded, heap %u -- rendering %u titles\n",
-                ESP.getFreeHeap(), (unsigned)missing.size());
-
-  int done = 0, failed = 0;
-  for (const String& text : missing) {
-    if (!renderOne(spr, text, pathFor(keyFor(text)))) {
-      failed++;
-      Serial.printf("titles: could not write strip for \"%s\"\n", text.c_str());
-    }
-    if (progress) progress(++done, missing.size());
-  }
-  spr.unloadFont();
-  spr.deleteSprite();
-  if (!failed) markDone();
-  Serial.printf("titles: %d rendered in %lu ms, heap %u\n", done, millis() - t0,
-                ESP.getFreeHeap());
-  return true;
+  TFT_eSprite spr(&tft);spr.setColorDepth(8);
+  if(!spr.createSprite(MAX_W,TITLE_STRIP_H))return false;
+  spr.loadFont(FONT_NAME,SD);renderingSprite=&spr;renderingProgress=progress;
+  eachLabel(renderMissing);
+  renderingSprite=nullptr;renderingProgress=nullptr;
+  spr.unloadFont();spr.deleteSprite();
+  if(!failedCount)markDone();
+  Serial.printf("titles: %d rendered, %d failed\n",renderedCount,failedCount);
+  return failedCount==0;
 }
 
 // ---------------------------------------------------------------------------

@@ -11,3 +11,16 @@ Changes (CY-33):
 - Unchanged: display/touch/calibration, Bluetooth (pairing, saved devices, AVRCP), playlists, settings, speaker route, uploader mode (the uploader still only accepts `.mp3` names; the uploader image is built from `vendor/`, not from this copy).
 
 Build: `powershell -NoProfile -File tools/check.ps1` (job `cydpod-player`, image in `.tools/images/cydpod-player/`). Flash: see `docs/research/cy33-player.md`.
+
+## Classic Touch (2026-10-25)
+
+The maintained player now has a portrait Home/Music/Now Playing UI and
+Artist/Album/Song browsing from a rebuildable two-generation SD catalogue.
+M4A tag box traversal adapts the pinned MiniAAC MIT wrapper/parser; its full
+notice is retained in `app/library_core.h`, and the vendor snapshot is unchanged.
+Settings migrate once to the appended Classic Touch palette/style and portrait,
+without clearing calibration/bonds/output/volume. Boot restores the track paused.
+See [implementation and validation](../../docs/research/classic-touch-ui-implementation.md)
+for schema, input/queue behaviour, checks and hardware limitations. The CY-33
+list above is historical: metadata/UI are implemented; seeking, artwork,
+qualified AirPods and external stereo output remain pending.

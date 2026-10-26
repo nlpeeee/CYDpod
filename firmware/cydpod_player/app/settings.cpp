@@ -24,11 +24,15 @@ void settings_begin() {
   s.outRoute   = prefs.getUChar ("out",    s.outRoute) % OUT_ROUTE_COUNT;
   s.lastTrack  = prefs.getUShort("track",  s.lastTrack);
   s.lastPosMs  = prefs.getULong ("pos",    s.lastPosMs);
+  s.lastPath   = prefs.getString("lastPath", s.lastPath);
   s.timeMode   = prefs.getUChar ("timeMode", s.timeMode) % TIME_MODE_COUNT;
   s.shuffle    = prefs.getBool  ("shuffle", s.shuffle);
   s.repeat     = prefs.getUChar ("repeat", s.repeat) % REPEAT_MODE_COUNT;
   s.srcKind    = prefs.getUChar ("srcKind", s.srcKind);
   s.srcKey     = prefs.getULong ("srcKey", s.srcKey);
+  s.catalogKind = prefs.getUChar("catKind", s.catalogKind);
+  s.catalogGroup = prefs.getUShort("catGroup", s.catalogGroup);
+  s.catalogCrc = prefs.getULong("catCrc", s.catalogCrc);
   s.bgIndex    = prefs.getUChar ("bg",     s.bgIndex);
   s.btName     = prefs.getString("btName", s.btName);
   prefs.getBytes("btAddr", s.btAddr, sizeof(s.btAddr));
@@ -41,7 +45,13 @@ void settings_begin() {
   s.wifiSsid   = prefs.getString("ssid",   s.wifiSsid);
   s.wifiPass   = prefs.getString("pass",   s.wifiPass);
   s.webPin     = prefs.getString("webPin", s.webPin);
+  const bool migrateClassic = prefs.getUChar("uiRev", 0) < 1;
   prefs.end();
+  // One deliberate UI migration; calibration, bonds, output and volume survive.
+  if (migrateClassic) {
+    s.rotation = 0; s.theme = 8; s.style = 7; s.bgIndex = 0;
+    settings_save();
+  }
 
   // The WiFi password is never printed: serial logs end up in bug reports.
   Serial.printf("settings: theme %u skin %u style %u lang %u  wifi \"%s\"\n", s.theme, s.skin,
@@ -66,6 +76,10 @@ void settings_begin() {
 void settings_save() {
   const Settings& s = g_settings;
   prefs.begin(NVS_NS, false);
+  prefs.putUChar("uiRev", 1);
+  prefs.putUChar("catKind", s.catalogKind);
+  prefs.putUShort("catGroup", s.catalogGroup);
+  prefs.putULong("catCrc", s.catalogCrc);
   prefs.putUShort("panel",    s.panel);
   prefs.putBool  ("invert",   s.invert);
   prefs.putUChar ("rot",      s.rotation);
@@ -78,6 +92,7 @@ void settings_save() {
   prefs.putUChar ("out",      s.outRoute);
   prefs.putUShort("track",    s.lastTrack);
   prefs.putULong ("pos",      s.lastPosMs);
+  prefs.putString("lastPath", s.lastPath);
   prefs.putUChar ("timeMode", s.timeMode);
   prefs.putBool  ("shuffle",  s.shuffle);
   prefs.putUChar ("repeat",   s.repeat);
@@ -98,6 +113,7 @@ void settings_saveResume() {
   prefs.begin(NVS_NS, false);
   prefs.putUShort("track", g_settings.lastTrack);
   prefs.putULong ("pos",   g_settings.lastPosMs);
+  prefs.putString("lastPath", g_settings.lastPath);
   prefs.end();
 }
 

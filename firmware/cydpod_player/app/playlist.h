@@ -54,6 +54,7 @@ bool playlist_playView(CatalogView view, int row);
 bool playlist_isFavourite(int track);
 // Star or unstar. Returns the new state; false also when the list is full.
 bool playlist_toggleFavourite(int track);
+bool playlist_favouriteFailed(); // toggle returns retained state on a refused write
 bool playlist_favouritesFull();
 
 // Every folder and playlist name, for pre-rendering, and a checksum of them so

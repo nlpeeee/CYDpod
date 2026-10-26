@@ -289,7 +289,8 @@ void cycleShuffle(){audio_setShuffle(!audio_shuffle());g_settings.shuffle=audio_
 void cycleRepeat(){audio_setRepeat((audio_repeat()+1)%REPEAT_MODE_COUNT);g_settings.repeat=audio_repeat();settings_save();invalidate();}
 void activate(int at){
   const int index=at-page().top;if(index<0||index>=rows())return;Row selected=cache[index];
-  if(!selected.valid||selected.disabled)return;
+  if(!selected.valid||selected.disabled){Serial.println("cmd: row ignored (unavailable)");ui_toast("Entry unavailable. Try again.");return;}
+  Serial.printf("cmd: row %d accepted screen %u\n",at,unsigned(page().mode));
   switch(page().mode){
     case Mode::Home:
       if(at==0)show(Mode::Music);else if(at==1)show(Mode::Player);else if(at==2){
@@ -322,7 +323,9 @@ void activate(int at){
       if(at==0){
         if(storage_trackCount()){
           if(playlist_favouritesFull()&&!playlist_isFavourite(audio_currentTrack())){message("Favourites list is full.");break;}
-          playlist_toggleFavourite(audio_currentTrack());previewDirty=true;
+          playlist_toggleFavourite(audio_currentTrack());
+          if(playlist_favouriteFailed()){message("Unable to save favourite. Check SD card or memory.");break;}
+          previewDirty=true;
         }invalidate();
       }
       else if(at==1)cycleShuffle();else if(at==2)cycleRepeat();else show(Mode::Output);break;

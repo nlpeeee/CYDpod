@@ -14,6 +14,8 @@
 static const char* SOURCES_PATH = "/.sys/sources.txt";
 static const char* SOURCE_OFFSETS = "/.sys/sources.idx";
 static const char* FAV_PATH     = "/.sys/fav.txt";
+static const char* FAV_BACKUP = "/.sys/fav.bak";
+static bool favouriteFailed=false;
 static const char* FAV_TMP      = "/.sys/fav.tmp";
 static const char* M3U_DIR      = "/playlists";
 static const int   FIXED        = 2;          // All, Favourites
@@ -88,6 +90,7 @@ static String baseName(const String& path) {
 
 static void loadFavourites() {
   favs.clear();
+  if(!SD.exists(FAV_PATH)&&SD.exists(FAV_BACKUP)&&!storage_readOnly())SD.rename(FAV_BACKUP,FAV_PATH);
   File f = openSmallFile(FAV_PATH);
   if (!f) return;
   while (f.available() && (int)favs.size() < MAX_FAV) {
@@ -393,35 +396,39 @@ bool playlist_isFavourite(int track) {
 
 bool playlist_favouritesFull() { return (int)favs.size() >= MAX_FAV; }
 
+bool playlist_favouriteFailed(){return favouriteFailed;}
 bool playlist_toggleFavourite(int track) {
-  const String path = storage_trackPath(track);
-  if (path.isEmpty()) return false;
-  const uint32_t key = pathKey(path);
-  const bool was = isFav(key);
-  if (was) {
-    favs.erase(std::lower_bound(favs.begin(), favs.end(), key));
-    // Rewrite the file without it.
-    SD.remove(FAV_TMP);
-    File in = openSmallFile(FAV_PATH), out = openSmallFile(FAV_TMP, FILE_WRITE);
-    if (in && out) {
-      while (in.available()) {
-        String line = in.readStringUntil('\n');
-        line.trim();
-        if (line.length() && pathKey(line) != key) out.println(line);
-      }
-    }
-    if (in) in.close();
-    if (out) {
-      out.close();
-      SD.remove(FAV_PATH);
-      SD.rename(FAV_TMP, FAV_PATH);
-    }
-  } else {
-    if (playlist_favouritesFull()) return false;
-    favs.insert(std::upper_bound(favs.begin(), favs.end(), key), key);
-    File out = openSmallFile(FAV_PATH, FILE_APPEND);
-    if (out) { out.println(path); out.close(); }
+  favouriteFailed=false;
+  const String path=storage_trackPath(track);
+  const uint32_t key=pathKey(path);const bool was=isFav(key);
+  auto fail=[&](){favouriteFailed=true;Serial.println("cmd: favourite ignored (SD write or memory unavailable)");return was;};
+  if(path.isEmpty()||storage_readOnly()||(!was&&playlist_favouritesFull()))return fail();
+  if(!was&&favs.size()==favs.capacity()&&!catalog_canAllocate((favs.size()+1)*sizeof(uint32_t)*2))return fail();
+  // Stage both add and remove before publishing RAM state. A refused/short
+  // write used to light the favourite without ever saving it on the card.
+  SD.remove(FAV_TMP);
+  const bool existed=SD.exists(FAV_PATH);
+  File in=existed?openSmallFile(FAV_PATH):File(),out=openSmallFile(FAV_TMP,FILE_WRITE);
+  bool ok=out&&(!existed||in);
+  while(ok&&in&&in.available()){
+    const uint32_t before=in.position();
+    String line=in.readStringUntil('\n');line.trim();
+    if(in.position()<=before){ok=false;break;}
+    if(line.length()&&(!was||pathKey(line)!=key))ok=out.println(line)==line.length()+1;
   }
+  if(ok&&!was)ok=out.println(path)==path.length()+1;
+  in.close();out.close();
+  if(!ok){SD.remove(FAV_TMP);return fail();}
+  if(SD.exists(FAV_BACKUP)&&!SD.remove(FAV_BACKUP))return fail();
+  if(existed&&!SD.rename(FAV_PATH,FAV_BACKUP))return fail();
+  if(!SD.rename(FAV_TMP,FAV_PATH)){
+    if(existed)SD.rename(FAV_BACKUP,FAV_PATH);
+    return fail();
+  }
+  if(existed)SD.remove(FAV_BACKUP);
+  if(was)favs.erase(std::lower_bound(favs.begin(),favs.end(),key));
+  else favs.insert(std::upper_bound(favs.begin(),favs.end(),key),key);
+  Serial.printf("cmd: favourite %s executed\n",was?"removed":"added");
 
   // Playing from Favourites: the list follows, without cutting the song off.
   if (current == 1) {

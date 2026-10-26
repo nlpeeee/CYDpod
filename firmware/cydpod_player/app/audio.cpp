@@ -329,10 +329,12 @@ static void buildOrder(bool shuffled, int firstTrack) {
 
 static void request(int track, uint32_t startMs = 0) {
   portENTER_CRITICAL(&stateLock);
+  const int superseded=reqTrack;
   reqStartMs = startMs; seekGoalMs = startMs; reqSeekMs = -1; reqTrack = track;
   ++commandSerial; seeking = true; canSeek = false;
   const uint32_t serial=commandSerial;
   portEXIT_CRITICAL(&stateLock);
+  if(superseded>=0)Serial.printf("cmd: track %d superseded by track %d (latest wins)\n",superseded,track);
   Serial.printf("cmd: track %d queued serial %lu start %lu\n",track,(unsigned long)serial,(unsigned long)startMs);
 }
 
@@ -469,7 +471,8 @@ void audio_setShuffle(bool on) {
   Serial.printf("cmd: shuffle %s %s\n",on?"on":"off",orderLen?"executed":"ignored (empty queue)");
   if (on == shuffleOn || orderLen == 0) return;
   shuffleOn = on;
-  buildOrder(on, curTrack);
+  const int wanted=reqTrack>=0?int(reqTrack):int(curTrack);
+  buildOrder(on, wanted);
 }
 
 void audio_setQueue(const uint16_t* tracks, int n, int keepTrack, bool jump) {

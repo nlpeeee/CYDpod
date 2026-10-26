@@ -110,6 +110,12 @@ int main(){try{
   check(!storage_browseEntry(songs,-1,e)&&!storage_browseEntry(songs,2000,e),"range checks");
   check(storage_browseTracks(songs,ids,1)==0,"queue capacity guarded");
   playlist_begin();check(playlist_playView(songs,0),"play catalogue selection");
+  {File audioSlot=SD.open(storage_trackPath(currentTrack));check(bool(audioSlot),"simulate concurrent audio file");
+   hostWriteBudget=0;check(!playlist_toggleFavourite(currentTrack)&&playlist_favouriteFailed()&&!playlist_isFavourite(currentTrack),"failed favourite add leaves RAM state unchanged");hostWriteBudget=-1;
+   check(playlist_toggleFavourite(currentTrack)&&!playlist_favouriteFailed()&&playlist_isFavourite(currentTrack),"favourite add committed");
+   hostReadOnly=true;check(playlist_toggleFavourite(currentTrack)&&playlist_favouriteFailed()&&playlist_isFavourite(currentTrack),"failed favourite removal preserves RAM and old file");hostReadOnly=false;
+   check(!playlist_toggleFavourite(currentTrack)&&!playlist_favouriteFailed()&&!playlist_isFavourite(currentTrack),"favourite removal committed");
+  }
   std::vector<uint16_t> original(liveQueue,liveQueue+liveLength);int before=audioCalls;
   hostFreeHeap=12000;check(!playlist_playView(songs,0)&&playlist_memoryRefused(),"heap floor refuses staging, reported as memory (CT-08)");hostFreeHeap=64000;
   check(catalog_canAllocate(16)&&!catalog_canAllocate(60000)&&(hostFreeHeap=13000,catalog_canAllocate(16))&&(hostFreeHeap=12300,!catalog_canAllocate(16)),"floor is 12 KiB plus the staged bytes (CT-08)");hostFreeHeap=64000;

@@ -123,7 +123,7 @@ class CydSource : public BluetoothA2DPSource {
   void fixedGap(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param);
   static void dispatchGap(uint16_t event,void* p){owner->fixedGap((esp_bt_gap_cb_event_t)event,(esp_bt_gap_cb_param_t*)p);}
   void command(Command cmd,Request* p){
-    if(p){if(p->generation<accepted)return;accepted=p->generation;}
+    if(p){if(p->generation<accepted){Serial.printf("cmd: bt %u ignored (superseded)\n",unsigned(cmd));return;}accepted=p->generation;}
     if(cmd==InquiryStarted){inquiryPending=false;discovery_active=true;if(linkConnected())esp_bt_gap_cancel_discovery();}
     else if(cmd==InquiryStopped){inquiryPending=false;discovery_active=false;session.stopped();}
     else if(cmd==Pair){if(!cyd::PairingSession::any(lastPeer))memcpy(lastPeer,peer_bd_addr,6);is_autoreconnect_allowed=false;reconnect_status=NoReconnect;session.begin(p->addr,millis());}
@@ -578,7 +578,7 @@ void bt_connectKnown(int i) {
   passkey = 0;
   connectDeadline = millis() + CONNECT_TIMEOUT_MS;
   Serial.printf("bt: paging \"%s\" on request\n", d.name);
-  if(!a2dp.connectNow(d.addr,d.name)){haveTarget=false;connectDeadline=0;failure=BT_FAIL_TIMEOUT;}
+  if(!a2dp.connectNow(d.addr,d.name)){haveTarget=false;connectDeadline=0;failure=BT_FAIL_TIMEOUT;Serial.println("cmd: connect ignored (Bluetooth queue busy)");}
 }
 
 void bt_forget(int i) {
@@ -625,7 +625,8 @@ void bt_forget(int i) {
 
 void bt_choose(int i) {
   BtDevice d;
-  if (!bt_device(i, d)) return;
+  if (!bt_device(i, d)){Serial.println("cmd: choose ignored (device disappeared)");return;}
+  Serial.printf("cmd: choose device %d accepted\n",i);
   portENTER_CRITICAL(&devMux);
   memcpy(targetAddr, d.addr, 6);
   memcpy(targetName, d.name, sizeof(targetName));
@@ -636,7 +637,7 @@ void bt_choose(int i) {
   connectDeadline = millis() + CONNECT_TIMEOUT_MS;
   Serial.printf("bt: chose \"%s\" -- connecting now\n", d.name);
   // onSsid() still connects if this fails and the device turns up again.
-  if(!a2dp.connectNow(d.addr,d.name)){haveTarget=false;connectDeadline=0;failure=BT_FAIL_TIMEOUT;}
+  if(!a2dp.connectNow(d.addr,d.name)){haveTarget=false;connectDeadline=0;failure=BT_FAIL_TIMEOUT;Serial.println("cmd: connect ignored (Bluetooth queue busy)");}
 }
 
 #endif  // !CYD_UPLOADER

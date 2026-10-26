@@ -13,15 +13,28 @@ static const char* REFRESH="/.sys/library.refresh";
 static Header header{};
 static int active=-1;
 static bool stale=false,rebuilt=false;
+// Every access to the shared catalogue handle `cat` and the record `cache` takes
+// `mutex` (UI task and decode task both call in). validate() and the boot-time
+// build use their own handles, and work[] is touched at boot only, never while
+// `cat` is in use.
 static SemaphoreHandle_t mutex=nullptr;
 static uint32_t scanCrc=0;
 static int scanned=0;
 static bool scanOk=true;
 // Shared boot scratch, not a whole-library cache.
 static Record work[2];
+// One open handle on the active catalogue plus the last record read through it
+// (CT-06): lookups no longer open, seek and close a 1.4 MB file every time, and
+// no 712 B Record has to live on the 5 KB loop-task stack (CT-01).
+static File cat;
+static Record cache;
+static int cacheIndex=-1;
+
+static void closeCat(){if(cat)cat.close();cat=File();cacheIndex=-1;}
+static void openCat(){closeCat();if(active>=0)cat=SD.open(CATALOGS[active]);}
 
 static uint32_t crc(uint32_t value,const void* p,size_t n){return esp_rom_crc32_le(value,(const uint8_t*)p,n);}
-static bool readAt(File& f,uint32_t at,void* p,size_t n){return f.seek(at)&&f.read((uint8_t*)p,n)==n;}
+static bool readAt(File& f,uint32_t at,void* p,size_t n){return (f.position()==at||f.seek(at))&&f.read((uint8_t*)p,n)==n;}
 static bool fileRecord(File& f,int i,Record& r){return readAt(f,sizeof(Header)+uint32_t(i)*sizeof(Record),&r,sizeof(r));}
 static bool validRecord(const Record& r){
   return memchr(r.path,0,sizeof(r.path))&&memchr(r.title,0,sizeof(r.title))&&memchr(r.artist,0,sizeof(r.artist))&&
@@ -45,8 +58,8 @@ static bool validate(const char* path,Header& h){
   ok=ok&&h.artistAlbumGroupsAt==at;at+=uint32_t(h.artistAlbums)*sizeof(Group);
   ok=ok&&h.bytes==at&&f.size()==at;
   if(!ok){f.close();return false;}
-  uint8_t b[512];uint32_t value=0,remaining=h.bytes-sizeof(Header);f.seek(sizeof(Header));
-  while(remaining){size_t n=std::min<size_t>(remaining,sizeof(b));if(f.read(b,n)!=n){ok=false;break;}value=crc(value,b,n);remaining-=n;}
+  uint8_t* b=(uint8_t*)&work[1];uint32_t value=0,remaining=h.bytes-sizeof(Header);f.seek(sizeof(Header));  // boot scratch, 712 B >= 512
+  while(remaining){size_t n=std::min<size_t>(remaining,512);if(f.read(b,n)!=n){ok=false;break;}value=crc(value,b,n);remaining-=n;}
   ok=ok&&value==h.checksum;
   for(uint32_t p=h.songsAt;ok&&p<h.artistGroupsAt;p+=2){uint16_t id;ok=readAt(f,p,&id,2)&&id<h.tracks;}
   for(unsigned kind=0;ok&&kind<3;++kind){uint32_t base=kind==0?h.artistGroupsAt:kind==1?h.albumGroupsAt:h.artistAlbumGroupsAt;
@@ -54,7 +67,7 @@ static bool validate(const char* path,Header& h){
     for(int i=0;ok&&i<count;++i){Group g{};ok=groupAt(f,base,i,g)&&g.representative<h.tracks&&g.count&&uint32_t(g.first)+g.count<=h.tracks;
       if(kind==0)ok=ok&&g.subCount&&uint32_t(g.subFirst)+g.subCount<=h.artistAlbums;}
   }
-  Record r;for(int i=0;ok&&i<h.tracks;++i)ok=fileRecord(f,i,r)&&validRecord(r);
+  Record& r=work[0];for(int i=0;ok&&i<h.tracks;++i)ok=fileRecord(f,i,r)&&validRecord(r);
   f.close();return ok;
 }
 
@@ -119,8 +132,8 @@ static bool buildGroups(File& f,const Header& h,uint32_t orderAt,bool artist,boo
   }return true;
 }
 static bool appendFile(File& dst,const char* path,uint32_t& offset){
-  File src=SD.open(path);if(!src)return false;uint8_t b[512];bool ok=dst.seek(offset);
-  while(ok&&src.available()){size_t n=src.read(b,sizeof(b));if(!n||!writeAll(dst,b,n)){ok=false;break;}offset+=n;}
+  File src=SD.open(path);if(!src)return false;uint8_t* b=(uint8_t*)&work[1];bool ok=dst.seek(offset);
+  while(ok&&src.available()){size_t n=src.read(b,512);if(!n||!writeAll(dst,b,n)){ok=false;break;}offset+=n;}
   src.close();return ok;
 }
 static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,StorageProgressFn progress){
@@ -147,8 +160,8 @@ static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,Storage
   if(ok){h.artistAlbumGroupsAt=at;ok=appendFile(f,aa,at);}
   SD.remove(ag);SD.remove(al);SD.remove(aa);
   h.bytes=at;
-  if(ok){uint8_t b[512];uint32_t remain=at-sizeof(Header);ok=f.seek(sizeof(Header));
-    while(ok&&remain){size_t n=std::min<size_t>(remain,sizeof(b));ok=f.read(b,n)==n;if(ok){h.checksum=crc(h.checksum,b,n);remain-=n;}}
+  if(ok){uint8_t* b=(uint8_t*)&work[1];uint32_t remain=at-sizeof(Header);ok=f.seek(sizeof(Header));
+    while(ok&&remain){size_t n=std::min<size_t>(remain,512);ok=f.read(b,n)==n;if(ok){h.checksum=crc(h.checksum,b,n);remain-=n;}}
   }
   h.headerChecksum=crc(0,&h,sizeof(h));
   if(ok)ok=f.seek(0)&&writeAll(f,&h,sizeof(h));f.flush();f.close();
@@ -167,6 +180,8 @@ bool storage_mount(){
 }
 bool storage_begin(StorageProgressFn progress){
   if(!storage_mount())return false;
+  xSemaphoreTake(mutex,portMAX_DELAY);closeCat();xSemaphoreGive(mutex);
+  struct Reopen{~Reopen(){xSemaphoreTake(mutex,portMAX_DELAY);openCat();xSemaphoreGive(mutex);}} reopen;  // every return path
   active=-1;header={};stale=rebuilt=false;
   Header a{},b{};const bool va=validate(CATALOGS[0],a),vb=validate(CATALOGS[1],b);
   if(va||vb){active=vb&&(!va||int32_t(b.generation-a.generation)>0)?1:0;header=active?b:a;}
@@ -188,16 +203,64 @@ bool storage_catalogReady(){return active>=0;}
 bool storage_catalogStale(){return stale;}
 bool storage_catalogRebuilt(){return rebuilt;}
 bool storage_refreshNextBoot(){File f=SD.open(REFRESH,FILE_WRITE);if(!f)return false;bool ok=f.print("refresh\n")>0;f.close();return ok;}
+
+// The *Locked helpers need `mutex`; their results are valid until it is released.
+static uint32_t recordAt(int i){return sizeof(Header)+uint32_t(i)*sizeof(Record);}
+static const Record* recordLocked(int i){
+  if(!cat||i<0||i>=header.tracks)return nullptr;
+  if(i==cacheIndex)return &cache;
+  cacheIndex=-1;
+  if(!readAt(cat,recordAt(i),&cache,sizeof(cache))){openCat();  // one retry on a fresh handle
+    if(!cat||!readAt(cat,recordAt(i),&cache,sizeof(cache)))return nullptr;}
+  if(!validRecord(cache))return nullptr;
+  cacheIndex=i;return &cache;
+}
+// Reads only the first `bytes` of a record (path, then title) into the cache
+// scratch: enough for path/title walks, half the SD traffic. Invalidates the cache.
+static const Record* headLocked(int i,size_t bytes){
+  cacheIndex=-1;
+  if(!cat||i<0||i>=header.tracks||!readAt(cat,recordAt(i),&cache,bytes))return nullptr;
+  if(!memchr(cache.path,0,sizeof(cache.path))||strncmp(cache.path,"/music/",7)||strstr(cache.path,"/../"))return nullptr;
+  if(bytes>offsetof(Record,title)&&!memchr(cache.title,0,sizeof(cache.title)))return nullptr;
+  return &cache;
+}
 bool storage_trackInfo(int i,Record& out){
   if(active<0||i<0||i>=header.tracks)return false;
-  xSemaphoreTake(mutex,portMAX_DELAY);File f=SD.open(CATALOGS[active]);
-  bool ok=f&&fileRecord(f,i,out)&&validRecord(out);f.close();xSemaphoreGive(mutex);return ok;
+  xSemaphoreTake(mutex,portMAX_DELAY);const Record* r=recordLocked(i);if(r)out=*r;xSemaphoreGive(mutex);return r!=nullptr;
 }
-String storage_trackPath(int i){Record r;return storage_trackInfo(i,r)?String(r.path):String();}
-String storage_trackLabel(int i){Record r;return storage_trackInfo(i,r)?String(r.title):String();}
-int storage_findTrack(const String& path){Record r;for(int i=0;i<storage_trackCount();++i)if(storage_trackInfo(i,r)&&compareText(r.path,path.c_str())==0)return i;return -1;}
-void storage_forEach(StorageEachFn fn){Record r;for(int i=0;i<storage_trackCount();++i)if(storage_trackInfo(i,r))fn(i,String(r.path),String(r.title));}
-void storage_forEachText(void(*fn)(const char*)){Record r;for(int i=0;i<storage_trackCount();++i)if(storage_trackInfo(i,r)){fn(r.title);fn(r.artist);fn(r.album);fn(albumOwner(r));}}
+bool storage_trackSummary(int i,String& title,String& artist){
+  if(active<0)return false;
+  xSemaphoreTake(mutex,portMAX_DELAY);const Record* r=recordLocked(i);if(r){title=r->title;artist=r->artist;}xSemaphoreGive(mutex);return r!=nullptr;
+}
+String storage_trackPath(int i){
+  String out;if(active<0)return out;
+  xSemaphoreTake(mutex,portMAX_DELAY);const Record* r=headLocked(i,offsetof(Record,title));if(r)out=r->path;xSemaphoreGive(mutex);return out;
+}
+String storage_trackLabel(int i){
+  String out;if(active<0)return out;
+  xSemaphoreTake(mutex,portMAX_DELAY);const Record* r=headLocked(i,offsetof(Record,artist));if(r)out=r->title;xSemaphoreGive(mutex);return out;
+}
+int storage_findTrack(const String& path){
+  for(int i=0;i<storage_trackCount();++i){
+    xSemaphoreTake(mutex,portMAX_DELAY);const Record* r=headLocked(i,offsetof(Record,title));
+    const bool hit=r&&compareText(r->path,path.c_str())==0;xSemaphoreGive(mutex);if(hit)return i;
+  }return -1;
+}
+// The lock is taken per record, not per pass, so the decode task can look up the
+// next track between two steps; callbacks run unlocked on copies.
+void storage_forEach(StorageEachFn fn){
+  for(int i=0;i<storage_trackCount();++i){
+    String path,title;xSemaphoreTake(mutex,portMAX_DELAY);const Record* r=headLocked(i,offsetof(Record,artist));
+    if(r){path=r->path;title=r->title;}xSemaphoreGive(mutex);if(r)fn(i,path,title);
+  }
+}
+void storage_forEachText(void(*fn)(const char*)){
+  for(int i=0;i<storage_trackCount();++i){
+    String text[4];xSemaphoreTake(mutex,portMAX_DELAY);const Record* r=recordLocked(i);
+    if(r){text[0]=r->title;text[1]=r->artist;text[2]=r->album;text[3]=albumOwner(*r);}xSemaphoreGive(mutex);
+    if(r)for(const String& t:text)fn(t.c_str());
+  }
+}
 
 static bool viewGroup(File& f,CatalogView v,Group& g,uint32_t& orderAt){
   int count=0;uint32_t groupsAt=0;
@@ -208,18 +271,17 @@ static bool viewGroup(File& f,CatalogView v,Group& g,uint32_t& orderAt){
     default:return false;
   }return v.group<count&&groupAt(f,groupsAt,v.group,g);
 }
-int storage_browseCount(CatalogView v){
+static int browseCountLocked(CatalogView v){
   if(active<0)return 0;
   if(v.kind==CatalogKind::Artists)return header.artists;
   if(v.kind==CatalogKind::Albums)return header.albums;
   if(v.kind==CatalogKind::Songs)return header.tracks;
-  File f=SD.open(CATALOGS[active]);Group g{};uint32_t order=0;
-  const bool ok=f&&viewGroup(f,v,g,order);f.close();return ok?(v.kind==CatalogKind::ArtistAlbums?g.subCount+1:g.count):0;
+  Group g{};uint32_t order=0;
+  const bool ok=cat&&viewGroup(cat,v,g,order);return ok?(v.kind==CatalogKind::ArtistAlbums?g.subCount+1:g.count):0;
 }
-bool storage_browseEntry(CatalogView v,int row,CatalogEntry& entry){
-  const int count=storage_browseCount(v);if(row<0||row>=count)return false;
-  entry=CatalogEntry{};File f=SD.open(CATALOGS[active]);if(!f)return false;
-  uint16_t id=0;Group g{};uint32_t order=header.songsAt;bool ok=true;
+static bool browseEntryLocked(CatalogView v,int row,CatalogEntry& entry){
+  const int count=browseCountLocked(v);if(row<0||row>=count||!cat)return false;
+  File& f=cat;uint16_t id=0;Group g{};uint32_t order=header.songsAt;bool ok=true;
   if(v.kind==CatalogKind::Artists||v.kind==CatalogKind::Albums){
     const bool artist=v.kind==CatalogKind::Artists;ok=groupAt(f,artist?header.artistGroupsAt:header.albumGroupsAt,row,g);id=g.representative;
     entry.navigates=true;entry.child={artist?CatalogKind::ArtistAlbums:CatalogKind::AlbumSongs,uint16_t(row)};
@@ -231,19 +293,30 @@ bool storage_browseEntry(CatalogView v,int row,CatalogEntry& entry){
     if(v.kind!=CatalogKind::Songs)ok=viewGroup(f,v,g,order);
     ok=ok&&idAt(f,order,(v.kind==CatalogKind::Songs?0:g.first)+row,id);entry.track=id;
   }
-  Record r{};ok=ok&&fileRecord(f,id,r)&&validRecord(r);f.close();if(!ok)return false;
-  if(entry.label.length()==0)entry.label=entry.navigates?(v.kind==CatalogKind::Artists?String(r.artist):String(r.album)):String(r.title);
+  const Record* r=ok?recordLocked(id):nullptr;if(!r)return false;
+  if(entry.label.length()==0)entry.label=entry.navigates?(v.kind==CatalogKind::Artists?String(r->artist):String(r->album)):String(r->title);
   if(v.kind==CatalogKind::Artists)entry.detail=String(g.subCount)+" albums";
   else if(v.kind==CatalogKind::ArtistAlbums&&row==0)entry.detail=String(g.count)+" songs";
-  else entry.detail=entry.navigates?String(albumOwner(r)):String(r.artist);
+  else entry.detail=entry.navigates?String(albumOwner(*r)):String(r->artist);
   return true;
+}
+int storage_browseCount(CatalogView v){
+  if(v.kind==CatalogKind::Artists||v.kind==CatalogKind::Albums||v.kind==CatalogKind::Songs)return browseCountLocked(v);
+  xSemaphoreTake(mutex,portMAX_DELAY);const int n=browseCountLocked(v);xSemaphoreGive(mutex);return n;
+}
+bool storage_browseEntry(CatalogView v,int row,CatalogEntry& entry){
+  entry=CatalogEntry{};if(active<0)return false;
+  xSemaphoreTake(mutex,portMAX_DELAY);
+  const bool ok=browseEntryLocked(v,row,entry);
+  xSemaphoreGive(mutex);return ok;
 }
 int storage_browseTracks(CatalogView v,uint16_t* out,int capacity){
   if(!out||active<0)return 0;
   if(v.kind==CatalogKind::Artists||v.kind==CatalogKind::Albums||v.kind==CatalogKind::ArtistAlbums)return 0;
-  File f=SD.open(CATALOGS[active]);if(!f)return 0;Group g{0,0,header.tracks,0,0};uint32_t order=header.songsAt;
-  bool ok=v.kind==CatalogKind::Songs||viewGroup(f,v,g,order);
+  xSemaphoreTake(mutex,portMAX_DELAY);
+  Group g{0,0,header.tracks,0,0};uint32_t order=header.songsAt;
+  bool ok=cat&&(v.kind==CatalogKind::Songs||viewGroup(cat,v,g,order));
   ok=ok&&capacity>=g.count;
-  for(int i=0;ok&&i<g.count;++i)ok=idAt(f,order,g.first+i,out[i]);
-  f.close();return ok?g.count:0;
+  for(int i=0;ok&&i<g.count;++i)ok=idAt(cat,order,g.first+i,out[i]);
+  xSemaphoreGive(mutex);return ok?g.count:0;
 }

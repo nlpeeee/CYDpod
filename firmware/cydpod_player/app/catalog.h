@@ -22,5 +22,7 @@ int storage_browseCount(CatalogView view);
 bool storage_browseEntry(CatalogView view,int row,CatalogEntry& entry);
 int storage_browseTracks(CatalogView view,uint16_t* out,int capacity);
 bool storage_trackInfo(int track,cydlib::Record& out);
+// Title and artist only: lets row painting avoid a 712 B Record on the loop-task stack.
+bool storage_trackSummary(int track,String& title,String& artist);
 int storage_findTrack(const String& path);
 void storage_forEachText(void (*fn)(const char*));

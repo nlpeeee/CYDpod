@@ -139,7 +139,7 @@ void loadRow(int i){
     case Mode::Catalog:{CatalogEntry e;if(storage_browseEntry(page().view,at,e)){setRow(r,e.label.c_str(),e.detail,e.navigates);r.track=e.track;r.child=e.child;}
       else setRow(r,"Unable to read entry","Check SD card",false,true);break;}
     case Mode::Sources:{int source=sourceId(at);setRow(r,playlist_name(source).c_str(),String(),true,source<0);r.source=source;break;}
-    case Mode::SourceSongs:{cydlib::Record info{};if(preview&&at<previewCount&&storage_trackInfo(preview[at],info)){setRow(r,info.title,String(info.artist));r.track=preview[at];}else setRow(r,"Track unavailable",String(),false,true);break;}
+    case Mode::SourceSongs:{String title,artist;if(preview&&at<previewCount&&storage_trackSummary(preview[at],title,artist)){setRow(r,title.c_str(),artist);r.track=preview[at];}else setRow(r,"Track unavailable",String(),false,true);break;}
     case Mode::Settings:{const char* names[]={"Audio Output","Bluetooth","Playback","Display","Refresh Library","Upload / Advanced","About"};setRow(r,names[at],String(),true);break;}
     case Mode::Playback:setRow(r,at==0?"Shuffle":"Repeat",at==0?String(audio_shuffle()?"On":"Off"):String(audio_repeat()==REPEAT_ONE?"One":audio_repeat()==REPEAT_ALL?"All":"Off"));break;
     case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Flip portrait","Calibrate touch","Panel / Advanced"};setRow(r,names[at],at<2?String(g_settings.brightness)+"%":String(),at>=3);break;}

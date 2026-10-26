@@ -85,7 +85,7 @@ void footer(){
   tft.drawFastHLine(0,footerY(),tft.width(),p.outline);
   if(page().mode==Mode::Player){
     text("Volume",{0,footerY(),80,40},p.text,p.band);
-    text(g_settings.outRoute==OUT_BT?(bt_connected()?"BT":"BT..."):"Speaker",{80,footerY(),80,40},p.dim,p.band,TYPE_CAPTION);
+    text((String(audio_volume())+"%").c_str(),{80,footerY(),80,40},p.dim,p.band,TYPE_CAPTION);
     text("Options",{160,footerY(),tft.width()-160,40},p.text,p.band);
   }else{
     text("Home",footerRect(Home),p.text,p.band);

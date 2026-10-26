@@ -1,22 +1,13 @@
 // ===========================================================================
 // bt.h -- Bluetooth A2DP source: the speaker link
 // ===========================================================================
-// Reconnecting. The A2DP library keeps the last speaker's address in NVS and,
-// with auto-reconnect on, pages it directly at start-up (3 tries), then falls
-// back to discovery. Paging matters on this hardware: stage 0 found the JBL
-// does not show up in a discovery scan after the ESP32 resets unless it is put
-// back in pairing mode. During the discovery fallback the saved address is
-// still accepted, so a speaker switched on later is picked up if it becomes
-// discoverable.
-//
-// Pairing a different speaker. After a deliberate disconnect the library does
-// not restart discovery by itself, so "pair new speaker" restarts the board
-// into a pairing boot: auto-reconnect off at start, discovery runs, every
-// device found is listed, and the one the user taps is connected and saved.
-// A restart is ~3 s and uses exactly the path proven in stage0/s02-s05.
+// Startup pages the last saved address; loop-managed reconnects follow.
+// Pair new and Cancel run live on the existing Bluetooth event task. Neither
+// operation reboots or reinitializes the controller; bonds remain until Forget.
 #pragma once
 
 #include <Arduino.h>
+#include "pairing_session.h"
 
 static const int BT_MAX_DEVICES = 8;
 
@@ -41,6 +32,7 @@ enum BtFailure : uint8_t {
 };
 
 // Pairing
+cyd::PairingSession::Phase bt_pairingPhase();
 bool   bt_pairing();              // live pairing session is active
 bool   bt_requestPairing();           // queue live pairing; false if unavailable
 bool   bt_cancelPairing();            // cancel live pairing; no reboot

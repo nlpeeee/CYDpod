@@ -26,6 +26,7 @@
 //    Arduino build compiles out, so a failure was invisible and the screen
 //    just said "connecting" forever.
 static volatile bool pairingActive=false;
+static volatile cyd::PairingSession::Phase pairingPhase=cyd::PairingSession::Normal;
 static volatile BtFailure failure=BT_FAIL_NONE;
 static bool bluetoothReady=false,pairResumeWanted=false;
 
@@ -99,7 +100,7 @@ class CydSource : public BluetoothA2DPSource {
   uint8_t lastPeer[6]{};
   cyd::PairingSession session;
   static void dispatch(uint16_t event,void* p){owner->command((Command)event,(Request*)p);}
-  void publish(){pairingActive=session.pairing;}
+  void publish(){pairingPhase=session.phase;pairingActive=session.pairing;}
   void fixedGap(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param);
   static void dispatchGap(uint16_t event,void* p){owner->fixedGap((esp_bt_gap_cb_event_t)event,(esp_bt_gap_cb_param_t*)p);}
   void command(Command cmd,Request* p){
@@ -469,6 +470,7 @@ void bt_tick() {
 bool   bt_connected()   { return state == ESP_A2D_CONNECTION_STATE_CONNECTED; }
 bool   bt_connecting()  { return state == ESP_A2D_CONNECTION_STATE_CONNECTING; }
 String bt_speakerName() { return g_settings.btName; }
+cyd::PairingSession::Phase bt_pairingPhase(){return pairingPhase;}
 bool   bt_pairing() { return pairingActive; }
 bool   bt_choosing()    { return haveTarget; }
 BtFailure bt_failure()  { return failure; }

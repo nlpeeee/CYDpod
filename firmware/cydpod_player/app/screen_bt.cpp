@@ -6,7 +6,7 @@
 // ===========================================================================
 // Shows the current speaker. While nothing is connected the library is
 // discovering, so every device it finds is listed and a tap connects to it.
-// "Pair new" restarts into a pairing boot (bt.h explains why a restart).
+// Pair new and Back/Cancel run a live session on the existing controller.
 // Sized from the screen, so it works in either orientation.
 
 #include "ui.h"
@@ -33,23 +33,26 @@ static int      shownState = -1;
 static String   shownName;
 static bool     pairLit = false;           // Pair new under a finger
 
-// A pairing boot hands back to the player the moment the new speaker connects
-// -- but only if this screen was opened waiting for that. pairingBoot stays
-// true for the whole session, so testing the state alone bounced every later
-// visit straight back out, and the owner could never get here to pair another.
+// A live pairing session returns here only when this visit requested it.
 static bool waitingToPair = false;
 
 static int stateNow() {
   const int base = bt_connected() ? 2 : (bt_connecting() || bt_choosing()) ? 1 : 0;
   // Fold in what else the status line shows, so it redraws when they change.
-  return base + 10 * (int)bt_failure() + 100 * (bt_passkey() ? 1 : 0);
+  return base + 10 * (int)bt_failure() + 100 * (bt_passkey() ? 1 : 0) + 1000 * int(bt_pairingPhase());
 }
 
 static void drawStatus() {
   const Palette& p = theme();
   const int y = STATUS_Y + 13;
   tft.fillRect(0, STATUS_Y, tft.width(), 26, p.bg);
-  if (bt_connected()) {
+  if(bt_pairing() && bt_failure()==BT_FAIL_NONE && !bt_passkey()) {
+    const auto phase=bt_pairingPhase();
+    const char* text=phase==cyd::PairingSession::Disconnecting?"Disconnecting...":
+      phase==cyd::PairingSession::Cancelling?"Reconnecting previous device...":
+      phase==cyd::PairingSession::Selecting?"Connecting...":"Searching for devices...";
+    ui_text(text,10,y,ML_DATUM,p.text,p.bg,tft.width()-20);
+  } else if (bt_connected()) {
     const int w = ui_label(T_CONNECTED, 10, y, ML_DATUM, p.good, p.bg);
     ui_text(bt_speakerName(), 10 + w + 6, y, ML_DATUM, p.good, p.bg, tft.width() - w - 26);
   } else if (bt_choosing() || bt_connecting()) {
@@ -187,8 +190,8 @@ static void dropConfirmed() {
 static void touch(TouchEvent ev, int x, int y) {
   if (ev != TOUCH_TAP && ev != TOUCH_LONG_PRESS) return;
   if (UI_BACK_RECT.contains(x, y)) {
-    // Leaving a pairing boot without choosing: go back to normal reconnecting.
-    if (bt_pairing() && !bt_connected() && !bt_cancelPairing()){ui_toast("Unable to cancel pairing");return;}
+    // Cancel even while the former link is still disconnecting.
+    if (bt_pairing() && !bt_cancelPairing()){ui_toast("Unable to cancel pairing");return;}
     ui_go(SCR_PLAYER);
     return;
   }

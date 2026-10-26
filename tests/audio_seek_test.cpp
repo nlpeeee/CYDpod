@@ -36,7 +36,28 @@ int main(){
  assert(!audio_isPlaying()&&audio_currentTrack()==1&&audio_positionMs()>=5999&&audio_positionMs()<6500);
  const auto errors=audio_error(nullptr,0);hostReadBudget=0;assert(audio_seekTo(8000));waitIdle();hostReadBudget=-1;
  assert(audio_error(nullptr,0)>errors&&!audio_isPlaying());assert(audio_currentTrack()==1);
+ // CY-50: Play after failed seek must reopen the blocked decoder, not just light Play.
+ const auto pausedIntent=audio_playIntentSerial();audio_togglePause();waitIdle();
+ assert(audio_isPlaying()&&!decodeBlocked&&audio_currentTrack()==1&&audio_positionMs()==0);
+ assert(audio_playIntentSerial()!=pausedIntent);audio_togglePause();
+ hostReadBudget=0;assert(audio_seekTo(8000));waitIdle();hostReadBudget=-1;
+ assert(!audio_isPlaying()&&decodeBlocked);
  assert(audio_seekTo(2000));waitIdle();assert(audio_positionMs()>=1999&&audio_positionMs()<=2000);assert(!audio_isPlaying());
+ // A completion/failure from the former command cannot skip a newer selection.
+ const auto former=commandSerial;audio_playTrack(0);
+ endedCommand=former;++endedSerial;failedCommand=former;++failSerial;audio_tick();waitIdle();
+ assert(audio_currentTrack()==0);audio_togglePause();
+ // Full ring, paused, and no consumer: every newer request must still be noticed.
+ for(int i=0;i<100&&audio_bufferPct()<80;++i)std::this_thread::sleep_for(std::chrono::milliseconds(2));
+ assert(audio_bufferPct()>=80);audio_next();audio_next();audio_prev();waitIdle();
+ assert(audio_currentTrack()==1&&!audio_isPlaying());
+ const auto commands=audio_commands();assert(commands.track==-1&&commands.seekMs==-1&&!commands.seeking);
+ // The timer multiplier changes samples, never the user's volume setting.
+ assert(audio_seekTo(2000));waitIdle();audio_togglePause();
+ for(int i=0;i<100&&audio_bufferPct()<30;++i)std::this_thread::sleep_for(std::chrono::milliseconds(2));
+ const auto userVolume=audio_volume();audio_setSleepGain(0);audio_pull(out,128);assert(silent(out,256));
+ audio_setSleepGain(100);audio_pull(out,128);assert(!silent(out,256)&&audio_volume()==userVolume);
+ audio_togglePause();
  decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);free(order);rb=nullptr;order=nullptr;
- puts("PASS production audio: saved resume, paused/disconnected seek, coalescing, stale-ring removal, track supersession, paused EOF, read failure and retry; queue/play intent retained");
+ puts("PASS production audio: saved resume, paused/disconnected seek, coalescing, stale-ring removal, track supersession, paused EOF, read failure, Play recovery, stale completion/failure rejection, full-ring commands, sleep gain and retry; queue/play intent retained");
 }

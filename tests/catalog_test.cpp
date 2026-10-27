@@ -181,6 +181,14 @@ int main(){try{
   {File audioSlot=SD.open(storage_trackPath(currentTrack));check(bool(audioSlot),"simulate concurrent audio file");
    hostWriteBudget=0;check(!playlist_toggleFavourite(currentTrack)&&playlist_favouriteFailed()&&!playlist_isFavourite(currentTrack),"failed favourite add leaves RAM state unchanged");hostWriteBudget=-1;
    check(playlist_toggleFavourite(currentTrack)&&!playlist_favouriteFailed()&&playlist_isFavourite(currentTrack),"favourite add committed");
+   {File newline=SD.open("/.sys/newline-test",FILE_WRITE);check(newline.println(String("x"))==3,"shim matches Arduino println CRLF byte count");}
+   const int other=(currentTrack+1)%storage_trackCount();
+   check(playlist_toggleFavourite(other)&&!playlist_favouriteFailed(),"second favourite copies existing line");
+   {std::ifstream saved(SD.root/".sys/fav.txt",std::ios::binary);std::string text((std::istreambuf_iterator<char>(saved)),{});
+    check(text==std::string(storage_trackPath(currentTrack).c_str())+"\n"+storage_trackPath(other).c_str()+"\n","favourites persist exact LF bytes");}
+   hostWriteBudget=storage_trackPath(currentTrack).length();
+   check(playlist_toggleFavourite(other)&&playlist_favouriteFailed()&&playlist_isFavourite(other),"short newline write preserves favourites");hostWriteBudget=-1;
+   check(!playlist_toggleFavourite(other)&&!playlist_favouriteFailed(),"remove one favourite while copying another");
    hostReadOnly=true;check(playlist_toggleFavourite(currentTrack)&&playlist_favouriteFailed()&&playlist_isFavourite(currentTrack),"failed favourite removal preserves RAM and old file");hostReadOnly=false;
    check(!playlist_toggleFavourite(currentTrack)&&!playlist_favouriteFailed()&&!playlist_isFavourite(currentTrack),"favourite removal committed");
   }

@@ -43,7 +43,7 @@ class File {
   size_t read(uint8_t* p,size_t n){if(hostReadBudget>=0){n=std::min<size_t>(n,size_t(hostReadBudget));hostReadBudget-=n;}return h&&h->file?fread(p,1,n,h->file):0;}
   size_t write(const uint8_t* p,size_t n){if(!h||!h->file)return 0;if(hostWriteBudget>=0){n=std::min<size_t>(n,size_t(hostWriteBudget));hostWriteBudget-=n;}return fwrite(p,1,n,h->file);}
   size_t print(const char* p){return write((const uint8_t*)p,strlen(p));}
-  size_t println(const String& s){size_t n=print(s.c_str());return n+print("\n");}
+  size_t println(const String& s){size_t n=print(s.c_str());return n+print("\r\n");}
   size_t printf(const char* fmt,...){char p[2048];va_list a;va_start(a,fmt);int n=vsnprintf(p,sizeof(p),fmt,a);va_end(a);return n>=0&&n<int(sizeof(p))?write((const uint8_t*)p,n):0;}
   bool available(){return position()<size();}
   String readStringUntil(char c){std::string s;int v;while(h&&h->file&&(v=fgetc(h->file))!=EOF&&v!=c)s.push_back(char(v));return s;}

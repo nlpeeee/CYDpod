@@ -414,9 +414,9 @@ bool playlist_toggleFavourite(int track) {
     const uint32_t before=in.position();
     String line=in.readStringUntil('\n');line.trim();
     if(in.position()<=before){ok=false;break;}
-    if(line.length()&&(!was||pathKey(line)!=key))ok=out.println(line)==line.length()+1;
+    if(line.length()&&(!was||pathKey(line)!=key))ok=out.print(line.c_str())==line.length()&&out.print("\n")==1;
   }
-  if(ok&&!was)ok=out.println(path)==path.length()+1;
+  if(ok&&!was)ok=out.print(path.c_str())==path.length()&&out.print("\n")==1;
   in.close();out.close();
   if(!ok){SD.remove(FAV_TMP);return fail();}
   if(SD.exists(FAV_BACKUP)&&!SD.remove(FAV_BACKUP))return fail();

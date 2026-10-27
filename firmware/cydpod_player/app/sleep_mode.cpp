@@ -13,7 +13,8 @@ void light(int level){if(applied!=level){applied=level;display_setBacklight(leve
 }
 void sleep_begin(uint32_t now){
   initialized=true;lastTouch=now;swallow=blocked=forcedOff=fading=false;applied=-1;
-  sleep_setTimer(g_settings.sleepTimer,now);light(g_settings.brightness);
+  // The timer is per session: a persisted choice stays visible in the menu but is not re-armed at power-on.
+  timerArmed=false;sleepDeadline=now;audio_setSleepGain(100);light(g_settings.brightness);
 }
 void sleep_setTimer(uint8_t choice,uint32_t now){
   choice=choice<5?choice:0;g_settings.sleepTimer=choice;

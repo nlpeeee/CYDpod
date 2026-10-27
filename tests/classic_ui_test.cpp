@@ -152,6 +152,7 @@ int main(){try{
   tap(80,198);check(g_settings.sleepTimer==1,"sleep timer cycles setting");sleep_setTimer(0,clockNow);
   classic_home();ui_go(SCR_CLASSIC);pump();tap(80,110);playing=true;
   g_settings.screenTimeout=2;sleep_begin(clockNow);
+  g_settings.sleepTimer=2;sleep_begin(clockNow);check(g_settings.sleepTimer==2&&!sleep_remainingMinutes(clockNow),"F-10 boot does not re-arm the persisted sleep timer");sleep_tick(clockNow+31*60000,false);check(playing,"F-10 no sleep at boot+31 min");g_settings.sleepTimer=0;
   ui_tick(clockNow+=29999);check(backlight==100&&playing,"screen awake before default dim deadline");
   ui_tick(++clockNow);check(backlight==20&&playing,"default dim at 30 seconds preserves playback");
   ui_tick(clockNow+=30000);check(backlight==0&&playing,"default screen off at 60 seconds preserves playback");

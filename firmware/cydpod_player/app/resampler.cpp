@@ -17,8 +17,9 @@ int16_t FirState::filter(const int16_t* c,unsigned channel) const {
   // Generator proves sum(abs(c))*32768 + 16384 < INT32_MAX for every phase.
   for(unsigned k=0;k<32;++k)sum+=int32_t(x[k*2])*c[k];
   int32_t v=(sum+16384)>>15;
-  v^=(v^32767)&-int32_t(v>32767);
-  v^=(v^-32768)&-int32_t(v<-32768);
+  // Xtensa GCC emits branchless MIN/MAX for these clamps (verified in ELF).
+  v=v>32767?32767:v;
+  v=v<-32768?-32768:v;
   return int16_t(v);
 }
 bool FirState::push(int16_t l,int16_t r,const FirBank& b,PcmSink sink,void* user) {

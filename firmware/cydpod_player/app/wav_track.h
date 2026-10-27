@@ -12,12 +12,19 @@ struct WavState {
   const char* open(File& f) {
     uint8_t h[24];
     if (!readAt(f,0,h,12) || memcmp(h,"RIFF",4) || memcmp(h+8,"WAVE",4)) return "wav_header";
-    const uint64_t end=uint64_t(le32(h+4))+8;
-    if (end<12 || end>f.size()) return "wav_truncated_riff";
+    // Streaming recorders and pipes write 0 or 0xFFFFFFFF; copies can be cut short: those sizes mean "to the end of the file".
+    const uint32_t riff=le32(h+4);
+    const bool unsized=riff==0 || riff==0xFFFFFFFFu;
+    uint64_t end=uint64_t(riff)+8;
+    if (unsized || end>f.size()) end=f.size();
+    if (end<12) return "wav_truncated_riff";
     bool fmt=false, found=false;
     for (uint64_t at=12; at<end;) {
-      if (end-at<8 || !readAt(f,uint32_t(at),h,8)) return "wav_truncated_chunk";
-      const uint32_t n=le32(h+4); const uint64_t next=at+8+uint64_t(n)+(n&1);
+      if (end-at<8) break; // 1..7 stray bytes after the last chunk
+      if (!readAt(f,uint32_t(at),h,8)) return "wav_truncated_chunk";
+      uint32_t n=le32(h+4); uint64_t next=at+8+uint64_t(n)+(n&1);
+      const bool isData=!memcmp(h,"data",4);
+      if (isData && !found && (n==0xFFFFFFFFu || (n==0 && unsized) || next>end)) { n=uint32_t(end-(at+8)); next=end; } // clamp to the file
       if (next>end) return "wav_truncated_chunk";
       if (!memcmp(h,"fmt ",4)) {
         if (fmt || n<16 || (n&1) || !readAt(f,uint32_t(at+8),h,16)) return "wav_fmt";
@@ -26,13 +33,14 @@ struct WavState {
         if ((channels!=1 && channels!=2) || (bits!=8 && bits!=16 && bits!=24 && bits!=32) ||
             !rate || rate>96000 || align!=channels*(bits/8) || uint64_t(rate)*align!=le32(h+8)) return "wav_format";
         fmt=true;
-      } else if (!memcmp(h,"data",4)) {
+      } else if (isData) {
         if (found) return "wav_duplicate_data";
         data=uint32_t(at+8); bytes=n; found=true;
       }
       at=next;
     }
-    if (!fmt || !found || bytes%align) return "wav_incomplete_frame";
+    if (!fmt || !found) return "wav_incomplete_frame";
+    bytes-=bytes%align; // a cut last frame is dropped, not an error
     cursor=0; return nullptr;
   }
   static int16_t sample(const uint8_t* p, unsigned bits) {

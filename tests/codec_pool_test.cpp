@@ -21,7 +21,18 @@ int main(int argc,char** argv){
    while(track.pending()){auto p=*track.pcm();int v=(at%256-128)*256;int right=ch==1?v:-v/2;if(bits==8)right=(right/256)*256;
     assert(p.l==v&&p.r==right);track.consume(1);++at;}}
   assert(at==10240);track.end();f.close();
-  b.pop_back();save("tests/out/pool.wav",b);f=File("tests/out/pool.wav","r");assert(track.begin(f)!=MINIAAC_OK);assert(strstr(track.name(),"truncated"));track.end();f.close();
+  // F-07: a cut last frame is dropped; unsized/oversized RIFF and data sizes mean "to the end of the file".
+  auto open=[&](const std::vector<uint8_t>& v,uint64_t frames){save("tests/out/pool.wav",v);File g("tests/out/pool.wav","r");assert(track.begin(g)==MINIAAC_OK);if(track.totalFrames()!=frames)fprintf(stderr,"wav total %llu want %llu bits=%u ch=%u\n",(unsigned long long)track.totalFrames(),(unsigned long long)frames,bits,ch);assert(track.totalFrames()==frames);
+   uint64_t got=0;for(;;){auto rc=track.next();assert(rc!=CodecTrack::Pull::error);if(rc==CodecTrack::Pull::eof)break;got+=track.pending();track.consume(track.pending());}assert(got==frames);track.end();g.close();};
+  auto set32=[](std::vector<uint8_t>& v,size_t at,uint32_t n){for(int k=0;k<4;++k)v[at+k]=n>>(8*k);};
+  { auto c=b;c.pop_back();open(c,10239); }
+  { auto c=b;set32(c,4,0);open(c,10240); }
+  { auto c=b;set32(c,4,0xFFFFFFFFu);open(c,10240); }
+  { auto c=b;set32(c,4,0);set32(c,52,0);open(c,10240); }
+  { auto c=b;set32(c,52,0xFFFFFFFFu);open(c,10240); }
+  { auto c=b;set32(c,52,0x7FFFFFF0u);open(c,10240); }
+  { auto c=b;c.insert(c.end(),{1,2,3});set32(c,4,uint32_t(c.size()-8));open(c,10240); } // 3 stray bytes inside RIFF after the data
+  { auto c=b;c.insert(c.end(),{1,2,3,4,5,6,7});set32(c,4,uint32_t(c.size()-8));set32(c,52,uint32_t(c.size()-56));open(c,10240+(7/(ch*bits/8))); }
  }
  // PCM capacity bound: largest mono8 batches never exceed 1152 frames.
  // Reject incomplete frame, non-PCM fmt, missing odd-chunk padding, bad align.

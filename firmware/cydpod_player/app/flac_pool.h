@@ -1,19 +1,25 @@
 #pragma once
 #include "wav_track.h"
 #include "miniflac.h" // declarations only; the implementation is flac_core.c
-// Native FLAC, 16-bit mono/stereo, block size <= 4096, no heap. miniflac decodes
+// Native FLAC, 16-bit mono/stereo, block size <= 4608, no heap. miniflac decodes
 // one whole frame into the two int32 channel arrays below (the dominant pool
 // cost); metadata is walked with file seeks and never cached. Every frame
 // header is validated before miniflac is allowed to write samples.
 struct FlacState {
-  static constexpr unsigned maxBlock = 4096, chunk = 2048, entryBytes = 18;
+  static constexpr unsigned maxBlock = 4608, chunk = 2048, entryBytes = 18;
   static constexpr uint32_t seekBudget = 512u * 1024; // hard cap on bytes read per seek
   static constexpr uint32_t probeScan = 20u * 1024;   // sync search per bisect step
   static constexpr uint32_t resyncScan = 64u * 1024;  // sync search after a bad frame
   static constexpr uint64_t unknown = UINT64_MAX;
   enum class Seek : uint8_t { ok, cancelled, error };
+  // miniflac trusts the residual partition arithmetic of an unverified frame (CRC is checked at its end): a hostile
+  // partition order makes it write past block_size. Feeding it feedStep bytes at a time bounds one call's overshoot to
+  // feedStep*8 samples, which `slack` absorbs; attempt() then rejects the frame as soon as residual_total is impossible.
+  static constexpr unsigned slack = 72, feedStep = 8;
+  int32_t rightTail[maxBlock + slack - 1152]; // must stay the first member: continues the second channel after the pool pcm area
   miniflac_t dec;
-  int32_t block[2][maxBlock];
+  int32_t block[maxBlock + slack]; // left / mid channel
+  int32_t* right;            // second channel: pool pcm (first 1152 entries) then rightTail, contiguous (see codec_track.cpp)
   uint64_t total, nextSample, curStart;
   uint32_t first, end, bufAt, tab, tabBytes, rate, fixedBlock, spent;
   uint16_t blockSize, used, inPos, inLen;
@@ -86,18 +92,20 @@ struct FlacState {
   }
   // 1 decoded, 0 truncated, -1 corrupt (skippable), -2 unsupported or I/O (fatal).
   int attempt(File& f, uint8_t* in, const char*& why, bool resyncing) {
-    arm(); bool header = false; int32_t* out[2] = {block[0], block[1]};
+    arm(); bool header = false; int32_t* out[2] = {block, right};
     for (;;) {
       if (inPos >= inLen && !fill(f, in)) { if (io) { why = "flac_read"; return -2; } return 0; }
       uint32_t used32 = 0;
-      const MINIFLAC_RESULT r = header ? miniflac_decode(&dec, in + inPos, inLen - inPos, &used32, out)
-                                       : miniflac_sync(&dec, in + inPos, inLen - inPos, &used32);
+      const uint32_t len = header && inLen - inPos > feedStep ? feedStep : inLen - inPos;
+      const MINIFLAC_RESULT r = header ? miniflac_decode(&dec, in + inPos, len, &used32, out)
+                                       : miniflac_sync(&dec, in + inPos, len, &used32);
       inPos += uint16_t(used32);
+      if (header && dec.frame.subframe.residual.residual_total > dec.frame.header.block_size) { why = "flac_frame"; return -1; }
       if (r == MINIFLAC_CONTINUE) continue;
       if (r != MINIFLAC_OK) { why = r == MINIFLAC_FRAME_CRC16_INVALID || r == MINIFLAC_FRAME_CRC8_INVALID ? "flac_crc" : "flac_frame"; return -1; }
       if (header) return 1;
       if (const char* bad = unsupported(dec.frame.header)) { why = bad; return resyncing ? -1 : -2; }
-      header = true;
+      header = true; dec.frame.subframe.residual.residual_total = 0; // no stale total from the previous frame
     }
   }
   // Finds the next 0xFF 0xF8/0xF9 at or after `from`; 1 found, 0 end of file, -1 none within the cap.
@@ -143,9 +151,14 @@ struct FlacState {
       if (at >= total) return 0;
       if (total - at < n) n = uint32_t(total - at);
     }
+    // `pcm` overlays the first 1152 entries of `right`. Frame i of this call lands on right[i], which is read first
+    // (memcpy keeps the load ordered before the int16 stores) and is already consumed whenever used > 0.
     for (uint32_t i = 0; i < n; ++i) {
-      pcm[2 * i] = clip(block[0][used + i]);
-      pcm[2 * i + 1] = channels == 2 ? clip(block[1][used + i]) : pcm[2 * i];
+      const int16_t l = clip(block[used + i]);
+      int16_t r = l;
+      if (channels == 2) { int32_t v; memcpy(&v, &right[used + i], sizeof(v)); r = clip(v); }
+      pcm[2 * i] = l;
+      pcm[2 * i + 1] = r;
     }
     used += uint16_t(n);
     return int(n);

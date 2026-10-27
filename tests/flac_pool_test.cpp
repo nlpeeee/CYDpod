@@ -27,6 +27,7 @@ static bool drain(CodecTrack& t, unsigned ch, std::vector<int16_t>& got, size_t 
   }
 }
 int main() {
+  setvbuf(stdout, nullptr, _IONBF, 0);
   std::ifstream mf("tests/out/flac/manifest.tsv"); std::string line; std::vector<Row> rows;
   while (std::getline(mf, line)) {
     std::istringstream ls(line); Row r; std::string rate, ch, frames;
@@ -67,7 +68,7 @@ int main() {
     printf("PASS 48 kHz FLAC -> FIR: %zu output frames for 12805 source frames\n", out); track.end(); f.close(); }
   // Seeks: exact against the source PCM, bytes read per seek capped, cancellable, restartable.
   static FlacState direct; // host-only second instance for the counters
-  const char* seekNames[] = {"table-long", "notable-long", "stereo-tags-table", "variable-long", "fixed-minmax", "mono-long", "44100-2-1152"};
+  const char* seekNames[] = {"table-long", "notable-long", "stereo-tags-table", "variable-long", "fixed-minmax", "stereo-4608", "notable-4608", "mono-4608", "mono-long", "44100-2-1152"};
   unsigned seeks = 0;
   for (const char* name : seekNames) {
     const Row* row = nullptr; for (const Row& r : rows) if (r.name == name) row = &r; assert(row);
@@ -94,7 +95,7 @@ int main() {
     track.end(); f.close();
   }
   // Hostile input: flipped bytes, cuts and garbage must terminate with eof/error and never write outside the pool (ASan/UBSan build).
-  { std::ifstream in(flacPath("notable-long"), std::ios::binary); std::vector<unsigned char> src((std::istreambuf_iterator<char>(in)), {});
+  for (const char* fuzzName : {"notable-long", "notable-4608"}) { std::ifstream in(flacPath(fuzzName), std::ios::binary); std::vector<unsigned char> src((std::istreambuf_iterator<char>(in)), {});
     unsigned state = 12345, eofs = 0, errs = 0; auto rnd = [&] { state = state * 1103515245u + 12345u; return state >> 8; };
     for (unsigned v = 0; v < 160; ++v) {
       auto bad = src; const unsigned mode = v % 4;

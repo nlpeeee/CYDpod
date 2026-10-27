@@ -188,6 +188,9 @@ rows.append(build('notable-long', 48000, 2, 4096, 4096 * 40 + 11, detail='no see
 rows.append(build('table-long', 48000, 2, 2048, 2048 * 90 + 33, seekpoints=16, detail='seektable'))
 rows.append(build('variable-long', 44100, 2, 2304, 44100 * 5, variable=True, detail='variable block size, sample numbers'))
 rows.append(build('fixed-minmax', 44100, 2, 2048, 2048 * 60 + 33, streaminfo_min=1024, detail='fixed strategy, STREAMINFO min != max, no seektable'))
+rows.append(build('stereo-4608', 44100, 2, 4608, 4608 * 9 + 211, seekpoints=4, detail='ffmpeg-style 4608 blocks, seektable'))
+rows.append(build('notable-4608', 48000, 2, 4608, 4608 * 14 + 77, detail='4608 blocks, no seektable'))
+rows.append(build('mono-4608', 44100, 1, 4608, 4608 * 5 + 9, detail='mono 4608'))
 rows.append(build('mono-long', 44100, 1, 1152, 44100 * 3, seekpoints=40, detail='mono'))
 # Rejects.
 rows.append(build('reject-24bit', 44100, 2, 1152, 3000, status='reject:flac_bits', bps=24))

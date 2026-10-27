@@ -8,6 +8,7 @@
 #include "mp3_pool.h"
 #include "flac_pool.h"
 #include <string.h>
+#include <stddef.h>
 namespace {
 struct AacState {
   alignas(8) uint8_t workspace[MINIAAC_WORKSPACE_BYTES];
@@ -16,8 +17,9 @@ struct AacState {
 };
 union CodecState { AacState aac; WavState wav; Mp3State mp3; FlacState flac; CodecState() {} ~CodecState() {} };
 struct PoolLayout {
+  alignas(8) int16_t pcm[2304];      // 1152 stereo MP3 frames, also AAC/WAV. Placed first: FLAC's second channel
+                                     // (4608 int32) starts here and continues into FlacState::rightTail.
   CodecState state;
-  int16_t pcm[2304];                 // 1152 stereo MP3 frames, also AAC/WAV
   uint8_t input[2048];
   FirState fir;
   uint8_t kind; // 0 closed, 1 AAC, 2 WAV, 3 MP3, 4 FLAC
@@ -32,6 +34,7 @@ static_assert(sizeof(Mp3State) + 4608 + 2048 + 524 + 128 <= 40960, "MP3 inclusiv
 static_assert(sizeof(WavState) + 4608 + 2048 + 524 + 128 <= 40960, "WAV inclusive pool budget");
 static_assert(sizeof(FlacState) + 4608 + 2048 + 524 + 128 <= 40960, "FLAC inclusive pool budget");
 static_assert(sizeof(PoolLayout) <= 40960, "inclusive codec pool overflow");
+static_assert(offsetof(PoolLayout,state)==sizeof(PoolLayout::pcm) && offsetof(FlacState,rightTail)==0, "FLAC right channel must run from pcm into FlacState::rightTail");
 union alignas(8) DecoderPool {
   PoolLayout layout;
   uint8_t bytes[40960];
@@ -55,7 +58,7 @@ miniaac_status CodecTrack::begin(File& file) {
     return MINIAAC_OK;
   }
   if (!memcmp(magic,"fLaC",4)) {
-    pool().kind=4; new (&pool().state.flac) FlacState{};
+    pool().kind=4; new (&pool().state.flac) FlacState{}; pool().state.flac.right=reinterpret_cast<int32_t*>(pool().pcm);
     const char* error=pool().state.flac.open(file,pool().input);
     if (error) { pool().error=error; return MINIAAC_UNSUPPORTED; }
     pool().rate=pool().state.flac.rate;

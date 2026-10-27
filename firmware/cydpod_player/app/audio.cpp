@@ -54,6 +54,8 @@ static volatile uint32_t lastPullMs = 0;
 static TaskHandle_t decodeHandle = nullptr;
 static volatile bool startupComplete = false;
 static volatile uint32_t pcmInputRate=0, pcmMaxPumpMs=0, pcmYields=0;
+static volatile uint32_t pcmBlockUs=0, pcmMaxBlockUs=0;
+static uint32_t pcmSinkWaitUs=0; // producer-only, reset for each PCM block
 static portMUX_TYPE errorLock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t errorSerial = 0;
 static int errorTrack = -1;
@@ -123,7 +125,9 @@ static void pushFrame(int16_t l, int16_t r) {
       portEXIT_CRITICAL(&stateLock); return;
     }
     portEXIT_CRITICAL(&stateLock);
+    const uint32_t waitAt=micros();
     vTaskDelay(pdMS_TO_TICKS(4));
+    pcmSinkWaitUs+=micros()-waitAt;
   }
 }
 
@@ -289,7 +293,7 @@ static void decodeTask(void*) {
         continue;
       }
     }
-    const uint32_t pumpAt=millis();
+    const uint32_t pumpAt=millis(),pumpAtUs=micros();pcmSinkWaitUs=0;
     while (m4a.pending() > 0 && !abortDecode) {
       const M4aStereo* f = m4a.pcm();
       m4a.output(f->l, f->r,ringSink,nullptr);
@@ -297,6 +301,8 @@ static void decodeTask(void*) {
       m4a.consume(1);
     }
     if(m4a.sampleRate()!=44100 && !abortDecode) {
+      pcmBlockUs=micros()-pumpAtUs-pcmSinkWaitUs;
+      if(pcmBlockUs>pcmMaxBlockUs)pcmMaxBlockUs=pcmBlockUs;
       const uint32_t took=millis()-pumpAt;if(took>pcmMaxPumpMs)pcmMaxPumpMs=took;
       // FIR work can be slower than the consumer, so the ring may NEVER fill.
       // A priority-5 producer must still sleep to release core 1 to loop/idle;
@@ -558,6 +564,6 @@ uint32_t audio_decodeStackFree() {
   return decodeHandle ? uxTaskGetStackHighWaterMark(decodeHandle) : 0;
 }
 
-AudioPcmStats audio_pcmStats() { return {pcmInputRate,pcmMaxPumpMs,pcmYields}; }
+AudioPcmStats audio_pcmStats() { return {pcmInputRate,pcmMaxPumpMs,pcmYields,pcmBlockUs,pcmMaxBlockUs}; }
 
 #endif  // !CYD_UPLOADER

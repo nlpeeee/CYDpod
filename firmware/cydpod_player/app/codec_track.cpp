@@ -29,10 +29,10 @@ struct PoolLayout {
   uint32_t rate;
   const char* error;
 };
-static_assert(sizeof(AacState) + 4608 + 2048 + 524 + 128 <= 40960, "AAC inclusive pool budget");
-static_assert(sizeof(Mp3State) + 4608 + 2048 + 524 + 128 <= 40960, "MP3 inclusive pool budget");
-static_assert(sizeof(WavState) + 4608 + 2048 + 524 + 128 <= 40960, "WAV inclusive pool budget");
-static_assert(sizeof(FlacState) + 4608 + 2048 + 524 + 128 <= 40960, "FLAC inclusive pool budget");
+static_assert(sizeof(AacState) + 4608 + 2048 + sizeof(FirState) + 128 <= 40960, "AAC inclusive pool budget");
+static_assert(sizeof(Mp3State) + 4608 + 2048 + sizeof(FirState) + 128 <= 40960, "MP3 inclusive pool budget");
+static_assert(sizeof(WavState) + 4608 + 2048 + sizeof(FirState) + 128 <= 40960, "WAV inclusive pool budget");
+static_assert(sizeof(FlacState) + 4608 + 2048 + sizeof(FirState) + 128 <= 40960, "FLAC inclusive pool budget");
 static_assert(sizeof(PoolLayout) <= 40960, "inclusive codec pool overflow");
 static_assert(offsetof(PoolLayout,state)==sizeof(PoolLayout::pcm) && offsetof(FlacState,rightTail)==0, "FLAC right channel must run from pcm into FlacState::rightTail");
 union alignas(8) DecoderPool {
@@ -180,10 +180,7 @@ bool CodecTrack::output(int16_t l,int16_t r,PcmSink sink,void* user) {
 bool CodecTrack::drain(PcmSink sink,void* user) {
   if(pool().rate==44100)return true;
   const FirBank* b=firBank(pool().rate);if(!b)return false;
-  // Causal zero-start FIR retains its ~63.5-source-frame delay. Flush 127
-  // zero frames once at EOF; track switches/seek discard history instead.
-  for(unsigned i=0;i<127;++i)if(!pool().fir.push(0,0,*b,sink,user))return false;
-  pool().fir.reset();return true;
+  return pool().fir.drain(*b,sink,user);
 }
 const char* CodecTrack::name() const { if(pool().error && strcmp(pool().error,"ok"))return pool().error;return pool().kind==1 ? pool().state.aac.track.name() : pool().error?pool().error:"closed"; }
 #endif

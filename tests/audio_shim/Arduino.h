@@ -31,3 +31,5 @@ inline int xTaskCreatePinnedToCore(void(*fn)(void*),const char*,unsigned stack,v
 }
 inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t){return 0;}
 inline uint32_t esp_random(){return 1234;}
+
+inline uint32_t micros(){return uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());}

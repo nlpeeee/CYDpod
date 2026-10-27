@@ -64,7 +64,7 @@ def main():
     data = ('\n'.join(lines)+'\n').encode()
     out = Path(__file__).resolve().parents[1]/'firmware/cydpod_player/app/fir_coefficients.h'
     if args.check:
-        assert out.read_bytes() == data, 'regenerate fir_coefficients.h'
+        assert out.read_text().replace('\r\n','\n') == data.decode(), 'regenerate fir_coefficients.h'
     else:
         out.write_bytes(data)
     print(json.dumps(dict(phases=PHASES,taps=TAPS,bytes=16384,maxL1=bound,

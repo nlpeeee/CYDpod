@@ -23,6 +23,7 @@ g++ $CXXFLAGS tests/mp3_pool_test.cpp tests/helix_host_alloc.cpp firmware/cydpod
 python3 -I tests/flac_fixtures.py
 g++ $CXXFLAGS -fsanitize=address,undefined -fno-sanitize-recover=undefined -Ivendor/miniflac -Ifirmware/cydpod_player/app tests/flac_pool_test.cpp tests/helix_host_alloc.cpp firmware/cydpod_player/app/codec_track.cpp firmware/cydpod_player/app/resampler.cpp "$OUT"/obj/*.o "$OUT"/mp3/*.o "$OUT/flac_core.o" -o "$OUT/flac_pool_test"
 "$OUT/flac_pool_test"
-g++ -O2 -std=c++17 tests/resampler_test.cpp firmware/cydpod_player/app/resampler.cpp -o "$OUT/resampler_test"
+python3 -I tools/generate_fir.py --check
+g++ -O2 -std=c++17 -fsanitize=undefined -fno-sanitize-recover=undefined tests/resampler_test.cpp firmware/cydpod_player/app/resampler.cpp -o "$OUT/resampler_test"
 "$OUT/resampler_test"
 sh tests/build_audio_seek.sh

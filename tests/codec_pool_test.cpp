@@ -20,7 +20,10 @@ int main(int argc,char** argv){
   auto b=wav(bits,ch);save("tests/out/pool.wav",b);File f("tests/out/pool.wav","r");assert(track.begin(f)==MINIAAC_OK);assert(track.totalFrames()==10240&&track.sampleRate()==44100);
   int at=0;while(true){auto rc=track.next();assert(rc!=CodecTrack::Pull::error);if(rc==CodecTrack::Pull::eof)break;
    while(track.pending()){auto p=*track.pcm();int v=(at%256-128)*256;int right=ch==1?v:-v/2;if(bits==8)right=(right/256)*256;
-    assert(p.l==v&&p.r==right);track.consume(1);++at;}}
+    assert(p.l==v&&p.r==right);
+    struct Expected {int l,r,calls;};Expected e{v,right,0};
+    assert(track.output(p.l,p.r,[](void* u,int16_t l,int16_t r){auto& e=*static_cast<Expected*>(u);assert(l==e.l&&r==e.r);++e.calls;return true;},&e));assert(e.calls==1);
+    track.consume(1);++at;}}
   assert(at==10240);assert(track.seekable());
   for(uint32_t ms:{100u,0u,232u,50u,99999u}) {
    assert(track.seek(ms,nullptr,nullptr)==MINIAAC_OK);
@@ -53,12 +56,32 @@ int main(int argc,char** argv){
  for(int arg=1;arg<argc;++arg){File f(argv[arg],"r");
   hostReadBudget=1000000000;assert(track.begin(f)==MINIAAC_OK);
   const long openBytes=1000000000-hostReadBudget;hostReadBudget=-1;
-  assert(track.sampleRate()==48000);size_t count=0;std::vector<M4aStereo> output;
+  assert(track.sampleRate()==48000);size_t count=0;std::vector<M4aStereo> output,decoded;std::vector<size_t> joins;
   auto sink=[](void* v,int16_t l,int16_t r){static_cast<std::vector<M4aStereo>*>(v)->push_back({l,r});return true;};
   while(true){auto rc=track.next();assert(rc!=CodecTrack::Pull::error);if(rc==CodecTrack::Pull::eof)break;
-   while(track.pending()){auto p=*track.pcm();assert(track.output(p.l,p.r,sink,&output));track.consume(1);++count;assert(count<48000*120);}}
+   joins.push_back(output.size());
+   while(track.pending()){auto p=*track.pcm();decoded.push_back(p);assert(track.output(p.l,p.r,sink,&output));track.consume(1);++count;assert(count<48000*120);}}
   assert(count>0);assert(track.drain(sink,&output));
-  assert(output.size()==((count+127)*147+159)/160);
+  assert(output.size()==(count*147+159)/160);
+  if(strstr(argv[arg],"Sample_BeeMoved")) {
+   FirState ref;ref.reset();std::vector<M4aStereo> independent;
+   for(size_t base=0;base<decoded.size();base+=7)for(size_t i=base;i<std::min(base+7,decoded.size());++i)
+    assert(ref.push(decoded[i].l,decoded[i].r,*firBank(48000),sink,&independent));
+   assert(ref.drain(*firBank(48000),sink,&independent));assert(independent.size()==output.size());
+   for(size_t i=0;i<output.size();++i)assert(output[i].l==independent[i].l&&output[i].r==independent[i].r);
+   // Select the quietest complete 0.2-second passage; compare joins to ordinary
+   // sample steps there, rather than imposing a music-dependent absolute limit.
+   size_t quiet=0;double best=1e100;const size_t window=8820;
+   for(size_t base=200;base+window+200<output.size();base+=4410){double energy=0;
+    for(size_t j=base;j<base+window;++j)energy+=double(output[j].l)*output[j].l+double(output[j].r)*output[j].r;
+    if(energy<best){best=energy;quiet=base;}}
+   int allJump=0,joinJump=0;unsigned joinCount=0;
+   for(size_t j=quiet+1;j<std::min(quiet+window,output.size());++j)allJump=std::max(allJump,std::max(abs(int(output[j].l)-output[j-1].l),abs(int(output[j].r)-output[j-1].r)));
+   for(auto j:joins)if(j>quiet&&j<quiet+window&&j<output.size()){
+    ++joinCount;joinJump=std::max(joinJump,std::max(abs(int(output[j].l)-output[j-1].l),abs(int(output[j].r)-output[j-1].r)));}
+   assert(joinCount>0&&joinJump<=allJump&&joinJump<512);
+   printf("PASS real AAC quiet passage %.3f s: %u joins max jump %d, passage max %d; every output equals independent 7-frame blocks\n",quiet/44100.,joinCount,joinJump,allJump);
+  }
   // Synthetic tones have a known frequency and level independent of the FIR.
   if(!strstr(argv[arg],"Sample_BeeMoved")) {
    const bool wav=strstr(argv[arg],".wav");

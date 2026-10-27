@@ -25,7 +25,7 @@ struct PoolLayout {
   uint8_t kind; // 0 closed, 1 AAC, 2 WAV, 3 MP3, 4 FLAC
   File* file;
   size_t frames, used;
-  uint64_t total;
+  uint64_t total, seekFrame;
   uint32_t rate;
   const char* error;
 };
@@ -113,9 +113,47 @@ CodecTrack::Pull CodecTrack::next() {
   if(n<0) {pool().error="wav_read";return Pull::error;}
   pool().frames=size_t(n); return n?Pull::frames:Pull::eof;
 }
-bool CodecTrack::seekable() const { return pool().kind==1 ? pool().state.aac.track.seekable() : pool().kind==4 && pool().total; }
+bool CodecTrack::seekable() const { return pool().kind==1 ? pool().state.aac.track.seekable() : pool().kind>=2 && pool().total; }
 miniaac_status CodecTrack::seek(uint32_t ms, miniaac_seek_hook hook, void* user) {
   pool().fir.reset();
+  if (!seekable()) return MINIAAC_UNSUPPORTED;
+  pool().seekFrame=uint64_t(ms)*pool().rate/1000;
+  if(pool().seekFrame>=totalFrames())pool().seekFrame=totalFrames()-1;
+  if(pool().kind==2) {
+    if(hook && hook(user))return MINIAAC_CANCELLED;
+    auto& wav=pool().state.wav;
+    const uint32_t cursor=uint32_t(pool().seekFrame*wav.align);
+    if(!pool().file->seek(wav.data+cursor)){pool().error="wav_seek";return MINIAAC_IO;}
+    wav.cursor=cursor;pool().frames=pool().used=0;pool().error="ok";
+    return MINIAAC_OK;
+  }
+  if(pool().kind==3) {
+    // Replay from the first frame: exact for CBR without Xing and VBR alike,
+    // and rebuilds both the bit reservoir and synthesis overlap. Yield/cancel
+    // every 32 frames so long seeks remain responsive, including while paused.
+    auto& mp3=pool().state.mp3;
+    const char* error=mp3.open(*pool().file);
+    if(error){pool().error=error;return MINIAAC_IO;}
+    mp3.drops=mp3.run=0;
+    pool().frames=pool().used=0;
+    uint64_t decoded=0;size_t last=0;unsigned blocks=0;
+    for(;;) {
+      if((blocks++%32)==0 && hook && hook(user))return MINIAAC_CANCELLED;
+      const int n=mp3.read(*pool().file,pool().input,pool().pcm,pool().error);
+      if(n<0)return MINIAAC_IO;
+      if(!n) {
+        if(!last){pool().error="mp3_seek_eof";return MINIAAC_IO;}
+        mp3.total=pool().total=decoded;pool().seekFrame=decoded-1;
+        pool().frames=last;pool().used=last-1;break;
+      }
+      last=size_t(n);
+      if(pool().seekFrame<decoded+last) {
+        pool().frames=last;pool().used=size_t(pool().seekFrame-decoded);break;
+      }
+      decoded+=last;
+    }
+    pool().error="ok";return MINIAAC_OK;
+  }
   if(pool().kind==4) {
     pool().frames=pool().used=0;
     switch(pool().state.flac.seek(*pool().file,pool().input,ms,hook,user,pool().error)) {
@@ -126,6 +164,7 @@ miniaac_status CodecTrack::seek(uint32_t ms, miniaac_seek_hook hook, void* user)
   }
   return pool().kind==1 ? pool().state.aac.track.seek(ms,hook,user) : MINIAAC_UNSUPPORTED;
 }
+uint32_t CodecTrack::seekPositionMs() const { return uint32_t(pool().seekFrame*1000/pool().rate); }
 size_t CodecTrack::pending() const { return pool().kind==1 ? pool().state.aac.track.pending() : pool().frames-pool().used; }
 const M4aStereo* CodecTrack::pcm() const {
   return pool().kind==1 ? pool().state.aac.track.pcm() : reinterpret_cast<const M4aStereo*>(pool().pcm)+pool().used;

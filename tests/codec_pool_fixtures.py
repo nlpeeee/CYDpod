@@ -21,3 +21,10 @@ for channels in (1,2):
   output=str(p)
   if exe.lower().endswith('.exe') and sys.platform!='win32':output=subprocess.check_output(['wslpath','-w',str(p.resolve())],text=True).strip()
   subprocess.run([exe,'-v','error','-f','lavfi','-i','sine=frequency=997:sample_rate=48000:duration=0.2','-ac',str(channels),'-c:a','aac','-y',output],check=True)
+
+# A longer CBR file with no Xing/Info frame, for the production seek task.
+p=Path('tests/out/miniaac_seek/fixtures/seek.mp3')
+output=str(p)
+if exe.lower().endswith('.exe') and sys.platform!='win32':output=subprocess.check_output(['wslpath','-w',str(p.resolve())],text=True).strip()
+subprocess.run([exe,'-v','error','-f','lavfi','-i','sine=frequency=997:sample_rate=44100:duration=2','-ac','2','-c:a','libmp3lame','-b:a','128k','-write_xing','0','-y',output],check=True)
+

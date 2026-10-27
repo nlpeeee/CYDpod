@@ -20,7 +20,18 @@ int main(int argc,char** argv){
   int at=0;while(true){auto rc=track.next();assert(rc!=CodecTrack::Pull::error);if(rc==CodecTrack::Pull::eof)break;
    while(track.pending()){auto p=*track.pcm();int v=(at%256-128)*256;int right=ch==1?v:-v/2;if(bits==8)right=(right/256)*256;
     assert(p.l==v&&p.r==right);track.consume(1);++at;}}
-  assert(at==10240);track.end();f.close();
+  assert(at==10240);assert(track.seekable());
+  for(uint32_t ms:{100u,0u,232u,50u,99999u}) {
+   assert(track.seek(ms,nullptr,nullptr)==MINIAAC_OK);
+   unsigned frame=std::min<uint64_t>(uint64_t(ms)*44100/1000,10239);
+   assert(track.seekPositionMs()==frame*1000/44100);
+   assert(track.next()==CodecTrack::Pull::frames);
+   int v=(frame%256-128)*256,right=ch==1?v:-v/2;
+   if(bits==8)right=(right/256)*256;
+   assert(track.pcm()->l==v&&track.pcm()->r==right);
+  }
+  assert(track.seek(0,[](void*){return 1;},nullptr)==MINIAAC_CANCELLED);
+  track.end();f.close();
   // F-07: a cut last frame is dropped; unsized/oversized RIFF and data sizes mean "to the end of the file".
   auto open=[&](const std::vector<uint8_t>& v,uint64_t frames){save("tests/out/pool.wav",v);File g("tests/out/pool.wav","r");assert(track.begin(g)==MINIAAC_OK);if(track.totalFrames()!=frames)fprintf(stderr,"wav total %llu want %llu bits=%u ch=%u\n",(unsigned long long)track.totalFrames(),(unsigned long long)frames,bits,ch);assert(track.totalFrames()==frames);
    uint64_t got=0;for(;;){auto rc=track.next();assert(rc!=CodecTrack::Pull::error);if(rc==CodecTrack::Pull::eof)break;got+=track.pending();track.consume(track.pending());}assert(got==frames);track.end();g.close();};

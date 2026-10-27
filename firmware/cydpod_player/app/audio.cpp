@@ -162,7 +162,7 @@ static void seekTrack(uint32_t ms, uint32_t serial) {
   if (commandSerial != serial || rc == MINIAAC_CANCELLED){portEXIT_CRITICAL(&stateLock);return;}
   if (rc != MINIAAC_OK) {decodeBlocked = true; playing = false;}
   else {
-    posBaseMs = uint32_t(min<uint64_t>(uint64_t(ms) * m4a.sampleRate() / 1000, m4a.totalFrames() - 1) * 1000 / m4a.sampleRate());
+    posBaseMs = m4a.seekPositionMs();
     framesPlayed = 0; starting = true;decodeBlocked = false;
   }
   portEXIT_CRITICAL(&stateLock);

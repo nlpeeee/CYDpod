@@ -2,13 +2,37 @@
 // FreeRTOS/SD are host stand-ins: this does not validate ESP timing or stack use.
 #include "../firmware/cydpod_player/app/audio.cpp"
 #include <cassert>
+#include <vector>
 int storage_trackCount(){return 2;}
 static bool missingTrack=false;
-String storage_trackPath(int n){return missingTrack?"missing.m4a":n?"front.m4a":"tail.m4a";}
+static const char* formatPath=nullptr;
+String storage_trackPath(int n){return formatPath?formatPath:missingTrack?"missing.m4a":n?"front.m4a":"tail.m4a";}
 static void waitIdle(){auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(audio_isSeeking()){assert(std::chrono::steady_clock::now()<end);std::this_thread::sleep_for(std::chrono::milliseconds(2));}}
 static void waitBuffered(){auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(audio_bufferPct()<80){assert(std::chrono::steady_clock::now()<end);std::this_thread::sleep_for(std::chrono::milliseconds(2));}}
 static bool silent(const int16_t* p,size_t n){for(size_t i=0;i<n;++i)if(p[i])return false;return true;}
-int main(){
+static int seekFormat(const char* path){
+ // Capture the uninterrupted production decoder output before starting its task.
+ std::vector<M4aStereo> reference;CodecTrack t;File source(path,"r");assert(source);
+ assert(t.begin(source)==MINIAAC_OK&&t.sampleRate()==44100);
+ for(;;){auto rc=t.next();assert(rc!=CodecTrack::Pull::error);if(rc==CodecTrack::Pull::eof)break;
+  reference.insert(reference.end(),t.pcm(),t.pcm()+t.pending());t.consume(t.pending());}
+ t.end();source.close();assert(reference.size()>44100);
+ formatPath=path;SD.root="/";audio_begin(0,0,100,false,REPEAT_ALL);audio_start();waitIdle();
+ assert(audio_canSeek()&&!audio_isPlaying());
+ for(uint32_t ms:{500u,1000u,10u,750u}){
+  assert(audio_seekTo(ms));waitIdle();assert(!audio_isPlaying());
+  assert(audio_positionMs()>=ms-1&&audio_positionMs()<=ms);waitBuffered();
+  audio_setPlaying(true);int16_t out[256];audio_pull(out,128);audio_setPlaying(false);
+  assert(!memcmp(out,reference.data()+uint64_t(ms)*44100/1000,sizeof(out)));
+ }
+ audio_seekRelative(1);waitIdle();assert(audio_positionMs()>=1751&&audio_positionMs()<=1753);
+ assert(audio_seekTo(UINT32_MAX));waitIdle();assert(audio_positionMs()<=reference.size()*1000/44100);
+ assert(audio_seekTo(100));waitIdle();assert(!audio_commands().blocked);
+ decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);free(order);
+ printf("PASS production WAV/MP3 seek: paused, relative, backwards, clamped EOF, exact PCM, truthful position: %s\n",path);return 0;
+}
+int main(int argc,char** argv){
+ if(argc>1)return seekFormat(argv[1]);
  SD.root="tests/out/miniaac_seek/fixtures";
  audio_begin(0,4000,100,false,REPEAT_ALL);audio_start();waitIdle();
  assert(audio_startupComplete()&&audio_canSeek()&&!audio_isPlaying());assert(audio_positionMs()>=3999&&audio_positionMs()<=4000);

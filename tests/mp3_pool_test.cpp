@@ -14,13 +14,25 @@ int main(int argc,char** argv){
   unsigned before=helixHostAllocations;auto stock=MP3InitDecoder();assert(stock&&helixHostAllocations==before+8);
   before=helixHostAllocations;
   File f(argv[arg],"r");assert(track.begin(f)==MINIAAC_OK);
-  size_t count=0;int16_t reference[2304];unsigned char* p=data.data()+at;int left=end-at;
+  std::vector<M4aStereo> decoded;size_t count=0;int16_t reference[2304];unsigned char* p=data.data()+at;int left=end-at;
   for(;;){auto rc=track.next();if(rc==CodecTrack::Pull::error)fprintf(stderr,"MP3 error %s: %s\n",argv[arg],track.name());assert(rc!=CodecTrack::Pull::error);if(rc==CodecTrack::Pull::eof)break;
    int status;do{assert(left>0);status=MP3Decode(stock,&p,&left,reference,0);}while(status==ERR_MP3_MAINDATA_UNDERFLOW);assert(status==0);
    MP3FrameInfo info{};MP3GetLastFrameInfo(stock,&info);assert(track.sampleRate()==unsigned(info.samprate));assert(track.pending()==size_t(info.outputSamps/info.nChans));
-   for(int i=0;i<info.outputSamps/info.nChans;++i){auto pcm=*track.pcm();assert(pcm.l==reference[i*info.nChans]&&pcm.r==reference[i*info.nChans+info.nChans-1]);track.consume(1);++count;}
+   for(int i=0;i<info.outputSamps/info.nChans;++i){auto pcm=*track.pcm();decoded.push_back(pcm);assert(pcm.l==reference[i*info.nChans]&&pcm.r==reference[i*info.nChans+info.nChans-1]);track.consume(1);++count;}
   }
-  assert(count>0&&helixHostAllocations==before);track.end();f.close();MP3FreeDecoder(stock);
+  assert(count>0&&helixHostAllocations==before);assert(track.seekable());
+  for(uint32_t ms:{100u,0u,50u,999999u,25u}) {
+   const uint64_t target=std::min<uint64_t>(uint64_t(ms)*track.sampleRate()/1000,track.totalFrames()-1);
+   assert(track.seek(ms,nullptr,nullptr)==MINIAAC_OK);
+   const size_t frame=std::min<uint64_t>(target,decoded.size()-1);
+   assert(track.seekPositionMs()==frame*1000/track.sampleRate());
+   assert(track.pending()>0);
+   const size_t n=std::min(track.pending(),decoded.size()-frame);
+   assert(!memcmp(track.pcm(),decoded.data()+frame,n*sizeof(M4aStereo)));
+  }
+  assert(track.seek(100,[](void*){return 1;},nullptr)==MINIAAC_CANCELLED);
+  assert(track.seek(50,nullptr,nullptr)==MINIAAC_OK);
+  assert(helixHostAllocations==before);track.end();f.close();MP3FreeDecoder(stock);
   // Malformed tag and truncated final frame reject deterministically.
   auto save=[&](const std::vector<unsigned char>& bytes){FILE* out=fopen("tests/out/bad.mp3","wb");assert(out);assert(fwrite(bytes.data(),1,bytes.size(),out)==bytes.size());fclose(out);};
   // Frames decoded from a mutated copy; -1 when the track ended with an error instead of EOF.

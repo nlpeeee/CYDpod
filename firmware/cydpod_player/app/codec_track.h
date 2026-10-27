@@ -12,6 +12,7 @@ class CodecTrack {
   Pull next();
   bool seekable() const;
   miniaac_status seek(uint32_t ms, miniaac_seek_hook hook, void* user);
+  uint32_t seekPositionMs() const; // actual first PCM frame after successful seek
   size_t pending() const;
   const M4aStereo* pcm() const;
   void consume(size_t frames);

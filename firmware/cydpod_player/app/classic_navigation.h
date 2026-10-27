@@ -3,20 +3,28 @@
 #include <stdlib.h>
 namespace cydclassic {
 inline int clampTop(int top,int count,int rows){int end=count>rows?count-rows:0;return top<0?0:top>end?end:top;}
-// Movement claims the entire press, including long drags and excursions back
-// into the original target. A later return cannot turn a drag into a tap.
+// A press is a tap while it ends near the control it landed on. Near means within
+// SlopNear px of the target (the screen measures it, so a neighbouring control can
+// never be reached by slop); wandering out and back is forgiven, leaving by more
+// than SlopFar is a deliberate cancel. In a scrollable list a drag claims the press
+// for good: mostly-vertical movement of DragVertical px, or DragAny px either way.
+// Horizontal jitter below DragAny must not turn a row tap into nothing.
 struct Gesture {
+  static constexpr int SlopNear=8,SlopFar=24,DragVertical=10,DragAny=16;
   int x=0,y=0,top=0,target=-1;
-  bool claimed=false,cancelled=false;
-  void down(int px,int py,int first,int hit){x=px;y=py;top=first;target=hit;claimed=cancelled=false;}
-  bool move(int px,int py,int hit,bool scroll){
-    // Only a scrollable list claims movement inside its target. Resistive
-    // jitter/sliding within a large button must still execute its command.
-    if(scroll&&(abs(px-x)>=10||abs(py-y)>=10))claimed=true;
-    if(hit!=target)cancelled=true;
-    return claimed||cancelled;
+  bool claimed=false,strayed=false;
+  void down(int px,int py,int first,int hit){x=px;y=py;top=first;target=hit;claimed=strayed=false;}
+  // `far`: the finger is now more than SlopFar from the captured target.
+  bool move(int px,int py,bool far,bool scroll){
+    if(scroll){
+      const int dx=abs(px-x),dy=abs(py-y);
+      if(dx>=DragAny||dy>=DragAny||(dy>=DragVertical&&dy>=dx))claimed=true;
+    }
+    if(far)strayed=true;
+    return claimed||strayed;
   }
-  bool activate(int hit)const{return !claimed&&!cancelled&&target!=-1&&hit==target;}
+  // `near`: the release point is within SlopNear of the captured target.
+  bool activate(bool near)const{return !claimed&&!strayed&&target!=-1&&near;}
   int scrollTop(int py,int count,int rows)const{return clampTop(top+(y-py)/44,count,rows);}
 };
 template<class T,unsigned Capacity=8> struct Navigation {

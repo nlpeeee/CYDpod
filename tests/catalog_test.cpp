@@ -46,12 +46,17 @@ static int find(CatalogView view,const char* label){CatalogEntry e;for(int i=0;i
 static CatalogView child(CatalogView v,const char* label){CatalogEntry e;check(storage_browseEntry(v,find(v,label),e)&&e.navigates,"group child");return e.child;}
 int main(){try{
   using namespace cydlib;
-  cydclassic::Gesture gesture;gesture.down(20,60,0,0);check(gesture.activate(0),"row tap");
-  gesture.move(20,10,-1,true);check(!gesture.activate(0)&&gesture.claimed,"drag suppresses tap");
-  gesture.move(20,60,0,true);check(!gesture.activate(0),"return after drag still cancelled");
-  gesture.down(20,300,0,-11);check(gesture.activate(-11),"footer control tap");
-  gesture.move(50,300,-11,false);check(gesture.activate(-11),"sliding inside a button is not a cancelled drag");
-  gesture.move(68,300,-12,false);check(!gesture.activate(-11),"button exit cancels");
+  cydclassic::Gesture gesture;gesture.down(20,60,0,0);check(gesture.activate(true),"row tap");
+  gesture.move(20,45,false,true);check(gesture.claimed&&!gesture.activate(true),"drag suppresses tap");
+  gesture.move(20,60,false,true);check(!gesture.activate(true),"return after drag still cancelled");
+  gesture.down(20,60,0,0);gesture.move(31,63,false,true);check(!gesture.claimed&&gesture.activate(true),"horizontal jitter under 16 px keeps the row tap");
+  gesture.move(36,63,false,true);check(gesture.claimed,"16 px sideways claims the press");
+  gesture.down(20,60,0,0);gesture.move(28,70,false,true);check(gesture.claimed,"mostly vertical 10 px claims");
+  gesture.down(20,60,0,0);gesture.move(35,70,false,true);check(!gesture.claimed,"10 px down with 15 px sideways is jitter, not a drag");
+  gesture.down(20,300,0,-11);check(gesture.activate(true),"footer control tap");
+  gesture.move(50,300,false,false);check(gesture.activate(true),"sliding inside a button is not a cancelled drag");
+  gesture.move(68,300,false,false);check(gesture.activate(true)&&!gesture.activate(false),"slop excursion that returns still activates; ending outside does not");
+  gesture.move(120,300,true,false);check(!gesture.activate(true),"deliberate exit cancels for good");
   check(cydclassic::clampTop(100,12,6)==6&&cydclassic::clampTop(-1,12,6)==0,"scroll clamp");
   struct TestPage{int top=0;};cydclassic::Navigation<TestPage> nav;nav.current().top=17;
   for(int i=1;i<8;++i)check(nav.push(TestPage{}),"push navigation");check(!nav.push(TestPage{}),"bounded navigation");

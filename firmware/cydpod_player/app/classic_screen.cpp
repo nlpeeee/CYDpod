@@ -32,7 +32,7 @@ cydclassic::Gesture gesture;
 Row cache[6];
 cydlib::Record playingInfo{};
 uint8_t dirty=0;
-int count=0,ready=-1,highlight=-1;
+int count=0,ready=-1,highlight=-1,dimmed=-1;
 uint16_t* preview=nullptr;
 int previewCount=0;
 uint32_t lastPaint=0,lastPlayer=0,shownSerial=UINT32_MAX,saveAt=0;
@@ -293,7 +293,7 @@ void editQuery(int target){
   if(changed){storage_searchStart(query);queryPaint();}
 }
 void enter(){
-  bg_stop();seekPreview=false;ready=highlight=-1;gesture=cydclassic::Gesture{};
+  bg_stop();seekPreview=false;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
@@ -444,6 +444,13 @@ int targetAt(int x,int y){
   }
   int row=(y-44)/44;return row>=0&&row<rows()&&page().top+row<count?page().top+row:-1;
 }
+// True when (x,y) is within `slop` px of the control the press landed on. Probing the
+// hit test keeps this exact for every control shape and can never reach a neighbour:
+// only the captured target counts.
+bool within(int x,int y,int slop){
+  for(int dy=-slop;dy<=slop;dy+=slop)for(int dx=-slop;dx<=slop;dx+=slop)if(targetAt(x+dx,y+dy)==gesture.target)return true;
+  return false;
+}
 void seekPreviewAt(int x){
   const int width=tft.width()-24;
   seekMs=seekDuration?uint32_t(uint64_t(constrain(x-12,0,width))*(seekDuration-1)/width):0;
@@ -457,7 +464,7 @@ void seekTransport(int target,bool held){
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
-    ready=-1;gesture.down(x,y,page().top,hit);
+    ready=-1;dimmed=-1;gesture.down(x,y,page().top,hit);
     if(hit==Slider){volumeAt(x);return true;}
     if(hit==Seek){
       seekCancelled=!audio_canSeek();seekPreview=!seekCancelled;
@@ -473,11 +480,14 @@ bool press(PressPhase phase,int x,int y){
       if(abs(y-gesture.y)>24||seekSerial!=audio_trackSerial())seekCancelled=true;
       if(!seekCancelled)seekPreviewAt(x);return true;
     }
-    if(gesture.target==Prev||gesture.target==Next){if(hit!=gesture.target)gesture.cancelled=true;return true;}
-    bool claimed=gesture.move(x,y,hit,gesture.target>=0&&gesture.target<KeyBase&&count>rows());
-    if(claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
+    if(gesture.target==Prev||gesture.target==Next){if(!within(x,y,cydclassic::Gesture::SlopFar))gesture.strayed=true;return true;}
+    const bool claimed=gesture.move(x,y,!within(x,y,cydclassic::Gesture::SlopFar),gesture.target>=0&&gesture.target<KeyBase&&count>rows());
+    if(gesture.claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
       if(top!=page().top){page().top=top;highlight=-1;invalidate();footer();}}
-    if(claimed&&highlight>=0){paintRow(highlight,false);highlight=-1;}
+    // Show what a release would do: lit while within the slop, plain once outside, lit again on return.
+    const bool inside=!gesture.claimed&&!gesture.strayed&&within(x,y,cydclassic::Gesture::SlopNear);
+    if(!inside&&highlight>=0){paintRow(highlight,false);dimmed=highlight;highlight=-1;}
+    else if(inside&&highlight<0&&dimmed>=0){highlight=dimmed;dimmed=-1;paintRow(highlight,true);}
     return claimed;
   }
   if(phase==PRESS_UP){
@@ -490,13 +500,18 @@ bool press(PressPhase phase,int x,int y){
       return true;
     }
     if(gesture.target==Prev||gesture.target==Next){
-      if(!gesture.cancelled&&hit==gesture.target)seekTransport(gesture.target,millis()-pressAt>=600);
+      if(gesture.activate(within(x,y,cydclassic::Gesture::SlopNear)))seekTransport(gesture.target,millis()-pressAt>=600);
       else Serial.println("cmd: transport ignored (finger left target)");
       return true;
     }
-    ready=gesture.activate(hit)?hit:-1;
+    const bool ok=gesture.activate(within(x,y,cydclassic::Gesture::SlopNear));
+    ready=ok?gesture.target:-1;
+    if(!ok&&gesture.target!=-1){
+      if(gesture.claimed)++cydtouch::stats().claim;else ++cydtouch::stats().slop;
+    }
     if(highlight>=0){paintRow(highlight,false);highlight=-1;}
-    return gesture.claimed||gesture.cancelled;
+    dimmed=-1;
+    return gesture.claimed||gesture.strayed;
   }return false;
 }
 void touch(TouchEvent ev,int,int){

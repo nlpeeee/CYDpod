@@ -147,9 +147,16 @@ class Tags {
       }
       copyText(out,buf);
     }
-    else if(encoding==2){
-      for(size_t i=0;i+1<n;){uint32_t cp=be16(p+i);i+=2;if(!cp)break;if(cp==0xfeff)continue;
-        if(cp>=0xd800&&cp<=0xdbff){if(i+1>=n)break;uint32_t lo=be16(p+i);i+=2;if(lo<0xdc00||lo>0xdfff)continue;cp=0x10000+((cp-0xd800)<<10)+(lo-0xdc00);}
+    else if(encoding==4){ // ISO-8859-1 (ID3v1/v2, WAV INFO)
+      for(size_t i=0;i<n&&p[i];++i){const uint8_t c=p[i];
+        if(c<128){if(at+1>=N)break;buf[at++]=char(c);}else{if(at+2>=N)break;buf[at++]=char(0xc0|(c>>6));buf[at++]=char(0x80|(c&63));}}
+      copyText(out,buf);
+    }
+    else if(encoding==2||encoding==5){ // 2 = UTF-16BE, 5 = UTF-16LE
+      const bool le=encoding==5;
+      auto unit=[&](size_t i)->uint32_t{return le?uint32_t(p[i]|(p[i+1]<<8)):be16(p+i);};
+      for(size_t i=0;i+1<n;){uint32_t cp=unit(i);i+=2;if(!cp)break;if(cp==0xfeff)continue;
+        if(cp>=0xd800&&cp<=0xdbff){if(i+1>=n)break;uint32_t lo=unit(i);i+=2;if(lo<0xdc00||lo>0xdfff)continue;cp=0x10000+((cp-0xd800)<<10)+(lo-0xdc00);}
         else if(cp>=0xdc00&&cp<=0xdfff)continue;
         uint8_t v[4];unsigned k=0;if(cp<128)v[k++]=uint8_t(cp);else if(cp<0x800){v[k++]=0xc0|(cp>>6);v[k++]=0x80|(cp&63);}else if(cp<0x10000){v[k++]=0xe0|(cp>>12);v[k++]=0x80|((cp>>6)&63);v[k++]=0x80|(cp&63);}else{v[k++]=0xf0|(cp>>18);v[k++]=0x80|((cp>>12)&63);v[k++]=0x80|((cp>>6)&63);v[k++]=0x80|(cp&63);}
         if(at+k>=N)break;for(unsigned j=0;j<k;++j)buf[at++]=char(v[j]);
@@ -189,8 +196,150 @@ class Tags {
       }
     }return true;
   }
+  // ---- MP3 (ID3v2.2/2.3/2.4, ID3v1), FLAC (Vorbis comments), WAV (LIST/INFO) ----
+  // All reads are bounded (read() budget, frame/block/comment counters, at most 255 payload bytes per field), use only the
+  // caller's 264 B scratch and never the heap; embedded pictures and other bodies are skipped by offset.
+  static uint32_t le32(const uint8_t* p){return uint32_t(p[0])|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24;}
+  static uint32_t syncsafe(const uint8_t* p){return uint32_t(p[0]&127)<<21|uint32_t(p[1]&127)<<14|uint32_t(p[2]&127)<<7|(p[3]&127);}
+  static bool keyIs(const uint8_t* p,size_t n,const char* key){
+    size_t i=0;for(;key[i];++i){if(i>=n||tolower(p[i])!=key[i])return false;}return i==n;
+  }
+  uint16_t number(const uint8_t* p,size_t n,unsigned encoding){char tmp[12]={};text(tmp,p,n,encoding);return uint16_t(atoi(tmp));}
+  enum Field:uint8_t { None,Title,Artist,Album,AlbumArtist,Track,Disc,Compilation };
+  void store(Record& r,Field f,const uint8_t* p,size_t n,unsigned encoding) {
+    switch(f){
+      case Title:text(r.title,p,n,encoding);break;
+      case Artist:text(r.artist,p,n,encoding);break;
+      case Album:text(r.album,p,n,encoding);break;
+      case AlbumArtist:text(r.albumArtist,p,n,encoding);break;
+      case Track:r.track=number(p,n,encoding);break;
+      case Disc:r.disc=number(p,n,encoding);break;
+      case Compilation:r.compilation=number(p,n,encoding)!=0;break;
+      default:break;
+    }
+  }
+  static Field id3Field(const uint8_t* id,unsigned version) {
+    static const char* const v22[]={"TT2","TP1","TAL","TP2","TRK","TPA","TCP"};
+    static const char* const v23[]={"TIT2","TPE1","TALB","TPE2","TRCK","TPOS","TCMP"};
+    const unsigned len=version==2?3:4;
+    for(unsigned i=0;i<7;++i)if(!memcmp(id,version==2?v22[i]:v23[i],len))return Field(i+1);
+    return None;
+  }
+  bool id3v1(Record& r) {
+    if(size_<128||!read(size_-128,scratch_,128)||memcmp(scratch_,"TAG",3))return true;
+    const uint8_t* b=scratch_;
+    if(!r.title[0])text(r.title,b+3,30,4);
+    if(!r.artist[0])text(r.artist,b+33,30,4);
+    if(!r.album[0])text(r.album,b+63,30,4);
+    if(!r.track&&!b[125]&&b[126])r.track=b[126];
+    return true;
+  }
+  bool id3v2(Record& r,const uint8_t* h) {
+    const unsigned version=h[3];
+    if(version<2||version>4||((h[6]|h[7]|h[8]|h[9])&128))return true; // unreadable tag: filename fallback
+    uint64_t end=10+uint64_t(syncsafe(h+6)),at=10;if(end>size_)end=size_;
+    if(version>=3&&(h[5]&0x40)){uint8_t e[4];if(!read(at,e,4))return false;at+=version==4?syncsafe(e):uint64_t(be32(e))+4;}
+    const unsigned header=version==2?6:10;
+    for(unsigned frames=0;frames<512&&end>at&&end-at>=header;++frames){
+      uint8_t f[10];if(!read(at,f,header))return false;
+      if(!f[0])break; // padding
+      uint64_t body=at+header;
+      uint32_t n=version==2?uint32_t(f[3])<<16|uint32_t(f[4])<<8|f[5]:version==3?be32(f+4):syncsafe(f+4);
+      if(n>end-body)break; // damaged size: keep what was read
+      at=body+n;
+      const Field field=id3Field(f,version);
+      if(field==None||n<2)continue;
+      if(version==3&&(f[9]&0xc0))continue;                 // compressed / encrypted
+      if(version==4){if(f[9]&0x0c)continue;if((f[9]&1)&&n>=4){body+=4;n-=4;}} // data-length indicator
+      const uint32_t take=n<255?n:255;
+      if(!read(body,scratch_,take))return false;
+      unsigned encoding=scratch_[0];const uint8_t* p=scratch_+1;size_t count=take-1;
+      if(encoding==0)encoding=4;
+      else if(encoding==1){
+        if(count>=2&&p[0]==0xff&&p[1]==0xfe){encoding=5;p+=2;count-=2;}
+        else if(count>=2&&p[0]==0xfe&&p[1]==0xff){encoding=2;p+=2;count-=2;}
+        else encoding=2;
+      }
+      else if(encoding==2)encoding=2;
+      else if(encoding==3)encoding=1;
+      else continue;
+      store(r,field,p,count,encoding);
+    }
+    return true;
+  }
+  bool vorbis(uint64_t at,uint32_t n,Record& r) {
+    const uint64_t end=at+n;uint8_t w[4];
+    if(n<8||!read(at,w,4))return false;
+    const uint32_t vendor=le32(w);if(vendor>n-8)return true;
+    at+=4+uint64_t(vendor);if(!read(at,w,4))return false;
+    const uint32_t count=le32(w);at+=4;
+    for(uint32_t i=0;i<count&&i<256&&end>at&&end-at>=4;++i){
+      if(!read(at,w,4))return false;
+      const uint32_t length=le32(w);at+=4;if(length>end-at)break;
+      const uint32_t take=length<255?length:255;
+      if(take&&!read(at,scratch_,take))return false;
+      at+=length;
+      size_t eq=0;while(eq<take&&scratch_[eq]!='=')++eq;
+      if(eq>=take)continue;
+      const uint8_t* value=scratch_+eq+1;const size_t count2=take-eq-1;
+      Field f=None;
+      if(keyIs(scratch_,eq,"title"))f=Title;else if(keyIs(scratch_,eq,"artist"))f=Artist;else if(keyIs(scratch_,eq,"album"))f=Album;
+      else if(keyIs(scratch_,eq,"albumartist"))f=AlbumArtist;else if(keyIs(scratch_,eq,"tracknumber"))f=Track;
+      else if(keyIs(scratch_,eq,"discnumber"))f=Disc;else if(keyIs(scratch_,eq,"compilation"))f=Compilation;
+      store(r,f,value,count2,1);
+    }
+    return true;
+  }
+  bool flac(Record& r) {
+    uint64_t at=4;
+    for(unsigned blocks=0;blocks<64&&size_>at&&size_-at>=4;++blocks){
+      uint8_t b[4];if(!read(at,b,4))return false;
+      const uint32_t n=uint32_t(b[1])<<16|uint32_t(b[2])<<8|b[3];const uint64_t body=at+4;
+      if(n>size_-body)return true;
+      if((b[0]&127)==4&&!vorbis(body,n,r))return false;
+      if(b[0]&128)break;
+      at=body+n; // PICTURE, padding, seek table: skipped by offset
+    }
+    return true;
+  }
+  bool info(uint64_t at,uint64_t end,Record& r) {
+    for(unsigned i=0;i<32&&end>at&&end-at>=8;++i){
+      uint8_t h[8];if(!read(at,h,8))return false;
+      const uint32_t n=le32(h+4);const uint64_t body=at+8;if(n>end-body)break;
+      Field f=None;
+      if(!memcmp(h,"INAM",4))f=Title;else if(!memcmp(h,"IART",4))f=Artist;else if(!memcmp(h,"IPRD",4))f=Album;else if(!memcmp(h,"ITRK",4))f=Track;
+      if(f!=None&&n){const uint32_t take=n<255?n:255;if(!read(body,scratch_,take))return false;store(r,f,scratch_,take,1);}
+      at=body+n+(n&1);
+    }
+    return true;
+  }
+  bool wav(Record& r) {
+    uint64_t at=12;
+    for(unsigned chunks=0;chunks<64&&size_>at&&size_-at>=8;++chunks){
+      uint8_t h[8];if(!read(at,h,8))return false;
+      const uint32_t n=le32(h+4);const uint64_t body=at+8;
+      if(n>size_-body)return true; // unsized streaming chunk: nothing follows it
+      if(!memcmp(h,"LIST",4)&&n>=4){
+        if(!read(body,h,4))return false;
+        if(!memcmp(h,"INFO",4)&&!info(body+4,body+n,r))return false;
+      }
+      at=body+n+(n&1); // the audio data chunk is skipped by offset
+    }
+    return true;
+  }
  public:
+  // `scratch` (264 B) is required for MP3/FLAC/WAV tags; M4A falls back to the heap without it.
   Tags(ReadAt reader,void* user,uint64_t size,uint8_t* scratch=nullptr):read_(reader),user_(user),size_(size),scratch_(scratch){}
-  bool parse(Record& r){return walk(0,size_,0,false,r);}
+  bool parse(Record& r){
+    uint8_t h[12];
+    if(scratch_&&size_>=12&&read(0,h,12)){
+      if(!memcmp(h,"ID3",3))return id3v2(r,h)&&id3v1(r); // ID3v1 only fills what the v2 tag left empty
+      if(h[0]==0xff&&(h[1]&0xe0)==0xe0)return id3v1(r);
+      if(!memcmp(h,"fLaC",4))return flac(r);
+      if(!memcmp(h,"RIFF",4)&&!memcmp(h+8,"WAVE",4))return wav(r);
+    }
+    bytes_=0;
+    return walk(0,size_,0,false,r);
+  }
 };
 } // namespace cydlib

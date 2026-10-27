@@ -72,6 +72,54 @@ int main(){try{
   check(utf16Parser.parse(utf16Tags)&&!strcmp(utf16Tags.title,"\xe4\xbd\xa0\xe5\xa5\xbd"),"UTF-16BE tags");
   for(size_t n=1;n<16;++n){Bytes truncated(utf.begin(),utf.begin()+n);Tags p(readVector,&truncated,truncated.size());Record r{};check(!p.parse(r),"reject truncated headers");}
   Bytes bad={0,0,0,4,'m','o','o','v'};Record r{};Tags malformed(readVector,&bad,bad.size());check(!malformed.parse(r),"reject undersized atom");
+  { // F-08: MP3 (ID3v2.2/2.3/2.4, ID3v1), FLAC (Vorbis comments) and WAV (LIST/INFO) tags.
+    auto s=[](const char* t){return Bytes(t,t+strlen(t));};
+    auto be=[](uint32_t n){return Bytes{uint8_t(n>>24),uint8_t(n>>16),uint8_t(n>>8),uint8_t(n)};};
+    auto ss=[](uint32_t n){return Bytes{uint8_t((n>>21)&127),uint8_t((n>>14)&127),uint8_t((n>>7)&127),uint8_t(n&127)};};
+    auto le=[](uint32_t n){return Bytes{uint8_t(n),uint8_t(n>>8),uint8_t(n>>16),uint8_t(n>>24)};};
+    auto cat=[](std::initializer_list<Bytes> parts){Bytes out;for(const Bytes& p:parts)out.insert(out.end(),p.begin(),p.end());return out;};
+    auto frame3=[&](const char* id,const Bytes& body,bool v4){return cat({s(id),v4?ss(uint32_t(body.size())):be(uint32_t(body.size())),Bytes{0,0},body});};
+    auto id3=[&](unsigned version,const Bytes& frames){Bytes b=cat({s("ID3"),Bytes{uint8_t(version),0,0},ss(uint32_t(frames.size())),frames});append(b,Bytes(2048,0));return b;};
+    auto mp3Body=Bytes{0xff,0xfb,0x90,0x00,1,2,3,4};
+    uint8_t scratch[712];
+    auto parseOf=[&](const Bytes& file,Record& r){Tags p(readVector,(void*)&file,file.size(),scratch);r={};return p.parse(r);};
+    {Bytes f=cat({frame3("TIT2",cat({Bytes{0},s("Caf\xe9 Title")}),false),
+        frame3("TPE1",cat({Bytes{1,0xff,0xfe},Bytes{'Z',0,0xeb,0}}),false),            // UTF-16LE with BOM: "Z\xc3\xab"
+        frame3("TALB",cat({Bytes{3},s("Alb\xe4\xbd\xa0")}),false),
+        frame3("APIC",Bytes(1500,0x42),false),                                         // picture: skipped by offset
+        frame3("TRCK",cat({Bytes{0},s("5/12")}),false),frame3("TPOS",cat({Bytes{0},s("2/3")}),false),frame3("TCMP",cat({Bytes{0},s("1")}),false)});
+     Bytes file=id3(3,f);append(file,mp3Body);Record r;
+     check(parseOf(file,r)&&!strcmp(r.title,"Caf\xc3\xa9 Title")&&!strcmp(r.artist,"Z\xc3\xab")&&!strcmp(r.album,"Alb\xe4\xbd\xa0")&&r.track==5&&r.disc==2&&r.compilation,"ID3v2.3 Latin-1, UTF-16 BOM, UTF-8, picture skipped");
+     for(size_t n=0;n<=file.size();n+=7){Bytes cut(file.begin(),file.begin()+n);Record t;parseOf(cut,t);} // truncations never crash or overread
+    }
+    {Bytes f=cat({frame3("TIT2",cat({Bytes{3},s("Four\xe4\xbd\xa0")}),true),frame3("TPE2",cat({Bytes{2},Bytes{0x00,'B',0x00,'B'}}),true),frame3("TPE1",cat({Bytes{3},Bytes{'A','r','t',0,'S','e','c','o','n','d'}}),true)});
+     Bytes file=id3(4,f);append(file,mp3Body);Record r;
+     check(parseOf(file,r)&&!strcmp(r.title,"Four\xe4\xbd\xa0")&&!strcmp(r.albumArtist,"BB")&&!strcmp(r.artist,"Art"),"ID3v2.4 syncsafe sizes, UTF-16BE, first of multiple values");}
+    {Bytes f=cat({s("TT2"),Bytes{0,0,6},Bytes{0},s("Old v"),s("TP1"),Bytes{0,0,6},Bytes{0},s("Old A"),s("TRK"),Bytes{0,0,2},Bytes{0},s("9")});
+     Bytes file=cat({s("ID3"),Bytes{2,0,0},ss(uint32_t(f.size())),f,mp3Body});Record r;
+     check(parseOf(file,r)&&!strcmp(r.title,"Old v")&&!strcmp(r.artist,"Old A")&&r.track==9,"ID3v2.2 three-letter frames");}
+    {Bytes file=mp3Body;file.resize(600,0);Bytes v1(128,0);memcpy(v1.data(),"TAG",3);memcpy(v1.data()+3,"Tagged One",10);memcpy(v1.data()+33,"Some Band",9);memcpy(v1.data()+63,"The \xe9lbum",10);v1[126]=4;append(file,v1);Record r;
+     check(parseOf(file,r)&&!strcmp(r.title,"Tagged One")&&!strcmp(r.artist,"Some Band")&&!strcmp(r.album,"The \xc3\xa9lbum")&&r.track==4,"ID3v1 only (headerless MP3)");}
+    {Bytes f=cat({frame3("TIT2",cat({Bytes{0},s("v2 title")}),false)});Bytes file=id3(3,f);append(file,mp3Body);file.resize(file.size()+200,0);Bytes v1(128,0);memcpy(v1.data(),"TAG",3);memcpy(v1.data()+3,"v1 title",8);memcpy(v1.data()+33,"v1 artist",9);append(file,v1);Record r;
+     check(parseOf(file,r)&&!strcmp(r.title,"v2 title")&&!strcmp(r.artist,"v1 artist"),"ID3v1 only fills what ID3v2 left empty");}
+    {Bytes si(34,0);
+     Bytes comments=cat({le(1),s("x"),le(7)}); // vendor "x", seven comments
+     auto kv=[&](const char* t){return cat({le(uint32_t(strlen(t))),s(t)});};
+     Bytes body=cat({comments,kv("TITLE=Flac \xe4\xbd\xa0"),kv("artist=The Band"),kv("ALBUM=Disc1"),kv("ALBUMARTIST=Owner!"),kv("TRACKNUMBER=7"),kv("DISCNUMBER=1/2"),kv("COMPILATION=1")});
+     auto block=[&](uint8_t type,bool last,const Bytes& b){Bytes h{uint8_t(type|(last?128:0)),uint8_t(b.size()>>16),uint8_t(b.size()>>8),uint8_t(b.size())};return cat({h,b});};
+     Bytes file=cat({s("fLaC"),block(0,false,si),block(6,false,Bytes(5000,9)),block(4,true,body),Bytes(64,0xff)});Record r;
+     check(parseOf(file,r)&&!strcmp(r.title,"Flac \xe4\xbd\xa0")&&!strcmp(r.artist,"The Band")&&!strcmp(r.album,"Disc1")&&!strcmp(r.albumArtist,"Owner!")&&r.track==7&&r.disc==1&&r.compilation,"FLAC Vorbis comments, PICTURE skipped, case-insensitive keys");
+     for(size_t n=0;n<=file.size();n+=11){Bytes cut(file.begin(),file.begin()+n);Record t;parseOf(cut,t);}
+     Bytes hostile=file;hostile[hostile.size()-70]=0xff; for(size_t i=0;i<60;++i)hostile[40+i]=uint8_t(i*37);Record h;parseOf(hostile,h);}
+    {auto chunk=[&](const char* id,const Bytes& b){Bytes c=cat({s(id),le(uint32_t(b.size())),b});if(b.size()&1)c.push_back(0);return c;};
+     auto sub=[&](const char* id,const char* t){return chunk(id,cat({s(t),Bytes{0}}));};
+     Bytes fmt(16,0);fmt[0]=1;fmt[2]=2;Bytes info=cat({s("INFO"),sub("INAM","Wave Title"),sub("IART","Wave Artist"),sub("IPRD","Wave Album"),sub("ITRK","3")});
+     Bytes riff=cat({s("WAVE"),chunk("fmt ",fmt),chunk("LIST",info),chunk("data",Bytes(5000,1))});Bytes file=cat({s("RIFF"),le(uint32_t(riff.size())),riff});Record r;
+     check(parseOf(file,r)&&!strcmp(r.title,"Wave Title")&&!strcmp(r.artist,"Wave Artist")&&!strcmp(r.album,"Wave Album")&&r.track==3,"WAV LIST/INFO");
+     for(size_t n=0;n<=file.size();n+=13){Bytes cut(file.begin(),file.begin()+n);Record t;parseOf(cut,t);}
+     Bytes streamed=cat({s("RIFF"),le(0xffffffffu),s("WAVE"),chunk("fmt ",fmt),chunk("LIST",info),s("data"),le(0xffffffffu),Bytes(100,1)});
+     check(parseOf(streamed,r)&&!strcmp(r.title,"Wave Title"),"WAV with unsized data chunk still reads tags before it");}
+  }
   {cyd::CommandQueue<3> q;uint8_t key=0;
    check(q.push(0x44)&&q.push(0x4b)&&q.push(0x4c)&&!q.push(0x46),"AVRCP full queue refuses without overwrite");
    check(q.pop(key)&&key==0x44&&q.push(0x46)&&q.pop(key)&&key==0x4b&&q.pop(key)&&key==0x4c&&q.pop(key)&&key==0x46&&!q.pop(key),"AVRCP FIFO wrap and empty");

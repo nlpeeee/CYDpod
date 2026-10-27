@@ -85,14 +85,8 @@ void touch_screenPoint(long rx, long ry, int& sx, int& sy) {
 // ---------------------------------------------------------------------------
 // Gestures
 // ---------------------------------------------------------------------------
-static bool     isDown = false;
-static uint32_t downAt = 0, lastSeenMs = 0, lastUpAt = 0;
-static int      lastSx = 0, lastSy = 0;   // where the press landed
-static int      liveSx = 0, liveSy = 0;   // where the finger is now
-
-// One dropped sample mid-press must not split a press in two.
-static const uint32_t RELEASE_GRACE_MS = 60;
-static const uint32_t MIN_PRESS_MS     = 30;
+// The classifier is touch_gesture.h, shared with the host test.
+static cydtouch::PressTracker tracker;
 
 void touch_begin() {
   pinMode(CYD_TOUCH_CS_PIN, OUTPUT);
@@ -110,46 +104,17 @@ void touch_begin() {
     Serial.println("touch: no stored calibration -- using stage 0 defaults");
 }
 
-bool     touch_isDown() { return isDown; }
-uint32_t touch_heldMs() { return isDown ? millis() - downAt : 0; }
-void     touch_position(int& x, int& y) { x = lastSx; y = lastSy; }
-void     touch_livePosition(int& x, int& y) { x = liveSx; y = liveSy; }
+bool     touch_isDown() { return tracker.down(); }
+uint32_t touch_heldMs() { return tracker.heldMs(millis()); }
+void     touch_position(int& x, int& y) { tracker.landing(x, y); }
+void     touch_livePosition(int& x, int& y) { tracker.live(x, y); }
 
 TouchEvent touch_poll(int* x, int* y) {
   const uint32_t now = millis();
-  int rx, ry, z;
-  if (touch_readRaw(rx, ry, z)) {
-    lastSeenMs = now;
-    if (!isDown) {
-      if (now - lastUpAt < TOUCH_DEBOUNCE_MS) return TOUCH_NONE;
-      isDown = true;
-      downAt = now;
-      touch_screenPoint(rx, ry, lastSx, lastSy);   // where the press LANDED
-      liveSx = lastSx;
-      liveSy = lastSy;
-    } else {
-      // Half-way toward each new sample: a resistive panel's readings jitter by
-      // a few pixels, and a drag should glide rather than shiver.
-      int sx, sy;
-      touch_screenPoint(rx, ry, sx, sy);
-      liveSx = (liveSx + sx) / 2;
-      liveSy = (liveSy + sy) / 2;
-    }
-    return TOUCH_NONE;
-  }
-
-  if (isDown && now - lastSeenMs >= RELEASE_GRACE_MS) {
-    isDown = false;
-    lastUpAt = now;
-    const uint32_t held = lastSeenMs - downAt;
-    if (held < MIN_PRESS_MS) return TOUCH_NONE;
-    if (x) *x = lastSx;
-    if (y) *y = lastSy;
-    if (held >= TOUCH_RECAL_MS) return TOUCH_RECALIBRATE;
-    if (held >= TOUCH_LONG_MS)  return TOUCH_LONG_PRESS;
-    return TOUCH_TAP;
-  }
-  return TOUCH_NONE;
+  int rx, ry, z, sx = 0, sy = 0;
+  const bool valid = touch_readRaw(rx, ry, z);
+  if (valid) touch_screenPoint(rx, ry, sx, sy);
+  return tracker.update(now, valid, sx, sy, x, y);
 }
 
 // ---------------------------------------------------------------------------

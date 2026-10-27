@@ -10,21 +10,12 @@
 // calibration serves portrait and landscape alike. It is measured on the
 // device by the wizard (calibrate.h) and kept in NVS "mp3touch".
 //
-// Gestures are classified on RELEASE, so one press is exactly one event.
+// Gestures are classified on RELEASE, so one press is exactly one event, however
+// briefly it was seen (touch_gesture.h).
 #pragma once
 
 #include <Arduino.h>
-
-enum TouchEvent : uint8_t {
-  TOUCH_NONE = 0,
-  TOUCH_TAP,           // < 600 ms
-  TOUCH_LONG_PRESS,    // 0.6 - 4 s
-  TOUCH_RECALIBRATE    // > 4 s
-};
-
-static const uint32_t TOUCH_LONG_MS     = 600;
-static const uint32_t TOUCH_RECAL_MS    = 4000;
-static const uint32_t TOUCH_DEBOUNCE_MS = 120;
+#include "touch_gesture.h"   // TouchEvent, TOUCH_*_MS, the press classifier
 
 // Native portrait mapping: raw value at pixel 0 and at the far edge, per axis.
 // swapXY = true when raw X drives native Y. Reversed ranges are how an axis

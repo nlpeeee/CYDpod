@@ -38,6 +38,16 @@ int main(int argc,char** argv){
   assert(run(junk(std::vector<unsigned char>(5000,0)))==clean);
   assert(run(junk(std::vector<unsigned char>(3,0xFF)))==clean);
   { std::vector<unsigned char> id3={'I','D','3',4,0,0,0,0,0,20};id3.resize(30,'y'); assert(run(junk(id3))==clean); }
+  // F-03: damaged frame bodies are skipped (silent frame) instead of failing the track; a fully wrecked file still ends.
+  { auto d=junk({});size_t fb=4;while(fb<2048&&at+fb+3<=d.size()&&memcmp(&d[at+fb],&d[at],3))++fb; // CBR: next frame carries the same header bytes
+    if(fb<2048&&at+3*fb<=d.size()) {
+      for(size_t i=4;i<fb;++i)d[at+2*fb+i]=(i%3)?0xFF:0x55; // headers intact, frame body wrecked
+      // wrecked side info may read as reservoir underflow, which drops the frame
+      const long r=run(d); assert(r==clean||r==clean-1);
+    } }
+  { auto d=junk({});const size_t mid=at+(tail-at)/2;for(size_t i=0;i<400&&mid+i<d.size();++i)d[mid+i]=(i%3)?0xFF:0x55;
+    const long n=run(d);assert(n>0&&n<=clean+1); }
+  { auto d=junk({});for(size_t i=at+4;i<d.size();++i)if(i%2)d[i]=0xFF;else d[i]=0x00;const long n=run(d);assert(n>=-1); }
   bad={'I','D','3',4,0,0,128,0,0,0};save(bad);f=File("tests/out/bad.mp3","r");assert(track.begin(f)!=MINIAAC_OK);assert(!strcmp(track.name(),"mp3_id3"));track.end();f.close();
   printf("PASS MP3 bit-exact stock Helix, eight allocations replaced, zero pool allocations: %s frames=%zu\n",argv[arg],count);
  }

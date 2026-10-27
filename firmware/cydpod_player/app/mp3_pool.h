@@ -30,6 +30,7 @@ struct Mp3State {
   uint64_t total;
   unsigned channels;
   bool first;
+  uint8_t drops, run; // bad frames skipped this track / in a row
   static uint32_t be32(const uint8_t* p) { return uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3]; }
   bool header(const uint8_t* p) {
     const unsigned version=(p[1]>>3)&3, br=p[2]>>4, sr=(p[2]>>2)&3;
@@ -101,7 +102,11 @@ struct Mp3State {
       unsigned char* p=input; int left=frameBytes;
       const int rc=MP3Decode(&core.decoder,&p,&left,pcm,0);
       if(rc==ERR_MP3_MAINDATA_UNDERFLOW)continue; // reservoir priming, bounded by file length
-      if(rc){error="mp3_decode";return -1;}
+      if(rc){ // bad frame: one silent frame in its place, bounded so a wrecked file still fails
+        if(++drops>64 || ++run>8){error="mp3_decode";return -1;}
+        memset(pcm,0,size_t(samples)*2*sizeof(int16_t)); return samples;
+      }
+      run=0;
       MP3FrameInfo info{}; MP3GetLastFrameInfo(&core.decoder,&info);
       if(info.nChans!=int(channels)||info.samprate!=int(rate)||info.outputSamps!=int(samples*channels)){error="mp3_format_change";return -1;}
       if(channels==1)for(int i=int(samples)-1;i>=0;--i)pcm[2*i+1]=pcm[2*i]=pcm[i];

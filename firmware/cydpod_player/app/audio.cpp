@@ -35,7 +35,7 @@ static volatile int      reqTrack  = -1;      // UI -> decode task
 static volatile int32_t  reqSeekMs = -1;
 static volatile uint32_t reqStartMs = 0, commandSerial = 0, seekGoalMs = 0;
 static volatile bool seeking = false, canSeek = false;
-static volatile bool decodeBlocked = false; // seek I/O failure: retain track/queue, await retry
+static volatile bool decodeBlocked = false; // failed open/decode/seek: decoder needs reopen
 static inline bool requestPending() { return reqTrack >= 0 || reqSeekMs >= 0; }
 static volatile bool     playing   = true;
 static uint32_t playIntentSerial=0; // loop task: explicit play/pause/selection intent
@@ -147,6 +147,11 @@ static void finishCommand(uint32_t serial) {
   if (serial == commandSerial) seeking = false;
   portEXIT_CRITICAL(&stateLock);
 }
+static void requireReopen(uint32_t serial) {
+  portENTER_CRITICAL(&stateLock);
+  if (serial == commandSerial) decodeBlocked = true;
+  portEXIT_CRITICAL(&stateLock);
+}
 static void seekTrack(uint32_t ms, uint32_t serial) {
   requestFlush();
   SeekContext context{serial};
@@ -245,7 +250,7 @@ static void decodeTask(void*) {
       Serial.printf("cmd: track %d consumed serial %lu\n",t,(unsigned long)serial);
       const bool opened = openTrack(t);
       if (serial == commandSerial) {
-        if (!opened) { failedCommand=serial; failSerial++; finishCommand(serial); }
+        if (!opened) { requireReopen(serial); failedCommand=serial; failSerial++; finishCommand(serial); }
         else if (startMs && canSeek) seekTrack(startMs, serial);
         else finishCommand(serial);
       }
@@ -267,6 +272,7 @@ static void decodeTask(void*) {
         reportError(m4a.name(), curTrack);
         Serial.printf("ERR m4a %s %s\n", m4a.name(), storage_trackPath(curTrack).c_str());
         closeTrack();
+        requireReopen(serial);
         failedCommand=serial; failSerial++;
         continue;
       }
@@ -445,14 +451,14 @@ void audio_prev() {
 
 static void setPlaying(bool on) {
   if(!audio_ready()||!orderLen){Serial.println("cmd: play/pause ignored (audio unavailable or empty queue)");return;}
-  // A failed seek closes the decode gate; Play must reopen rather than just light up.
+  // Any terminal decoder failure needs an open, not just a change to the Play button.
   portENTER_CRITICAL(&stateLock);
   const bool retry=on&&!playing&&decodeBlocked;
   playing=on;
   const int track=curTrack;
   portEXIT_CRITICAL(&stateLock);
-  if(retry)request(track);
-  Serial.printf("cmd: %s accepted%s\n",on?"play":"pause",retry?" (retry after seek failure)":"");
+  if(retry){failStreak=0;request(track);}
+  Serial.printf("cmd: %s accepted%s\n",on?"play":"pause",retry?" (retry after decoder failure)":"");
 }
 void audio_setPlaying(bool on) { ++playIntentSerial; setPlaying(on); }
 void audio_togglePause() { audio_setPlaying(!audio_isPlaying()); }

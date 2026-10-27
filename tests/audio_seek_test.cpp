@@ -3,7 +3,8 @@
 #include "../firmware/cydpod_player/app/audio.cpp"
 #include <cassert>
 int storage_trackCount(){return 2;}
-String storage_trackPath(int n){return n?"front.m4a":"tail.m4a";}
+static bool missingTrack=false;
+String storage_trackPath(int n){return missingTrack?"missing.m4a":n?"front.m4a":"tail.m4a";}
 static void waitIdle(){auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(audio_isSeeking()){assert(std::chrono::steady_clock::now()<end);std::this_thread::sleep_for(std::chrono::milliseconds(2));}}
 static bool silent(const int16_t* p,size_t n){for(size_t i=0;i<n;++i)if(p[i])return false;return true;}
 int main(){
@@ -73,6 +74,26 @@ int main(){
  const auto userVolume=audio_volume();audio_setSleepGain(0);audio_pull(out,128);assert(silent(out,256));
  audio_setSleepGain(100);audio_pull(out,128);assert(!silent(out,256)&&audio_volume()==userVolume);
  audio_togglePause();
+ // CY54-03: a one-song queue must recover from exhausted open/begin/decode failures.
+ audio_setQueue(nullptr,1,0,false);
+ auto retryTerminalFailure=[&]{
+   audio_tick();assert(!audio_isPlaying()&&audio_commands().blocked);
+   const auto opened=audio_trackSerial();audio_setPlaying(true);waitIdle();
+   assert(audio_isPlaying()&&!audio_commands().blocked&&audio_currentTrack()==0&&audio_trackSerial()>opened);
+   for(int i=0;i<100&&audio_bufferPct()<10;++i)std::this_thread::sleep_for(std::chrono::milliseconds(2));
+   audio_pull(out,128);assert(!silent(out,256));audio_setPlaying(false);
+ };
+ missingTrack=true;audio_playTrack(0);waitIdle();missingTrack=false;
+ retryTerminalFailure();
+ hostReadBudget=0;audio_playTrack(0);waitIdle();hostReadBudget=-1;
+ retryTerminalFailure();
+ audio_playTrack(0);waitIdle();const auto failureBefore=failSerial;hostReadBudget=0;
+ const auto failureDeadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+ while(failSerial==failureBefore){
+   assert(std::chrono::steady_clock::now()<failureDeadline);audio_pull(out,128);
+   std::this_thread::sleep_for(std::chrono::milliseconds(2));
+ }
+ hostReadBudget=-1;retryTerminalFailure();
  decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);free(order);rb=nullptr;order=nullptr;
- puts("PASS production audio: saved resume, paused/disconnected seek, coalescing, stale-ring removal, track supersession, paused EOF, read failure, Play recovery, stale completion/failure rejection, full-ring commands, sleep gain and retry; queue/play intent retained");
+ puts("PASS production audio: saved resume, paused/disconnected seek, coalescing, stale-ring removal, track supersession, paused EOF, read failure, Play recovery, stale completion/failure rejection, full-ring commands, sleep gain, idempotent intent, terminal open/begin/decode retry; queue/play intent retained");
 }

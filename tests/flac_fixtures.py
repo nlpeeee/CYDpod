@@ -131,7 +131,7 @@ def signal(rate, ch, n, seed):
             out[c].append(max(-32768, min(32767, v)))
     return out
 
-def build(name, rate, ch, bs, n, status='ok', seekpoints=0, tags=0, variable=False, bps=16, sbs=None, mutate=None, assigns=None, detail='', lie=None, streaminfo_max=None):
+def build(name, rate, ch, bs, n, status='ok', seekpoints=0, tags=0, variable=False, bps=16, sbs=None, mutate=None, assigns=None, detail='', lie=None, streaminfo_max=None, streaminfo_min=None):
     data = signal(rate, ch, n, 7 + len(name))
     kinds_cycle = ['fixed2', 'lpc2', 'fixed1', 'verbatim', 'fixed3', 'fixed0', 'fixed4', 'constant']
     frames = []; offsets = []; pos = 0; idx = 0
@@ -151,7 +151,7 @@ def build(name, rate, ch, bs, n, status='ok', seekpoints=0, tags=0, variable=Fal
     mins = min(b for _, b in sizes[:-1]) if len(sizes) > 1 else sizes[0][1]
     maxs = max(b for _, b in sizes)
     if not variable: mins = maxs = bs
-    si = streaminfo(mins, streaminfo_max or maxs, rate, ch, bps, n)
+    si = streaminfo(streaminfo_min or mins, streaminfo_max or maxs, rate, ch, bps, n)
     meta = [(0, si)]
     if seekpoints:
         table = b''; off = 0; taken = 0
@@ -187,6 +187,7 @@ rows.append(build('stereo-tags-table', 44100, 2, 4096, 4096 * 12 + 100, seekpoin
 rows.append(build('notable-long', 48000, 2, 4096, 4096 * 40 + 11, detail='no seektable'))
 rows.append(build('table-long', 48000, 2, 2048, 2048 * 90 + 33, seekpoints=16, detail='seektable'))
 rows.append(build('variable-long', 44100, 2, 2304, 44100 * 5, variable=True, detail='variable block size, sample numbers'))
+rows.append(build('fixed-minmax', 44100, 2, 2048, 2048 * 60 + 33, streaminfo_min=1024, detail='fixed strategy, STREAMINFO min != max, no seektable'))
 rows.append(build('mono-long', 44100, 1, 1152, 44100 * 3, seekpoints=40, detail='mono'))
 # Rejects.
 rows.append(build('reject-24bit', 44100, 2, 1152, 3000, status='reject:flac_bits', bps=24))

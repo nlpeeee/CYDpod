@@ -67,7 +67,7 @@ int main() {
     printf("PASS 48 kHz FLAC -> FIR: %zu output frames for 12805 source frames\n", out); track.end(); f.close(); }
   // Seeks: exact against the source PCM, bytes read per seek capped, cancellable, restartable.
   static FlacState direct; // host-only second instance for the counters
-  const char* seekNames[] = {"table-long", "notable-long", "stereo-tags-table", "variable-long", "mono-long", "44100-2-1152"};
+  const char* seekNames[] = {"table-long", "notable-long", "stereo-tags-table", "variable-long", "fixed-minmax", "mono-long", "44100-2-1152"};
   unsigned seeks = 0;
   for (const char* name : seekNames) {
     const Row* row = nullptr; for (const Row& r : rows) if (r.name == name) row = &r; assert(row);

@@ -69,6 +69,11 @@ struct FlacState {
     miniflac_init(&dec, MINIFLAC_CONTAINER_NATIVE);
     dec.metadata.streaminfo.sample_rate = rate; dec.metadata.streaminfo.bps = 16;
     arm();
+    if (!fixedBlock) { // min != max in STREAMINFO: a fixed-strategy stream still has one block size, taken from the first frame
+      uint64_t s = 0;
+      if (headerAt(f, first, s) && !dec.frame.header.blocking_strategy) fixedBlock = dec.frame.header.block_size;
+      arm(); spent = 0;
+    }
     return nullptr;
   }
   bool fill(File& f, uint8_t* in) {

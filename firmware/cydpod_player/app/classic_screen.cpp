@@ -42,7 +42,7 @@ bool shownPlaying=false,savePending=false,shownSeeking=false,shownWaiting=false;
 bool previewDirty=false;
 bool externalReturn=false;
 bool seekPreview=false,seekCancelled=false;
-uint32_t seekMs=0,seekDuration=0,seekSerial=0,pressAt=0;
+uint32_t seekMs=0,seekDuration=0,seekSerial=0;
 char notice[128]={};
 char query[32]={};bool digitKeys=false,lettersSecond=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
@@ -456,10 +456,15 @@ void seekPreviewAt(int x){
   seekMs=seekDuration?uint32_t(uint64_t(constrain(x-12,0,width))*(seekDuration-1)/width):0;
   shownProgress=shownSecond=-1;lastPlayer=0;
 }
-void seekTransport(int target,bool held){
-  if(!storage_trackCount())return;
-  if(held){if(audio_canSeek())audio_seekRelative(target==Prev?-10:10);else ui_toast("Seeking unavailable for this track",1500);}
-  else if(target==Prev)audio_prev();else audio_next();
+// Play/Pause, Previous and Next act on the admitted touch-down: a touch the UI has
+// recognised must take effect at once. The caller then claims the press, so its
+// release and long-hold events are swallowed and nothing fires twice.
+void transportDown(int target){
+  const char* name=target==Prev?"previous":target==Next?"next":"play/pause";
+  if(!storage_trackCount()){Serial.printf("cmd: %s ignored on touch-down (no songs)\n",name);return;}
+  Serial.printf("cmd: %s on touch-down\n",name);
+  if(target==Prev)audio_prev();else if(target==Next)audio_next();else audio_togglePause();
+  lastPlayer=0; // repaint the transport and track now, not on the next 250 ms tick
 }
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
@@ -470,7 +475,7 @@ bool press(PressPhase phase,int x,int y){
       seekCancelled=!audio_canSeek();seekPreview=!seekCancelled;
       seekDuration=audio_durationMs();seekSerial=audio_trackSerial();seekPreviewAt(x);return true;
     }
-    if(hit==Prev||hit==Next){pressAt=millis();return true;}
+    if(hit==Prev||hit==Play||hit==Next){transportDown(hit);gesture.claimed=true;return true;}
     highlight=hit>=0&&page().mode!=Mode::Keyboard?hit-page().top:-1;if(highlight>=0&&highlight<rows()&&cache[highlight].valid)paintRow(highlight,true);
     return false;
   }
@@ -480,7 +485,7 @@ bool press(PressPhase phase,int x,int y){
       if(abs(y-gesture.y)>24||seekSerial!=audio_trackSerial())seekCancelled=true;
       if(!seekCancelled)seekPreviewAt(x);return true;
     }
-    if(gesture.target==Prev||gesture.target==Next){if(!within(x,y,cydclassic::Gesture::SlopFar))gesture.strayed=true;return true;}
+    if(gesture.target==Prev||gesture.target==Play||gesture.target==Next)return true;
     const bool claimed=gesture.move(x,y,!within(x,y,cydclassic::Gesture::SlopFar),gesture.target>=0&&gesture.target<KeyBase&&count>rows());
     if(gesture.claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
       if(top!=page().top){page().top=top;highlight=-1;invalidate();footer();}}
@@ -499,11 +504,7 @@ bool press(PressPhase phase,int x,int y){
       }else if(!audio_canSeek())ui_toast("Seeking unavailable for this track",1500);
       return true;
     }
-    if(gesture.target==Prev||gesture.target==Next){
-      if(gesture.activate(within(x,y,cydclassic::Gesture::SlopNear)))seekTransport(gesture.target,millis()-pressAt>=600);
-      else Serial.println("cmd: transport ignored (finger left target)");
-      return true;
-    }
+    if(gesture.target==Prev||gesture.target==Play||gesture.target==Next)return true; // already acted on touch-down
     const bool ok=gesture.activate(within(x,y,cydclassic::Gesture::SlopNear));
     ready=ok?gesture.target:-1;
     if(!ok&&gesture.target!=-1){
@@ -525,9 +526,6 @@ void touch(TouchEvent ev,int,int){
     case Home:classic_home();ui_go(SCR_CLASSIC);break;
     case Up:case Down:page().top=cydclassic::clampTop(page().top+(target==Up?-1:1)*max(1,rows()-1),count,rows());invalidate();footer();break;
     case Now:if(storage_trackCount())show(Mode::Player);break;
-    case Prev:if(storage_trackCount())audio_prev();break;
-    case Play:if(storage_trackCount())audio_togglePause();break;
-    case Next:if(storage_trackCount())audio_next();break;
     case Volume:show(Mode::Volume);break;
     case Options:show(Mode::Options);break;
     case Minus:case Plus:audio_setVolume(constrain(int(audio_volume())+(target==Plus?5:-5),0,100));g_settings.volume=audio_volume();savePending=true;saveAt=millis()+1500;break;

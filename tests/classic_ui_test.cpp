@@ -102,13 +102,13 @@ int main(){try{
   check(seekCalls==seeks,"vertical excursion cancels seek permanently");
   seeks=seekCalls;tx=50;ty=190;down=true;ui_tick(clockNow+=130);++serial;down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(seekCalls==seeks,"track change cancels drag");
   seekAllowed=false;tap(120,190);check(seekCalls==seeks,"unknown duration disables seek");tap(120,190);seekAllowed=true;
-  // Hold timestamp uses the same monotonic clock as firmware.
-  tx=200;ty=246;down=true;ui_tick(clockNow+=130);std::this_thread::sleep_for(std::chrono::milliseconds(620));down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();
-  check(relativeSeek==10,"holding Next seeks ten seconds instead of advancing");
-  tx=40;ty=246;down=true;ui_tick(clockNow+=130);std::this_thread::sleep_for(std::chrono::milliseconds(620));down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(relativeSeek==-10,"holding Previous seeks backward");
+  // Transport acts once on touch-down; holding is not a jog and never repeats the command.
+  seeks=seekCalls;was=current;tx=200;ty=246;down=true;ui_tick(clockNow+=130);check(current!=was&&seekCalls==seeks,"Next acts on touch-down");
+  was=current;std::this_thread::sleep_for(std::chrono::milliseconds(620));ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();
+  check(current==was&&relativeSeek==0&&seekCalls==seeks,"holding Next does not jog or advance again");
   tft.setRotation(1);ui_redraw();pump();tap(160,110);check(lastSeek>119000&&lastSeek<121000,"landscape progress geometry");
   tap(12,110);check(lastSeek==0,"progress start clamp");tap(308,110);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
-  std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, long Next and recalibration claim\n";
+  std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, Next on touch-down and recalibration claim\n";
   tap(30,300);check(label("Volume"),"footer volume action");tap(180,212);check(volume==37,"volume step");snapshot("ui-volume.svg");
   tap(20,20);check(label("Now Playing"),"back from volume");tap(20,20);check(label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.

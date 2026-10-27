@@ -56,7 +56,7 @@ bool speaker_setRoute(uint8_t){return routeAllowed;}
 bool calibrate_run(){return true;}
 void display_setRotation(uint8_t r){tft.setRotation(r);}
 void display_setBacklight(uint8_t p){backlight=p;}
-void bg_stop(){}
+int bgStops=0;void bg_stop(){++bgStops;}
 bool touch_isDown(){return down;}
 void touch_position(int& x,int& y){x=tx;y=ty;}
 void touch_livePosition(int& x,int& y){x=tx;y=ty;}
@@ -131,7 +131,7 @@ int main(){try{
   tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable");
   std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
   classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
-  tap(80,242);check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
+  const int stopsBefore=bgStops;tap(80,242);check(bgStops>stopsBefore,"F-12 background .anim handle is released when Search opens");check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
   tap(20,216);tap(100,176);tap(60,176);tap(20,136); // song
   tap(40,300);tap(200,256);check(label("0")&&label("9"),"digit keyboard page");
   tap(24,96);tap(168,96);tap(216,96);tap(120,256); // 034, backspace -> 03

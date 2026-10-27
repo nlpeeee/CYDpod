@@ -96,6 +96,13 @@ int main(){try{
   // Interrupted cache and card-full build are expendable; retry rebuilds.
   put(".sys/search.idx",Bytes(20,0));hostWriteBudget=0;storage_searchStart("alpha");check(storage_searchFailed(),"index write failure reported");hostWriteBudget=-1;
   storage_searchStart("ALPHA");finishSearch();check(storage_searchCount()==2,"failed build recovers without changing catalogue");
+  // F-11: leaving Search mid-build keeps the progress; the next Search resumes instead of restarting at entry 0.
+  put(".sys/search.idx",Bytes(20,0));storage_searchStart("alpha");check(storage_searchBuilding(),"cold index builds");
+  storage_searchTick();const int kept=storage_searchProgress();check(kept>0&&kept<100,"partial build progress");
+  storage_searchCancel();check(!storage_searchBusy(),"cancel stops the scan");
+  storage_searchStart("alpha");check(storage_searchBuilding()&&storage_searchProgress()==kept,"restart resumes the build where it stopped");
+  finishSearch();check(storage_searchCount()==2,"resumed index is complete and correct");
+  storage_searchStart("alpha");check(!storage_searchBuilding(),"resumed index validated and reused");finishSearch();check(storage_searchCount()==2,"resumed index matches");
 
   CatalogView songs{CatalogKind::Songs,0},artists{CatalogKind::Artists,0},albums{CatalogKind::Albums,0};
   check(storage_browseCount(artists)==3&&storage_browseCount(albums)==4,"artist/album groups and same-title separation");

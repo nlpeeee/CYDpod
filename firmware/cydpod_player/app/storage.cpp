@@ -439,8 +439,8 @@ char searchQuery[32]={};
 uint16_t searchIds[50],searchAt=0,searchBuilt=0;
 int searchCount=0;
 uint32_t searchSum=0,buildSum=0;
-bool searchBusy=false,searchBuilding=false,searchFailed=false,searchFallback=false;
-void searchFail(){searchFile.close();searchBusy=searchBuilding=false;searchFailed=true;searchCount=0;Serial.println("cmd: search failed (SD index I/O)");}
+bool searchBusy=false,searchBuilding=false,searchFailed=false,searchFallback=false,searchResume=false;
+void searchFail(){searchFile.close();searchBusy=searchBuilding=searchResume=false;searchFailed=true;searchCount=0;Serial.println("cmd: search failed (SD index I/O)");}
 void lowerCopy(char* out,const char* in,size_t n){for(size_t i=0;i<n;++i)out[i]=in[i]?((unsigned char)in[i]<128?char(tolower((unsigned char)in[i])):in[i]):0;}
 bool searchMatches(const char* text){
   // All space-separated query words may occur anywhere in title or artist.
@@ -459,11 +459,21 @@ void makeSearchKey(SearchKey& key,int id){
   lowerCopy(key.text+titleBytes+1,r->artist,min<size_t>(25,strlen(r->artist)));
 }
 }
-void storage_searchCancel(){searchFile.close();searchBusy=searchBuilding=false;}
+void storage_searchCancel(){
+  // An unfinished index build keeps its progress: the next Search reopens the file and carries on instead of restarting.
+  if(searchBuilding&&!searchFallback)searchResume=true;
+  searchFile.close();searchBusy=searchBuilding=false;
+}
 void storage_searchStart(const char* query){
   const bool continuingBuild=searchBuilding&&searchHeader.catalogue==storage_libraryCrc();
   memset(searchQuery,0,sizeof(searchQuery));lowerCopy(searchQuery,query,min<size_t>(31,strlen(query)));
   searchAt=0;searchCount=0;searchSum=0;searchFailed=false;searchBusy=true;searchFallback=readOnly;
+  if(searchResume&&!searchFallback&&searchHeader.catalogue==storage_libraryCrc()&&searchHeader.count==storage_trackCount()){
+    File r=openSmallFile(SEARCH,"r+");
+    if(r&&r.size()==sizeof(SearchHeader)+uint32_t(searchBuilt)*sizeof(SearchKey)&&r.seek(r.size())){searchFile=r;searchBuilding=true;return;}
+    r.close();
+  }
+  searchResume=false;
   if(continuingBuild)return;
   searchBuilding=false;searchFile.close();
   if(searchFallback)return; // read-only cards stream the authoritative catalogue
@@ -494,7 +504,7 @@ void storage_searchTick(){
       memcpy(searchHeader.magic,"CYDSRCH1",8);searchHeader.checksum=buildSum;
       searchFile.close();File f=openSmallFile(SEARCH,"r+");
       if(!f||!f.seek(0)||f.write((uint8_t*)&searchHeader,sizeof(searchHeader))!=sizeof(searchHeader)){f.close();searchFail();return;}
-      f.close();searchBuilding=false;
+      f.close();searchBuilding=searchResume=false;
       searchFile=openSmallFile(SEARCH);if(!searchFile){searchFail();return;}
     }
     breathe();return;

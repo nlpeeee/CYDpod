@@ -23,8 +23,21 @@ int main(int argc,char** argv){
   assert(count>0&&helixHostAllocations==before);track.end();f.close();MP3FreeDecoder(stock);
   // Malformed tag and truncated final frame reject deterministically.
   auto save=[&](const std::vector<unsigned char>& bytes){FILE* out=fopen("tests/out/bad.mp3","wb");assert(out);assert(fwrite(bytes.data(),1,bytes.size(),out)==bytes.size());fclose(out);};
-  auto bad=data;bad.pop_back();save(bad);f=File("tests/out/bad.mp3","r");assert(track.begin(f)==MINIAAC_OK);bool failed=false;
-  for(;;){auto rc=track.next();if(rc==CodecTrack::Pull::error){failed=true;break;}if(rc==CodecTrack::Pull::eof)break;track.consume(track.pending());}assert(failed);track.end();f.close();
+  // Frames decoded from a mutated copy; -1 when the track ended with an error instead of EOF.
+  auto run=[&](const std::vector<unsigned char>& bytes){save(bytes);f=File("tests/out/bad.mp3","r");assert(track.begin(f)==MINIAAC_OK);long n=0;
+   for(;;){auto rc=track.next();if(rc==CodecTrack::Pull::error){fprintf(stderr,"err %s\n",track.name());n=-1;break;}if(rc==CodecTrack::Pull::eof)break;++n;track.consume(track.pending());}track.end();f.close();return n;};
+  // F-02: a cut last frame and any trailing non-frame bytes end the track cleanly as EOF.
+  auto bad=data;bad.pop_back();
+  size_t tail=data.size();if(tail>=128&&!memcmp(data.data()+tail-128,"TAG",3))tail-=128;
+  auto junk=[&](const std::vector<unsigned char>& extra){std::vector<unsigned char> d(data.begin(),data.begin()+tail);d.insert(d.end(),extra.begin(),extra.end());return d;};
+  const long clean=run(junk({}));assert(clean>0);
+  assert(run(bad)==clean-1 || run(bad)==clean);
+  std::vector<unsigned char> ape={'A','P','E','T','A','G','E','X'};ape.resize(300,'x');
+  ape[100]=0xFF;ape[101]=0xFB;ape[102]=0x90;ape[103]=0x00; // a false sync inside the tag must not decode
+  {long r=run(junk(ape));fprintf(stderr,"ape %ld clean %ld\n",r,clean);assert(r==clean);}
+  assert(run(junk(std::vector<unsigned char>(5000,0)))==clean);
+  assert(run(junk(std::vector<unsigned char>(3,0xFF)))==clean);
+  { std::vector<unsigned char> id3={'I','D','3',4,0,0,0,0,0,20};id3.resize(30,'y'); assert(run(junk(id3))==clean); }
   bad={'I','D','3',4,0,0,128,0,0,0};save(bad);f=File("tests/out/bad.mp3","r");assert(track.begin(f)!=MINIAAC_OK);assert(!strcmp(track.name(),"mp3_id3"));track.end();f.close();
   printf("PASS MP3 bit-exact stock Helix, eight allocations replaced, zero pool allocations: %s frames=%zu\n",argv[arg],count);
  }

@@ -37,10 +37,11 @@ struct Mp3State {
     static const uint16_t br1[]={0,32,40,48,56,64,80,96,112,128,160,192,224,256,320};
     static const uint16_t br2[]={0,8,16,24,32,40,48,56,64,80,96,112,128,144,160};
     static const uint16_t rates[]={44100,48000,32000};
-    rate=rates[sr]>>(version==3?0:version==2?1:2);
-    samples=version==3?1152:576; channels=(p[3]>>6)==3?1:2;
-    frameBytes=(version==3?144000:72000)*(version==3?br1[br]:br2[br])/rate+((p[2]>>1)&1);
-    return frameBytes>=24 && frameBytes<=2048;
+    const uint32_t r=rates[sr]>>(version==3?0:version==2?1:2);
+    const uint32_t fb=(version==3?144000:72000)*(version==3?br1[br]:br2[br])/r+((p[2]>>1)&1);
+    if(fb<24 || fb>2048) return false; // a rejected probe never touches the live stream parameters
+    rate=r; frameBytes=fb; samples=version==3?1152:576; channels=(p[3]>>6)==3?1:2;
+    return true;
   }
   const char* open(File& f) {
     core.init(); at=0; end=f.size(); first=true; uint8_t h[10];
@@ -56,11 +57,39 @@ struct Mp3State {
     if(at>end || end-at<4 || !WavState::readAt(f,at,h,4) || !header(h))return "mp3_header";
     total=uint64_t(end-at)*samples/frameBytes; return nullptr; // CBR estimate; Xing overrides
   }
+  // Finds the next plausible frame after `at` (header valid, whole frame inside the file, and either the file ends
+  // with it or another valid header follows). Bounded scan; false = nothing usable, i.e. the audio has ended.
+  bool resync(File& f,uint8_t* input) {
+    static constexpr uint32_t scanMax=64u*1024;
+    uint32_t pos=at+1, scanned=0; uint8_t h[4];
+    const uint32_t keepRate=rate, keepSamples=samples, keepBytes=frameBytes; const unsigned keepCh=channels;
+    auto restore=[&]{rate=keepRate;samples=keepSamples;frameBytes=keepBytes;channels=keepCh;};
+    while(end-pos>=4 && scanned<scanMax) {
+      uint32_t n=end-pos; if(n>2048)n=2048;
+      if(!WavState::readAt(f,pos,input,n))return false;
+      for(uint32_t i=0;i+3<n;++i) {
+        if(input[i]!=255 || (input[i+1]&224)!=224)continue;
+        memcpy(h,input+i,4);
+        if(!header(h))continue;
+        const uint32_t cand=pos+i, fb=frameBytes;
+        bool ok=fb<=end-cand;
+        if(ok && end-cand>fb) ok=end-cand-fb>=4 && WavState::readAt(f,cand+fb,h,4) && header(h);
+        if(!ok){restore();continue;}
+        at=cand; return true;
+      }
+      pos+=n-3; scanned+=n-3;
+    }
+    restore(); return false;
+  }
   int read(File& f,uint8_t* input,int16_t* pcm,const char*& error) {
     for(;;) {
-      if(at==end)return 0;
-      if(end-at<4 || !WavState::readAt(f,at,input,4) || !header(input)){error="mp3_header";return -1;}
-      if(frameBytes>end-at || !WavState::readAt(f,at,input,frameBytes)){error="mp3_truncated_frame";return -1;}
+      if(at>=end)return 0;
+      // Anything that is not a frame (APEv2, Lyrics3, appended ID3v2, padding) or a cut last frame is the end of audio.
+      if(end-at<4 || !WavState::readAt(f,at,input,4) || !header(input)) {
+        if(end-at<4 || !resync(f,input) || !WavState::readAt(f,at,input,4) || !header(input)){at=end;return 0;}
+      }
+      if(frameBytes>end-at){at=end;return 0;}
+      if(!WavState::readAt(f,at,input,frameBytes)){error="mp3_read";return -1;}
       at+=frameBytes;
       if(first) {
         const bool v1=((input[1]>>3)&3)==3;

@@ -390,7 +390,20 @@ static void remember(const uint8_t addr[6], const char* name) {
 }
 
 void bt_tick() {
-  if(failure!=BT_FAIL_NONE){haveTarget=false;connectDeadline=0;}
+  if(failure!=BT_FAIL_NONE){haveTarget=false;pendingKnown=-1;connectDeadline=0;}
+  // Give up on a connection the owner asked for, rather than saying
+  // "connecting" until the board is restarted.
+  if (connectDeadline && (int32_t)(millis() - connectDeadline) >= 0) {
+    connectDeadline = 0;
+    haveTarget = false;
+    pendingKnown = -1;
+    passkey = 0;
+    if (failure == BT_FAIL_NONE) failure = BT_FAIL_TIMEOUT;
+    Serial.printf("bt: giving up on \"%s\"\n", targetName);
+    a2dp.disconnectFrom(targetAddr);
+  }
+
+
   static uint32_t pollAt=0;
   if(int32_t(millis()-pollAt)>=0){pollAt=millis()+250;a2dp.poll();}
   if(pairResumeWanted&&!pairingActive&&bt_connected()){
@@ -442,17 +455,6 @@ void bt_tick() {
     // starts; findable as well only while the pairing screen is up.
     if (pairingActive) a2dp.set_discoverability(ESP_BT_GENERAL_DISCOVERABLE);
     else             a2dp.set_connectable(true);
-  }
-
-  // Give up on a connection the owner asked for, rather than saying
-  // "connecting" until the board is restarted.
-  if (connectDeadline && (int32_t)(millis() - connectDeadline) >= 0) {
-    connectDeadline = 0;
-    haveTarget = false;
-    passkey = 0;
-    if (failure == BT_FAIL_NONE) failure = BT_FAIL_TIMEOUT;
-    Serial.printf("bt: giving up on \"%s\"\n", targetName);
-    a2dp.disconnectFrom(targetAddr);
   }
 
   // Find out who connected, when it was not the device that was tapped. The
@@ -521,7 +523,7 @@ bool bt_requestPairing() {
 }
 bool bt_cancelPairing() {
   if(!a2dp.post(CydSource::Cancel)){failure=BT_FAIL_TIMEOUT;Serial.println("cmd: cancel pair ignored (queue busy)");return false;}
-  haveTarget=false;connectDeadline=0;passkey=0;
+  haveTarget=false;pendingKnown=-1;connectDeadline=0;passkey=0;
   Serial.println("cmd: cancel pair queued");return true;
 }
 
@@ -576,6 +578,8 @@ void bt_connectKnown(int i) {
     a2dp.disconnectFrom(connectedAddr);
     return;
   }
+  // This selection replaces any saved-device switch waiting for disconnect.
+  pendingKnown = -1;
   portENTER_CRITICAL(&devMux);
   memcpy(targetAddr, d.addr, 6);
   strlcpy(targetName, d.name, sizeof(targetName));
@@ -634,6 +638,8 @@ void bt_choose(int i) {
   BtDevice d;
   if (!bt_device(i, d)){Serial.println("cmd: choose ignored (device disappeared)");return;}
   Serial.printf("cmd: choose device %d accepted\n",i);
+  // This selection replaces any saved-device switch waiting for disconnect.
+  pendingKnown = -1;
   portENTER_CRITICAL(&devMux);
   memcpy(targetAddr, d.addr, 6);
   memcpy(targetName, d.name, sizeof(targetName));

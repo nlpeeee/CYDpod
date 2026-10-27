@@ -33,10 +33,10 @@ bool FirState::push(int16_t l,int16_t r,const FirBank& b,PcmSink sink,void* user
     int16_t left=filter(c,0),right=filter(c,1);
     // EOF: fade the last 16 source frames inside the original duration to zero.
     // Normal samples and 44.1k bypass never pass through this multiplier.
-    if(tail){const int32_t gain=next/b.phases>=tail?0:int32_t(tail-1);
+    if(tail){const int32_t gain=next/44100>=tail?0:int32_t(tail-1);
       left=int32_t(left)*gain/16;right=int32_t(right)*gain/16;}
     if(!sink(user,left,right))return false;
-    wait=next/b.phases;phase=next%b.phases;
+    wait=next/44100;phase=next%44100;
   }
   return true;
 }

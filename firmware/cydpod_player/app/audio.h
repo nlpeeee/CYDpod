@@ -35,6 +35,10 @@ void audio_playTrack(int index);
 void audio_next();
 void audio_prev();                  // restart, or previous in play order in the first 3 s
 void audio_togglePause();
+void audio_setPlaying(bool on);       // explicit intent, even when already in that state
+// Internal pairing transitions preserve the user's intent serial.
+void audio_pauseForPairing();
+void audio_resumeAfterPairing();
 void audio_seekRelative(int seconds);
 bool audio_seekTo(uint32_t milliseconds); // coalesced request; decoder task owns all I/O
 bool audio_canSeek();                    // supported M4A with known duration

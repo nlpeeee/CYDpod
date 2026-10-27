@@ -310,11 +310,11 @@ static void onSpeakerKey(uint8_t key, bool isReleased) {
 static void handleSpeakerKey(uint8_t key) {
   switch (key) {
     case AVRC_PLAY:
-      if (!audio_isPlaying()) audio_togglePause();
+      audio_setPlaying(true);
       break;
     case AVRC_PAUSE:
     case AVRC_STOP:
-      if (audio_isPlaying()) audio_togglePause();
+      audio_setPlaying(false);
       break;
     case AVRC_FORWARD:  audio_next(); break;
     case AVRC_BACKWARD: audio_prev(); break;
@@ -394,7 +394,7 @@ void bt_tick() {
   static uint32_t pollAt=0;
   if(int32_t(millis()-pollAt)>=0){pollAt=millis()+250;a2dp.poll();}
   if(pairResumeWanted&&!pairingActive&&bt_connected()){
-    if(speaker_route()==OUT_BT&&!audio_isPlaying()&&cyd::currentCompletion(pairPauseIntent,audio_playIntentSerial()))audio_togglePause();
+    if(speaker_route()==OUT_BT&&!audio_isPlaying()&&cyd::currentCompletion(pairPauseIntent,audio_playIntentSerial()))audio_resumeAfterPairing();
     else Serial.println("cmd: pairing resume ignored (newer play intent or changed route)");
     pairResumeWanted=false;
   }
@@ -514,7 +514,7 @@ bool bt_requestPairing() {
   if(!a2dp.post(CydSource::Pair,g_settings.btAddr)){failure=BT_FAIL_TIMEOUT;Serial.println("cmd: pair ignored (queue busy)");return false;}
   portENTER_CRITICAL(&pairingMux);pairingActive=true;portEXIT_CRITICAL(&pairingMux);
   haveTarget=false;pendingKnown=-1;connectDeadline=0;passkey=0;failure=BT_FAIL_NONE;
-  if(pauseForPair){audio_togglePause();pairResumeWanted=true;pairPauseIntent=audio_playIntentSerial();}
+  if(pauseForPair){audio_pauseForPairing();pairResumeWanted=true;pairPauseIntent=audio_playIntentSerial();}
   else if(fresh)pairPauseIntent=audio_playIntentSerial();
   portENTER_CRITICAL(&devMux);devCount=0;++listSerial;portEXIT_CRITICAL(&devMux);
   Serial.println("cmd: pair queued");return true;

@@ -11,6 +11,19 @@ int main(){
  audio_begin(0,4000,100,false,REPEAT_ALL);audio_start();waitIdle();
  assert(audio_startupComplete()&&audio_canSeek()&&!audio_isPlaying());assert(audio_positionMs()>=3999&&audio_positionMs()<=4000);
  int16_t out[256];audio_pull(out,128);assert(silent(out,256));
+ // CY54-02: idempotent remote Pause/Stop must revoke a pairing resume claim.
+ audio_setPlaying(true);const auto userIntent=audio_playIntentSerial();
+ audio_pauseForPairing();assert(!audio_isPlaying()&&audio_playIntentSerial()==userIntent);
+ audio_resumeAfterPairing();assert(audio_isPlaying()&&audio_playIntentSerial()==userIntent);
+ for(int key=0;key<2;++key){ // Pause and Stop both dispatch this explicit setter.
+   audio_pauseForPairing();const auto pairIntent=audio_playIntentSerial();
+   audio_setPlaying(false);assert(!audio_isPlaying()&&audio_playIntentSerial()!=pairIntent);
+   if(cyd::currentCompletion(pairIntent,audio_playIntentSerial()))audio_resumeAfterPairing();
+   assert(!audio_isPlaying());
+ }
+ audio_setPlaying(true);const auto playIntent=audio_playIntentSerial();
+ audio_setPlaying(true);assert(audio_isPlaying()&&audio_playIntentSerial()!=playIntent);
+ audio_setPlaying(false);
  assert(audio_seekTo(4000));waitIdle();audio_seekRelative(1);audio_seekRelative(1);waitIdle();
  assert(audio_positionMs()>=5999&&audio_positionMs()<=6000); // relative requests accumulate even before acknowledgment
  const auto epoch=audio_trackSerial();

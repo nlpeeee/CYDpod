@@ -443,18 +443,21 @@ void audio_prev() {
   request(order[orderPos]);
 }
 
-void audio_togglePause() {
+static void setPlaying(bool on) {
   if(!audio_ready()||!orderLen){Serial.println("cmd: play/pause ignored (audio unavailable or empty queue)");return;}
-  ++playIntentSerial;
   // A failed seek closes the decode gate; Play must reopen rather than just light up.
   portENTER_CRITICAL(&stateLock);
-  const bool retry=!playing&&decodeBlocked;
-  playing=!playing;
+  const bool retry=on&&!playing&&decodeBlocked;
+  playing=on;
   const int track=curTrack;
   portEXIT_CRITICAL(&stateLock);
   if(retry)request(track);
-  Serial.printf("cmd: %s accepted%s\n",playing?"play":"pause",retry?" (retry after seek failure)":"");
+  Serial.printf("cmd: %s accepted%s\n",on?"play":"pause",retry?" (retry after seek failure)":"");
 }
+void audio_setPlaying(bool on) { ++playIntentSerial; setPlaying(on); }
+void audio_togglePause() { audio_setPlaying(!audio_isPlaying()); }
+void audio_pauseForPairing() { setPlaying(false); }
+void audio_resumeAfterPairing() { setPlaying(true); }
 void audio_setVolume(uint8_t p) { volumePct = min<uint8_t>(p, 100);Serial.printf("cmd: volume %u executed\n",unsigned(volumePct)); }
 
 void audio_setSleepGain(uint8_t percent){sleepGain=min<uint8_t>(percent,100);}

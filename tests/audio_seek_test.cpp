@@ -44,6 +44,7 @@ int main(){
  hostReadBudget=0;assert(audio_seekTo(8000));waitIdle();hostReadBudget=-1;
  assert(!audio_isPlaying()&&decodeBlocked);
  assert(audio_seekTo(2000));waitIdle();assert(audio_positionMs()>=1999&&audio_positionMs()<=2000);assert(!audio_isPlaying());
+ { const auto before=audio_error(nullptr,0);file.close();assert(audio_seekTo(1000));waitIdle();assert(audio_error(nullptr,0)==before&&!audio_commands().seeking);} // F-05: seek after closeTrack is ignored
  // A completion/failure from the former command cannot skip a newer selection.
  const auto former=commandSerial;audio_playTrack(0);
  endedCommand=former;++endedSerial;failedCommand=former;++failSerial;audio_tick();waitIdle();

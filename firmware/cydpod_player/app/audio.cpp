@@ -252,7 +252,11 @@ static void decodeTask(void*) {
       startupComplete = true;
       continue;
     }
-    if (seek >= 0) { seekTrack(uint32_t(seek), serial); continue; }
+    if (seek >= 0) {
+      if (file) seekTrack(uint32_t(seek), serial);
+      else { Serial.println("cmd: seek ignored (no open track)"); finishCommand(serial); } // raced with closeTrack()
+      continue;
+    }
     if (!file || decodeBlocked || seeking) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
 
     if (m4a.pending() == 0) {

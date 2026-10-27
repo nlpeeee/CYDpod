@@ -346,6 +346,8 @@ static void request(int track, uint32_t startMs = 0) {
   const int superseded=reqTrack;
   reqStartMs = startMs; seekGoalMs = startMs; reqSeekMs = -1; reqTrack = track;
   ++commandSerial; seeking = true; canSeek = false;
+  // A queued/in-flight open now owns recovery; an old failure must not redirect Play.
+  decodeBlocked = false;
   const uint32_t serial=commandSerial;
   portEXIT_CRITICAL(&stateLock);
   if(superseded>=0)Serial.printf("cmd: track %d superseded by track %d (latest wins)\n",superseded,track);
@@ -453,7 +455,7 @@ static void setPlaying(bool on) {
   if(!audio_ready()||!orderLen){Serial.println("cmd: play/pause ignored (audio unavailable or empty queue)");return;}
   // Any terminal decoder failure needs an open, not just a change to the Play button.
   portENTER_CRITICAL(&stateLock);
-  const bool retry=on&&!playing&&decodeBlocked;
+  const bool retry=on&&!playing&&decodeBlocked&&!requestPending();
   playing=on;
   const int track=curTrack;
   portEXIT_CRITICAL(&stateLock);

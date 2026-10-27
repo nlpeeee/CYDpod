@@ -6,6 +6,7 @@ int storage_trackCount(){return 2;}
 static bool missingTrack=false;
 String storage_trackPath(int n){return missingTrack?"missing.m4a":n?"front.m4a":"tail.m4a";}
 static void waitIdle(){auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(audio_isSeeking()){assert(std::chrono::steady_clock::now()<end);std::this_thread::sleep_for(std::chrono::milliseconds(2));}}
+static void waitBuffered(){auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);while(audio_bufferPct()<80){assert(std::chrono::steady_clock::now()<end);std::this_thread::sleep_for(std::chrono::milliseconds(2));}}
 static bool silent(const int16_t* p,size_t n){for(size_t i=0;i<n;++i)if(p[i])return false;return true;}
 int main(){
  SD.root="tests/out/miniaac_seek/fixtures";
@@ -49,13 +50,13 @@ int main(){
  for(int i=0;i<60;++i){assert(audio_seekTo(1000+(i*137)%9000));std::this_thread::sleep_for(std::chrono::milliseconds(2));}
  assert(audio_seekTo(6000));waitIdle();stopConsumer=true;consumer.join();audio_togglePause();
  assert(!audio_isPlaying()&&audio_currentTrack()==1&&audio_positionMs()>=5999&&audio_positionMs()<6500);
- const auto errors=audio_error(nullptr,0);hostReadBudget=0;assert(audio_seekTo(8000));waitIdle();hostReadBudget=-1;
+ const auto errors=audio_error(nullptr,0);waitBuffered();hostReadBudget=0;assert(audio_seekTo(8000));waitIdle();hostReadBudget=-1;
  assert(audio_error(nullptr,0)>errors&&!audio_isPlaying());assert(audio_currentTrack()==1);
  // CY-50: Play after failed seek must reopen the blocked decoder, not just light Play.
  const auto pausedIntent=audio_playIntentSerial();audio_togglePause();waitIdle();
  assert(audio_isPlaying()&&!decodeBlocked&&audio_currentTrack()==1&&audio_positionMs()==0);
  assert(audio_playIntentSerial()!=pausedIntent);audio_togglePause();
- hostReadBudget=0;assert(audio_seekTo(8000));waitIdle();hostReadBudget=-1;
+ waitBuffered();hostReadBudget=0;assert(audio_seekTo(8000));waitIdle();hostReadBudget=-1;
  assert(!audio_isPlaying()&&decodeBlocked);
  assert(audio_seekTo(2000));waitIdle();assert(audio_positionMs()>=1999&&audio_positionMs()<=2000);assert(!audio_isPlaying());
  { const auto before=audio_error(nullptr,0);file.close();assert(audio_seekTo(1000));waitIdle();assert(audio_error(nullptr,0)==before&&!audio_commands().seeking);} // F-05: seek after closeTrack is ignored
@@ -74,6 +75,21 @@ int main(){
  const auto userVolume=audio_volume();audio_setSleepGain(0);audio_pull(out,128);assert(silent(out,256));
  audio_setSleepGain(100);audio_pull(out,128);assert(!silent(out,256)&&audio_volume()==userVolume);
  audio_togglePause();
+ // CY54-05: freeze the producer so Next/Previous and Play share a pending mailbox.
+ for(int previous=0;previous<2;++previous){
+   audio_playTrack(0);waitIdle();audio_setPlaying(false);
+   waitBuffered();hostReadBudget=0;assert(audio_seekTo(8000));waitIdle();hostReadBudget=-1;
+   assert(audio_commands().blocked&&!audio_isPlaying());
+   decodeHandle->pause=true;
+   const auto pauseDeadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+   while(!decodeHandle->atPause){assert(std::chrono::steady_clock::now()<pauseDeadline);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+   if(previous)audio_prev();else audio_next();
+   const auto pending=audio_commands();assert(pending.track==1);
+   audio_setPlaying(true);const auto afterPlay=audio_commands();
+   assert(afterPlay.track==pending.track&&afterPlay.serial==pending.serial);
+   decodeHandle->pause=false;waitIdle();assert(audio_currentTrack()==1&&audio_isPlaying());
+   audio_setPlaying(false);
+ }
  // CY54-03: a one-song queue must recover from exhausted open/begin/decode failures.
  audio_setQueue(nullptr,1,0,false);
  auto retryTerminalFailure=[&]{
@@ -95,5 +111,5 @@ int main(){
  }
  hostReadBudget=-1;retryTerminalFailure();
  decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);free(order);rb=nullptr;order=nullptr;
- puts("PASS production audio: saved resume, paused/disconnected seek, coalescing, stale-ring removal, track supersession, paused EOF, read failure, Play recovery, stale completion/failure rejection, full-ring commands, sleep gain, idempotent intent, terminal open/begin/decode retry; queue/play intent retained");
+ puts("PASS production audio: saved resume, paused/disconnected seek, coalescing, stale-ring removal, track supersession, paused EOF, read failure, Play recovery, stale completion/failure rejection, full-ring commands, sleep gain, idempotent intent, pending skip retained on Play, terminal open/begin/decode retry; queue/play intent retained");
 }

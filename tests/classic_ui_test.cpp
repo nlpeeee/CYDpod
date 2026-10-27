@@ -16,6 +16,8 @@
 #include <vector>
 #include <chrono>
 #include <thread>
+#include <functional>
+#include "touch_gesture.h"
 TFT_eSPI tft;
 Settings g_settings;
 static int current=0,calls=0,volume=32,queueLength=0;
@@ -27,6 +29,8 @@ static bool playing=false,shuffle=false,down=false,routeAllowed=true;
 static uint8_t repeatMode=0;
 static const uint16_t* queueData=nullptr;
 static int tx=0,ty=0;
+static int nextCalls=0,prevCalls=0,toggleCalls=0,shuffleCalls=0,recalCount=0;
+static cydtouch::PressTracker tracker;static bool useTracker=false;
 void settings_save(){}
 bool audio_ready(){return true;}
 uint32_t audio_error(char*,size_t,int*){return 0;}
@@ -34,12 +38,12 @@ void audio_setQueue(const uint16_t* p,int n,int,bool){queueData=p;queueLength=n;
 void audio_playTrack(int n){current=n;playing=true;++serial;++calls;}
 int audio_currentTrack(){return current;}
 bool audio_isPlaying(){return playing;}
-void audio_next(){int pos=0;for(int i=0;i<queueLength;++i)if(queueData[i]==current)pos=i;audio_playTrack(queueData[(pos+1)%queueLength]);}
-void audio_prev(){audio_playTrack(current);}
-void audio_togglePause(){playing=!playing;}
+void audio_next(){++nextCalls;int pos=0;for(int i=0;i<queueLength;++i)if(queueData[i]==current)pos=i;audio_playTrack(queueData[(pos+1)%queueLength]);}
+void audio_prev(){++prevCalls;audio_playTrack(current);}
+void audio_togglePause(){++toggleCalls;playing=!playing;}
 void audio_setVolume(uint8_t n){volume=n;}
 uint8_t audio_volume(){return uint8_t(volume);}
-void audio_setShuffle(bool on){shuffle=on;}
+void audio_setShuffle(bool on){shuffle=on;++shuffleCalls;}
 bool audio_shuffle(){return shuffle;}
 void audio_setRepeat(uint8_t mode){repeatMode=mode;}
 uint8_t audio_repeat(){return repeatMode;}
@@ -57,9 +61,9 @@ bool calibrate_run(){return true;}
 void display_setRotation(uint8_t r){tft.setRotation(r);}
 void display_setBacklight(uint8_t p){backlight=p;}
 int bgStops=0;void bg_stop(){++bgStops;}
-bool touch_isDown(){return down;}
-void touch_position(int& x,int& y){x=tx;y=ty;}
-void touch_livePosition(int& x,int& y){x=tx;y=ty;}
+bool touch_isDown(){return useTracker?tracker.down():down;}
+void touch_position(int& x,int& y){if(useTracker)tracker.landing(x,y);else{x=tx;y=ty;}}
+void touch_livePosition(int& x,int& y){if(useTracker)tracker.live(x,y);else{x=tx;y=ty;}}
 bool titles_load(const String&){return false;}
 void titles_release(){}
 int titles_width(){return 0;}
@@ -75,6 +79,126 @@ static void pump(){for(int i=0;i<10;++i)ui_tick(clockNow+=130);}
 static void tap(int x,int y){tx=x;ty=y;down=true;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,x,y);pump();}
 static bool label(const char* s){return std::find(tft.labels.begin(),tft.labels.end(),s)!=tft.labels.end();}
 static void snapshot(const char* path){tft.save(path);}
+
+// ---------------------------------------------------------------------------
+// CY-62: the real press classifier (touch_gesture.h) -> UI hook -> command path.
+// loopStep() is the body of loop() in app.ino: poll, route the event, tick the UI.
+// ---------------------------------------------------------------------------
+using Path=std::function<void(uint32_t,int&,int&)>;
+static void loopStep(uint32_t now,bool valid,int x,int y){
+  int ex=0,ey=0;
+  const TouchEvent ev=tracker.update(now,valid,x,y,&ex,&ey);
+  if(ev==TOUCH_RECALIBRATE&&!ui_pressClaimed()&&!sleep_touchBlocked())++recalCount;
+  else if(ev!=TOUCH_NONE)ui_touch(ev,ex,ey);
+  ui_tick(now);
+}
+// A finger on the glass for `dur` ms, polled every `period` ms from `phase` ms after it lands.
+static void pressRun(uint32_t dur,uint32_t period,uint32_t phase,const Path& path){
+  tracker=cydtouch::PressTracker{};useTracker=true;
+  const uint32_t start=clockNow+300,end=start+dur+600;
+  for(uint32_t now=start+phase;now<=end;now+=period){
+    const bool valid=now>=start&&now<start+dur;int x=0,y=0;
+    if(valid)path(now-start,x,y);
+    loopStep(now,valid,x,y);
+  }
+  clockNow=end;useTracker=false;pump();
+}
+static Path at(int x,int y){return [=](uint32_t,int& px,int& py){px=x;py=y;};}
+static void home(){classic_home();ui_go(SCR_CLASSIC);pump();}
+static void toPlayer(){home();tap(80,110);}
+static void toPlayback(){home();tap(80,198);tap(80,154);}
+static void toMusic(){home();tap(80,66);}
+static void touchRegression(){
+  const uint32_t durations[]={1,20,50,100,300,650,4000,4500},periods[]={10,80,150};
+  int cases=0;
+  // Every recognised press takes effect exactly once, whatever its length or the poll rate.
+  struct Button{const char* name;int x,y;int* counter;};
+  const Button buttons[]={{"Play",120,246,&toggleCalls},{"Next",200,246,&nextCalls},{"Previous",40,246,&prevCalls}};
+  for(const Button& b:buttons)for(uint32_t d:durations)for(uint32_t p:periods)for(uint32_t phase:{0u,7u}){
+    if(phase>=d)continue;
+    toPlayer();const int before=*b.counter,recals=recalCount;
+    pressRun(d,p,phase,at(b.x,b.y));
+    const std::string tag=std::string(b.name)+" "+std::to_string(d)+" ms poll "+std::to_string(p);
+    check(*b.counter==before+1,("exactly one transport command: "+tag).c_str());
+    check(recalCount==recals,("transport hold never starts calibration: "+tag).c_str());
+    check(relativeSeek==0,("no hold jog: "+tag).c_str());
+    ++cases;
+  }
+  for(uint32_t d:durations)for(uint32_t p:periods)for(uint32_t phase:{0u,7u}){
+    if(phase>=d)continue;
+    toPlayback();const int before=shuffleCalls,recals=recalCount;
+    pressRun(d,p,phase,at(80,66));
+    const std::string tag="row "+std::to_string(d)+" ms poll "+std::to_string(p);
+    if(d>=4500){check(shuffleCalls==before&&recalCount==recals+1,("recalibrate hold is not a tap: "+tag).c_str());}
+    else check(shuffleCalls==before+1&&recalCount==recals,("exactly one row activation: "+tag).c_str());
+    ++cases;
+  }
+  std::cout<<"PASS CY-62 classifier->UI->command: "<<cases<<" cases of Play/Next/Previous (on down) and a row (on release), 1 to 4500 ms at 10/80/150 ms polling, one command each, no jog, no recalibration from transport\n";
+
+  // Jitter inside the target, a long hold with a split-second dropout, and a quick second touch.
+  toPlayback();int before=shuffleCalls;
+  pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-10:10);y=66+int((t/10)%3)*4-4;});
+  check(shuffleCalls==before+1,"jitter inside the row still activates it once");
+  toPlayer();before=toggleCalls;tracker=cydtouch::PressTracker{};useTracker=true;
+  {uint32_t t=clockNow+300;for(int i=0;i<40;++i,t+=10)loopStep(t,i<15||i>=20,120,246);   // 50 ms dropout inside a long hold
+   for(int i=0;i<20;++i,t+=10)loopStep(t,false,0,0);clockNow=t;}
+  useTracker=false;pump();check(toggleCalls==before+1,"a dropout inside the grace does not toggle twice");
+  toPlayer();before=toggleCalls;tracker=cydtouch::PressTracker{};useTracker=true;
+  {uint32_t t=clockNow+300;const uint32_t rearm=cydtouch::stats().rearm;
+   for(int i=0;i<10;++i,t+=10)loopStep(t,true,120,246);                           // 100 ms press
+   for(int i=0;i<10;++i,t+=10)loopStep(t,i>=7,120,246);                           // lifts, lands again 70 ms later
+   for(int i=0;i<20;++i,t+=10)loopStep(t,false,0,0);clockNow=t;
+   check(cydtouch::stats().rearm>rearm,"re-touch inside the 120 ms re-arm window is counted");}
+  useTracker=false;pump();check(toggleCalls==before+1,"a second touch inside the re-arm window does not fire again");
+
+  // Edge excursions: 1 to 8 px past the row edge and back, or ending there, still activate.
+  for(int e=1;e<=8;++e){
+    toPlayback();before=shuffleCalls;
+    pressRun(300,10,0,[e](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<200)?87+e:84;});
+    check(shuffleCalls==before+1,"excursion that returns activates");
+    toPlayback();before=shuffleCalls;
+    pressRun(300,10,0,[e](uint32_t t,int& x,int& y){x=80;y=t>=100?87+e:84;});
+    check(shuffleCalls==before+1,"release within the slop of the captured row activates");
+  }
+  // 14 px out: not within the slop, so releasing there does nothing; coming back re-arms; 40 px is a deliberate exit.
+  const uint32_t slopBefore=cydtouch::stats().slop;
+  toPlayback();before=shuffleCalls;
+  pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=t>=100?101:84;});
+  check(shuffleCalls==before&&cydtouch::stats().slop==slopBefore+1,"release 14 px outside the row cancels and is counted");
+  toPlayback();before=shuffleCalls;
+  pressRun(400,10,0,[](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<250)?101:84;});
+  check(shuffleCalls==before+1,"returning inside the slop re-arms the press");
+  toPlayback();before=shuffleCalls;
+  pressRun(400,10,0,[](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<250)?127:84;});
+  check(shuffleCalls==before,"a deliberate far exit cancels for good, even after returning");
+  // A footer control: slop reaches past its edge into the neighbouring Up button without retargeting it.
+  home();tap(80,198);   // Settings: seven rows, so the footer has Up/Down arrows beside Home
+  pressRun(200,10,0,[](uint32_t t,int& x,int& y){x=t<60?60:70;y=300;});   // Home is x 0-63; 70 is inside Up
+  check(label("Music")&&label("Search Songs"),"Home released 7 px into the Up button still goes Home");
+  std::cout<<"PASS CY-62 tolerant release: 1-8 px excursions return or end near, 14 px outside cancels and re-arms, 40 px exits for good, neighbour not retargeted\n";
+
+  // Lists: row tap with horizontal jitter, sideways and vertical claims, true scrolling.
+  toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-10:10);y=66;});
+  check(label("Fixture Artist"),"horizontal jitter in a scrolling list does not suppress the row tap");
+  const uint32_t claimBefore=cydtouch::stats().claim;
+  toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-24:24);y=66;});
+  check(!label("Fixture Artist")&&cydtouch::stats().claim==claimBefore+1,"a large sideways swing claims the press and is counted");
+  toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+(t>=50?3:0);y=t>=50?52:66;});
+  check(!label("Fixture Artist"),"a mostly vertical 14 px move claims the press");
+  toMusic();check(!label("Favourites"),"Music page starts at the top");
+  pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=int(150-std::min<uint32_t>(t,200)*120/200);});
+  check(label("Favourites")&&!label("Fixture Artist"),"a true vertical drag scrolls the list instead of activating a row");
+  std::cout<<"PASS CY-62 lists: jitter under 16 px keeps the row tap, sideways/vertical drags claim, vertical drag scrolls\n";
+
+  // Wake: the whole touch is swallowed, the next one works.
+  toPlayer();g_settings.screenTimeout=2;sleep_begin(clockNow);ui_tick(clockNow+=61000);check(backlight==0,"screen off before the wake touch");
+  const uint32_t wakeBefore=cydtouch::stats().wake;before=toggleCalls;
+  pressRun(100,10,0,at(120,246));
+  check(toggleCalls==before&&backlight==100&&cydtouch::stats().wake==wakeBefore+1,"wake touch is swallowed whole and counted");
+  pressRun(100,10,0,at(120,246));check(toggleCalls==before+1,"the next touch operates the transport");
+  g_settings.screenTimeout=0;ui_tick(clockNow+=1000);
+  std::cout<<"PASS CY-62 wake swallow unchanged under the real classifier\n";
+}
 int main(){try{
   g_settings.screenTimeout=0;g_settings.theme=8;g_settings.style=7;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
   SD.root=std::filesystem::current_path()/("ui-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -165,6 +289,7 @@ int main(){try{
   ui_tick(clockNow+=1500);check(!playing&&backlight==0&&volume==savedVolume&&fadeGain==100&&!sleep_remainingMinutes(clockNow),"timer pauses, restores user gain, turns screen off and disarms");
   sleep_tick(++clockNow,true);sleep_tick(++clockNow,false);sleep_tick(++clockNow,false);
   g_settings.screenTimeout=0;ui_tick(clockNow+=600000);check(backlight==100,"Off disables screen timeout");
+  touchRegression();
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;

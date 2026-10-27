@@ -448,7 +448,8 @@ int targetAt(int x,int y){
 // hit test keeps this exact for every control shape and can never reach a neighbour:
 // only the captured target counts.
 bool within(int x,int y,int slop){
-  for(int dy=-slop;dy<=slop;dy+=slop)for(int dx=-slop;dx<=slop;dx+=slop)if(targetAt(x+dx,y+dy)==gesture.target)return true;
+  const int step=slop>0?slop:1;
+  for(int dy=-slop;dy<=slop;dy+=step)for(int dx=-slop;dx<=slop;dx+=step)if(targetAt(x+dx,y+dy)==gesture.target)return true;
   return false;
 }
 void seekPreviewAt(int x){

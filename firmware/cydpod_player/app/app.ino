@@ -297,6 +297,9 @@ void loop() {
                     ? (speaker_active() ? "spk" : "spk-off")
                     : (bt_connected() ? "bt" : "no-bt"),
                   audio_isPlaying() ? "playing" : "paused", audio_pullCalls(), audio_pullFrames());
+    const AudioPcmStats pcm=audio_pcmStats();
+    Serial.printf("stat: pcm input %lu output 44100 pumpMaxMs %lu yields %lu\n",
+                  (unsigned long)pcm.inputRate,(unsigned long)pcm.maxPumpMs,(unsigned long)pcm.yields);
     lastStat = now;
   }
   delay(2);

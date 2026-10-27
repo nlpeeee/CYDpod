@@ -14,7 +14,10 @@ gcc -Os -fwrapv -fno-strict-aliasing -Ivendor/miniflac -c firmware/cydpod_player
 CXXFLAGS="-Wl,--wrap=xmp3_UnpackFrameHeader -O1 -std=c++17 -Ivendor/miniflac -Itests/audio_shim -Itests/catalog_shim -I.tools/staging/miniaac-patched/src -I$MP"
 g++ $CXXFLAGS tests/codec_pool_test.cpp tests/helix_host_alloc.cpp firmware/cydpod_player/app/codec_track.cpp firmware/cydpod_player/app/resampler.cpp "$OUT"/obj/*.o "$OUT"/mp3/*.o "$OUT/flac_core.o" -o "$OUT/codec_pool_test"
 python3 -I tests/codec_pool_fixtures.py
-"$OUT/codec_pool_test" tests/out/codec_pool/*.m4a
+"$OUT/codec_pool_test" tests/out/codec_pool/*.m4a tests/out/codec_pool/48000-tone.wav tests/out/codec_pool/48000-2-cbr.mp3
+if test -f /mnt/e/dev/CYDpod/testsamples/Sample_BeeMoved_48kHz16bit.m4a; then
+ "$OUT/codec_pool_test" /mnt/e/dev/CYDpod/testsamples/Sample_BeeMoved_48kHz16bit.m4a
+fi
 g++ $CXXFLAGS tests/mp3_pool_test.cpp tests/helix_host_alloc.cpp firmware/cydpod_player/app/codec_track.cpp firmware/cydpod_player/app/resampler.cpp "$OUT"/obj/*.o "$OUT"/mp3/*.o "$OUT/flac_core.o" -o "$OUT/mp3_pool_test"
 "$OUT/mp3_pool_test" tests/out/codec_pool/*.mp3
 python3 -I tests/flac_fixtures.py

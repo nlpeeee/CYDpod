@@ -87,3 +87,6 @@ AudioCommands audio_commands();
 void audio_setSleepGain(uint8_t percent);
 
 uint32_t audio_playIntentSerial(); // explicit play/pause/selection intent, loop-task only
+
+struct AudioPcmStats {uint32_t inputRate,maxPumpMs,yields;};
+AudioPcmStats audio_pcmStats();

@@ -11,3 +11,9 @@ if test -f /mnt/e/dev/CYDpod/testsamples/ff-16b-2c-44100hz.wav; then
  tests/out/miniaac_seek/audio_test /mnt/e/dev/CYDpod/testsamples/ff-16b-2c-44100hz.wav
  tests/out/miniaac_seek/audio_test /mnt/e/dev/CYDpod/testsamples/ff-16b-2c-44100hz.mp3
 fi
+
+tests/out/miniaac_seek/audio_test "$(pwd)/tests/out/codec_pool/48000-2.m4a" resample
+if test -f /mnt/e/dev/CYDpod/testsamples/Sample_BeeMoved_48kHz16bit.m4a; then
+ tests/out/miniaac_seek/audio_test /mnt/e/dev/CYDpod/testsamples/Sample_BeeMoved_48kHz16bit.m4a resample
+ tests/out/miniaac_seek/audio_test /mnt/e/dev/CYDpod/testsamples/Sample_BeeMoved_96kHz24bit.flac reject
+fi

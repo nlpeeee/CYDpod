@@ -53,6 +53,7 @@ static volatile uint32_t lastPullMs = 0;
 
 static TaskHandle_t decodeHandle = nullptr;
 static volatile bool startupComplete = false;
+static volatile uint32_t pcmInputRate=0, pcmMaxPumpMs=0, pcmYields=0;
 static portMUX_TYPE errorLock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t errorSerial = 0;
 static int errorTrack = -1;
@@ -193,7 +194,7 @@ static bool openTrack(int index) {
   closeTrack();
   requestFlush();
 
-  canSeek = false; decodeBlocked = false;
+  canSeek = false; decodeBlocked = false; pcmInputRate=0;
   curTrack = index;
   durationMs = 0;
   posBaseMs = 0;
@@ -214,7 +215,8 @@ static bool openTrack(int index) {
     return false;
   }
   durationMs = (uint32_t)(m4a.totalFrames() * 1000 / m4a.sampleRate());
-  canSeek = m4a.seekable();
+  canSeek = m4a.seekable();pcmInputRate=m4a.sampleRate();
+  Serial.printf("cmd: codec input %lu output 44100 seekable %d\n",(unsigned long)pcmInputRate,int(canSeek));
   trackSerial++;
   Serial.printf("audio: [%d/%d] %s  %u KB  %lu:%02lu  heap %u\n", index + 1, count, path.c_str(),
                 (unsigned)(file.size() / 1024), durationMs / 60000, (durationMs / 1000) % 60,
@@ -287,11 +289,19 @@ static void decodeTask(void*) {
         continue;
       }
     }
+    const uint32_t pumpAt=millis();
     while (m4a.pending() > 0 && !abortDecode) {
       const M4aStereo* f = m4a.pcm();
       m4a.output(f->l, f->r,ringSink,nullptr);
       if (abortDecode) break;
       m4a.consume(1);
+    }
+    if(m4a.sampleRate()!=44100 && !abortDecode) {
+      const uint32_t took=millis()-pumpAt;if(took>pcmMaxPumpMs)pcmMaxPumpMs=took;
+      // FIR work can be slower than the consumer, so the ring may NEVER fill.
+      // A priority-5 producer must still sleep to release core 1 to loop/idle;
+      // taskYIELD alone would only admit tasks at the same priority.
+      ++pcmYields;vTaskDelay(1);
     }
   }
 }
@@ -547,5 +557,7 @@ AudioCommands audio_commands(){
 uint32_t audio_decodeStackFree() {
   return decodeHandle ? uxTaskGetStackHighWaterMark(decodeHandle) : 0;
 }
+
+AudioPcmStats audio_pcmStats() { return {pcmInputRate,pcmMaxPumpMs,pcmYields}; }
 
 #endif  // !CYD_UPLOADER

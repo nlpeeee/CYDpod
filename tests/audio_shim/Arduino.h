@@ -13,7 +13,9 @@ struct HostAudioTask {std::thread thread;std::mutex mutex;std::condition_variabl
 using TaskHandle_t=HostAudioTask*;
 inline thread_local HostAudioTask* currentTask=nullptr;
 struct StopAudioTask{};
+inline std::atomic<unsigned> hostOneTickYields{0};
 inline void vTaskDelay(unsigned n){
+ if(currentTask&&n==1)++hostOneTickYields;
  if(currentTask){
    while(currentTask->pause&&!currentTask->stop){currentTask->atPause=true;std::this_thread::sleep_for(std::chrono::milliseconds(1));}
    currentTask->atPause=false;if(currentTask->stop)throw StopAudioTask{};

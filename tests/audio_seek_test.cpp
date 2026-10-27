@@ -31,7 +31,28 @@ static int seekFormat(const char* path){
  decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);free(order);
  printf("PASS production WAV/MP3 seek: paused, relative, backwards, clamped EOF, exact PCM, truthful position: %s\n",path);return 0;
 }
+static int resampleTask(const char* path,bool expectReject){
+ formatPath=path;SD.root="/";audio_begin(0,0,100,false,REPEAT_ALL);audio_start();waitIdle();
+ if(expectReject){
+  char error[48];assert(audio_error(error,sizeof(error))>0&&!strcmp(error,"flac_bits"));
+  assert(audio_commands().blocked&&!audio_canSeek()&&!audio_isPlaying());
+  formatPath="tests/out/miniaac_seek/fixtures/tail.m4a";SD.root=".";audio_playTrack(0);waitIdle();
+  assert(!audio_commands().blocked&&audio_canSeek());waitBuffered();
+  puts("PASS real 96k/24-bit FLAC: flac_bits error published before decode, next playback command recovers");
+ }else{
+  audio_setPlaying(true);int16_t out[256];
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(1);
+  while(audio_pullFrames()<20000 && std::chrono::steady_clock::now()<deadline)audio_pull(out,128);
+  assert(audio_pullFrames()>10000&&!audio_commands().blocked);
+  assert(hostOneTickYields>0); // independent of the ring-full 4-tick wait
+  // A command still completes with the fast consumer and resampler active.
+  audio_setPlaying(false);assert(audio_seekTo(100));waitIdle();
+  printf("PASS production 48k task: fast consumer, %u voluntary yields, command acknowledged\n",unsigned(hostOneTickYields));
+ }
+ decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);free(order);return 0;
+}
 int main(int argc,char** argv){
+ if(argc>2)return resampleTask(argv[1],!strcmp(argv[2],"reject"));
  if(argc>1)return seekFormat(argv[1]);
  SD.root="tests/out/miniaac_seek/fixtures";
  audio_begin(0,4000,100,false,REPEAT_ALL);audio_start();waitIdle();

@@ -300,6 +300,12 @@ void loop() {
     const AudioPcmStats pcm=audio_pcmStats();
     Serial.printf("stat: pcm input %lu output 44100 pumpMaxMs %lu yields %lu resampleBlockUs %lu resampleMaxUs %lu taps 32 phases 256\n",
                   (unsigned long)pcm.inputRate,(unsigned long)pcm.maxPumpMs,(unsigned long)pcm.yields,(unsigned long)pcm.blockUs,(unsigned long)pcm.maxBlockUs);
+    // Touch: longest gap between polls since the last report (stat: loop above is
+    // stack, not time), then cumulative reasons a recognised touch did nothing.
+    cydtouch::Stats& ts = cydtouch::stats();
+    Serial.printf("stat: touch pollGapMax %u ms  refused slop %u claim %u rearm %u wake %u  bridged %u\n",
+                  (unsigned)ts.maxGapMs, (unsigned)ts.slop, (unsigned)ts.claim, (unsigned)ts.rearm, (unsigned)ts.wake, (unsigned)ts.bridged);
+    ts.maxGapMs = 0;
     lastStat = now;
   }
   delay(2);

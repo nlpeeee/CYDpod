@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "display.h"
 #include "audio.h"
+#include "touch_gesture.h"
 namespace {
 const uint32_t screenSeconds[]={0,30,60,300};
 const uint8_t timerMinutes[]={0,15,30,60,90};
@@ -27,7 +28,7 @@ void sleep_tick(uint32_t now,bool down){
   blocked=swallow;
   if(down){
     // The complete wake press, including release and a recalibration hold, is consumed.
-    if(forcedOff||applied<int(g_settings.brightness)){swallow=blocked=true;Serial.println("cmd: wake accepted (touch swallowed)");}
+    if(forcedOff||applied<int(g_settings.brightness)){swallow=blocked=true;++cydtouch::stats().wake;Serial.println("cmd: wake accepted (touch swallowed)");}
     forcedOff=false;lastTouch=now;light(g_settings.brightness);
   }else if(swallow){blocked=true;swallow=false;}
   if(timerArmed&&int32_t(now-sleepDeadline)>=0){

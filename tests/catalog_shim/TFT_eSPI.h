@@ -16,13 +16,15 @@
 #define BR_DATUM 8
 class TFT_eSPI {
   std::ostringstream svg;int w=240,h=320,datum=0,font=2,cursorX=0,cursorY=0;
-  uint16_t fg=0,bg=0xffff;bool viewport=false;int clip=0;
+  uint16_t fg=0,bg=0xffff;bool viewport=false;int clip=0;unsigned rotation=0;
   static std::string color(uint16_t c){char b[16];snprintf(b,sizeof(b),"#%02x%02x%02x",((c>>11)&31)*255/31,((c>>5)&63)*255/63,(c&31)*255/31);return b;}
   static std::string escape(const char* p){std::string s;for(;*p;++p){if(*p=='&')s+="&amp;";else if(*p=='<')s+="&lt;";else if(*p=='>')s+="&gt;";else s+=*p;}return s;}
  public:
   std::vector<std::string> labels;
   int width()const{return w;}int height()const{return h;}
-  void setRotation(unsigned r){w=(r&1)?320:240;h=(r&1)?240:320;}
+  void invertDisplay(bool){}
+  unsigned getRotation()const{return rotation;}
+  void setRotation(unsigned r){rotation=r;w=(r&1)?320:240;h=(r&1)?240:320;}
   void save(const char* file){std::ofstream f(file);f<<"<svg xmlns='http://www.w3.org/2000/svg' width='"<<w<<"' height='"<<h<<"' viewBox='0 0 "<<w<<" "<<h<<"'>"<<svg.str()<<"</svg>";}
   void fillScreen(uint16_t c){svg.str("");svg.clear();labels.clear();viewport=false;fillRect(0,0,w,h,c);}
   void fillRect(int x,int y,int width,int height,uint16_t c){if(width>0&&height>0)svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width<<"' height='"<<height<<"' fill='"<<color(c)<<"'/>";}

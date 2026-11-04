@@ -10,6 +10,9 @@
 #include "background.h"
 #include "bt.h"
 #include "speaker.h"
+#include "output_switch.h"
+#include "audio.h"
+#include "layouts.h"
 #include "calibrate.h"
 #include <fstream>
 #include <iostream>
@@ -55,8 +58,35 @@ void audio_seekRelative(int s){relativeSeek=s;++seekCalls;}
 uint32_t audio_durationMs(){return seekAllowed?240000:0;}
 uint32_t audio_positionMs(){return 84000;}
 uint32_t audio_trackSerial(){return serial;}
-bool bt_connected(){return true;}
-bool speaker_setRoute(uint8_t){return routeAllowed;}
+static int btCalls=0;
+bool bt_connected(){++btCalls;return true;}
+bool bt_connecting(){++btCalls;return false;}
+bool bt_pairing(){++btCalls;return false;}
+bool bt_choosing(){++btCalls;return false;}
+String bt_speakerName(){++btCalls;return "Speaker";}
+cyd::PairingSession::Phase bt_pairingPhase(){++btCalls;return cyd::PairingSession::Normal;}
+BtFailure bt_failure(){++btCalls;return BT_FAIL_NONE;}
+uint32_t bt_passkey(){++btCalls;return 0;}
+uint32_t bt_listSerial(){++btCalls;return 0;}
+bool bt_requestPairing(){++btCalls;return true;}
+bool bt_cancelPairing(){++btCalls;return true;}
+int bt_deviceCount(){++btCalls;return 0;}
+bool bt_device(int,BtDevice&){++btCalls;return false;}
+bool bt_isConnectedTo(const uint8_t*){++btCalls;return false;}
+int bt_knownCount(){++btCalls;return 0;}
+bool bt_known(int,BtDevice&){++btCalls;return false;}
+void bt_connectKnown(int){++btCalls;}
+void bt_forget(int){++btCalls;}
+void bt_choose(int){++btCalls;}
+void audio_setPlaying(bool on){playing=on;}
+bool audio_startupComplete(){return true;}
+AudioCommands audio_commands(){return {-1,-1,0,false,false,false};}
+static bool saveAllowed=true;
+static int restartSaves=0;
+static uint8_t liveRoute=OUT_BT;
+static bool savedParked=false;
+bool settings_saveOutputResume(uint8_t){++restartSaves;savedParked=liveRoute==OUT_NONE&&!playing;return saveAllowed;}
+bool speaker_setRoute(uint8_t r){if(!routeAllowed)return false;liveRoute=r;return true;}
 #if CYD_WIRED_OUTPUT
 bool wired_active(){return true;}
 #endif
@@ -64,6 +94,18 @@ bool calibrate_run(){return true;}
 void display_setRotation(uint8_t r){tft.setRotation(r);}
 void display_setBacklight(uint8_t p){backlight=p;}
 int bgStops=0;void bg_stop(){++bgStops;}
+int bg_count(){return 0;}
+void bg_setView(const Rect&,const Rect*,int){}
+bool bg_start(int){return false;}
+bool bg_active(){return false;}
+void bg_tick(uint32_t){}
+int audio_queueLen(){return queueLength;}
+int audio_queueTrack(int n){return n>=0&&n<queueLength?(queueData?queueData[n]:n):-1;}
+int audio_queuePos(int track){for(int i=0;i<queueLength;++i)if(audio_queueTrack(i)==track)return i;return -1;}
+void settings_saveResume(){}
+const char* display_panelName(uint16_t){return "ST7789";}
+bool firmware_uploaderPresent(){return false;}
+bool firmware_bootUploader(){return false;}
 bool touch_isDown(){return useTracker?tracker.down():down;}
 void touch_position(int& x,int& y){if(useTracker)tracker.landing(x,y);else{x=tx;y=ty;}}
 void touch_livePosition(int& x,int& y){if(useTracker)tracker.live(x,y);else{x=tx;y=ty;}}
@@ -72,9 +114,6 @@ void titles_release(){}
 int titles_width(){return 0;}
 void titles_draw(const Rect&,int,int,uint16_t,uint16_t){}
 static void empty(){}
-const Screen SCREEN_PLAYER={empty,nullptr,nullptr,nullptr,nullptr};
-const Screen SCREEN_SETUP={empty,nullptr,nullptr,nullptr,nullptr};
-const Screen SCREEN_BLUETOOTH={empty,nullptr,nullptr,nullptr,nullptr};
 const Screen SCREEN_LIBRARY={empty,nullptr,nullptr,nullptr,nullptr};
 const Screen SCREEN_SOURCES={empty,nullptr,nullptr,nullptr,nullptr};
 static void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
@@ -254,9 +293,43 @@ int main(){try{
   routeAllowed=false;tap(80,110);check(g_settings.outRoute==OUT_BT,"failed headphones selection retains BT setting");
   check(label("Unable to change output. Try again."),"failed output change is reported");
   routeAllowed=true;tap(20,20);
+  const auto restartsBefore=hostRestarts;
+  saveAllowed=false;tap(80,110);
+  check(g_settings.outRoute==OUT_BT&&liveRoute==OUT_BT&&hostRestarts==restartsBefore,"failed NVS save cannot restart or publish the output");
+  saveAllowed=true;tap(20,20);
   tap(80,110);check(g_settings.outRoute==OUT_WIRED,"Headphones selected after a successful switch");
-  ui_redraw();pump();check(countLabel("Selected")==1&&countLabel("Headphones")==1&&!label("SPK")&&!label("BT")&&!label("BT..."),"exactly the active entry is selected; the header shows no SPK or BT text for Headphones");
-  tap(80,66);check(g_settings.outRoute==OUT_BT,"Bluetooth selected again");
+  ui_go(SCR_CLASSIC);pump();check(countLabel("Selected")==1&&countLabel("Headphones")==1&&!label("SPK")&&!label("BT")&&!label("BT..."),"exactly the active entry is selected; the header shows no SPK or BT text for Headphones");
+  check(hostRestarts==restartsBefore+1&&savedParked&&g_settings.lastTrack==current&&g_settings.lastPosMs==84000&&!playing,"switch saves exact paused resume then restarts once");
+  tft.setRotation(1);ui_go(SCR_CLASSIC);pump();
+  check(label("Switch back to Bluetooth if there is no sound"),"full one-line no-module hint below Headphones on W328C");
+  snapshot("ui-output-headphones.svg");
+  btCalls=0;
+  ui_go(SCR_BLUETOOTH);pump();
+  check(label("Bluetooth is off (output: Headphones)")&&label("Use Bluetooth"),"Bluetooth off page text and restart action");
+  tap(220,20);tap(20,200);pump();
+  check(btCalls==0,"off Bluetooth page Pair new, rows, ticks and presses never call bt_*");
+  tft.setRotation(0);ui_go(SCR_BLUETOOTH);pump();
+  check(label("Bluetooth is off (output: Headphones)"),"off status is complete in portrait too");
+  tft.setRotation(0);tap(20,20);pump();tap(120,246);tap(200,246);tap(40,246);pump();
+  check(btCalls==0,"Headphones header, connected state, transport and sleep have zero bt_* calls");
+  // Legacy screens are still reachable through saved skins/advanced settings.
+  SCREEN_SETUP.enter();SCREEN_SETUP.tick(clockNow+=2500);
+  SCREEN_SETUP.touch(TOUCH_TAP,100,UI_HEADER_H+UI_ROW_H+10);pump();
+  check(btCalls==0,"legacy Setup status and Bluetooth navigation are radio-free");
+  for(uint8_t skin=0;skin<SKIN_COUNT;++skin){
+    g_settings.skin=skin;SCREEN_PLAYER.enter();SCREEN_PLAYER.tick(clockNow+=2500);
+    const auto& l=layout_player();
+    SCREEN_PLAYER.press(PRESS_DOWN,l.status.cx(),l.status.cy());
+    SCREEN_PLAYER.press(PRESS_UP,l.status.cx(),l.status.cy());
+    SCREEN_PLAYER.touch(TOUCH_TAP,l.buttons[PB_VOL_UP].cx(),l.buttons[PB_VOL_UP].cy());
+    SCREEN_PLAYER.leave();
+  }
+  check(btCalls==0,"all legacy output chips, connected-state polling and volume hooks are radio-free");
+  std::cout<<"HEADPHONES_UI_OK: zero bt_* calls across Bluetooth page, Classic, Setup and all legacy player skins\n";
+  g_settings.skin=0;
+  ui_go(SCR_BLUETOOTH);pump();tap(120,126);
+  check(g_settings.outRoute==OUT_BT&&hostRestarts==restartsBefore+2,"Use Bluetooth saves Bluetooth then restarts");
+  home();tap(80,198);tap(80,66);
   ui_redraw();pump();check(countLabel("Selected")==1&&label("BT"),"back on Bluetooth: one Selected, BT badge");
 #else
   check(!label("Headphones"),"a board without the module offers Bluetooth only");

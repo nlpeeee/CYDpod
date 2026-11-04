@@ -22,6 +22,12 @@ int main(){try{
   for(int failure=0;failure<2;++failure){failAllocation=failure;check(!speaker_setRoute(OUT_SPEAKER),"buffer allocation failure reported");check(speaker_route()==OUT_BT&&allocations.empty()&&liveTasks==0,"buffer failure rolls back to BT");}
   failTask=true;check(!speaker_setRoute(OUT_SPEAKER),"task failure reported");check(speaker_route()==OUT_BT&&allocations.empty()&&liveTasks==0,"task failure releases both buffers");
   for(int i=0;i<25;++i){unsigned before=pulled;check(speaker_setRoute(OUT_SPEAKER),"speaker starts");until([&]{return pulled>before;});check(allocations.size()==2&&liveTasks==1,"speaker owns exactly two buffers and one task");check(speaker_setRoute(OUT_BT),"BT handoff");check(allocations.empty()&&liveTasks==0&&!dacEnabled,"BT handoff stops DAC before freeing buffers/task");}
+  check(speaker_setRoute(OUT_SPEAKER),"start for restart teardown");
+  until([]{return dacEnabled.load();});
+  check(speaker_setRoute(OUT_NONE),"restart parks writer on no output");
+  check(speaker_route()==OUT_NONE&&allocations.empty()&&liveTasks==0&&!dacEnabled,"restart final teardown frees only after park");
+  check(speaker_setRoute(OUT_NONE),"repeat park is safe");
+  check(speaker_setRoute(OUT_BT),"restore route after simulated save failure");
   failDac=true;check(speaker_setRoute(OUT_SPEAKER),"asynchronous DAC failure setup");until([]{return speaker_route()==OUT_NONE;});check(speaker_setRoute(OUT_BT),"recover after DAC failure");check(allocations.empty()&&liveTasks==0,"DAC failure cleanup");
   check(speaker_setRoute(OUT_SPEAKER),"start for stalled DAC test");until([]{return pulled>0&&dacEnabled;});blockWrites=true;until([]{return dacWriting.load();});
   check(!speaker_setRoute(OUT_BT),"park timeout reported");check(speaker_route()==OUT_SPEAKER&&allocations.size()==2&&liveTasks==1,"timeout preserves buffers/task and old route");

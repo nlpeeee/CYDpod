@@ -41,6 +41,7 @@ class String {
 struct HostSerial {
   template<class... T>void printf(const char* fmt,T...args){std::printf(fmt,args...);}
   void println(const char* p=""){std::puts(p);}
+  void flush(){}
 };
 inline HostSerial Serial;
 inline void delay(uint32_t){}
@@ -50,6 +51,6 @@ inline SemaphoreHandle_t xSemaphoreCreateMutex(){return new std::mutex;}
 constexpr unsigned portMAX_DELAY=0xffffffff;
 inline void xSemaphoreTake(SemaphoreHandle_t m,unsigned){m->lock();}
 inline void xSemaphoreGive(SemaphoreHandle_t m){m->unlock();}
-inline unsigned hostFreeHeap=64000,hostLargestBlock=64000;
-struct HostESP{unsigned getFreeHeap()const{return hostFreeHeap;}unsigned getMaxAllocHeap()const{return hostLargestBlock;}void restart(){throw std::runtime_error("device restart requested");}};
+inline unsigned hostFreeHeap=64000,hostLargestBlock=64000,hostRestarts=0;
+struct HostESP{unsigned getFreeHeap()const{return hostFreeHeap;}unsigned getMaxAllocHeap()const{return hostLargestBlock;}void restart(){++hostRestarts;}};
 inline HostESP ESP;

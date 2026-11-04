@@ -27,3 +27,9 @@ g++ -O2 -std=c++17 -Wall -Wextra -Werror $INC tests/settings_route_test.cpp -o "
 "$OUT/settings_route_wired" 2>/dev/null
 "$OUT/settings_route_forced" 2>/dev/null
 "$OUT/settings_route_plain" 2>/dev/null
+
+# CY-72 pure boot plans and restart ordering, both board variants.
+g++ -O2 -std=c++17 -Wall -Wextra -Werror $INC -DCYD_BOARD_JC2432W328C tests/boot_plan_test.cpp -o "$OUT/boot_plan_wired"
+g++ -O2 -std=c++17 -Wall -Wextra -Werror $INC tests/boot_plan_test.cpp -o "$OUT/boot_plan_plain"
+"$OUT/boot_plan_wired"
+"$OUT/boot_plan_plain"

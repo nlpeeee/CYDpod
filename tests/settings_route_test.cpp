@@ -82,6 +82,32 @@ int main() {
   CHECK(g_settings.outRoute == OUT_BT, "Headphones saved by another build reads as Bluetooth here");
 #endif
 #endif
+  // CY-72: restart transaction persists exact identity/position before output.
+  Preferences::failOpen=true;
+  CHECK(!settings_saveOutputResume(OUT_BT), "failed namespace open rejects restart");
+  Preferences::failOpen=false;
+  for(const char* key : {"track","pos","lastPath","srcKind","srcKey","catKind","catGroup","catCrc","out"}) {
+    Preferences::poke("out",OUT_BT);
+    g_settings.lastTrack=7;g_settings.lastPosMs=84567;g_settings.lastPath="/music/resume.m4a";
+    Preferences::failKey=key;
+    CHECK(!settings_saveOutputResume(OUT_WIRED), "failed %s rejects restart",key);
+    CHECK(Preferences::peek("out")==OUT_BT,"failed %s keeps old boot route",key);
+    Preferences::failKey.clear();
+  }
+  g_settings.srcKind=1;g_settings.srcKey=12345;
+  CHECK(settings_saveOutputResume(OUT_BT), "output resume committed");
+  reboot();
+  CHECK(g_settings.lastTrack==7 && g_settings.lastPosMs==84567 && !strcmp(g_settings.lastPath.c_str(),"/music/resume.m4a"),"restart restores same track and position");
+  CHECK(g_settings.srcKind==1 && g_settings.srcKey==12345,"restart preserves queue source identity");
+  // Empty-library output switching must distinguish failed path deletion from
+  // putString("")'s ambiguous zero return, and must not retain an old identity.
+  g_settings.lastPath="";Preferences::failKey="lastPath";
+  CHECK(!settings_saveOutputResume(OUT_BT),"failed empty-path clear rejects restart");
+  Preferences::failKey.clear();
+  CHECK(settings_saveOutputResume(OUT_BT),"empty path clears successfully");
+  CHECK(!prefs.isKey("lastPath"),"old track identity removed");
+  CHECK(settings_saveOutputResume(OUT_BT),"already absent identity is valid");
+  reboot();CHECK(g_settings.lastPath.isEmpty(),"empty-library identity remains empty at boot");
   if (failures) {
     printf("SETTINGS_ROUTE_FAILED %d\n", failures);
     return 1;

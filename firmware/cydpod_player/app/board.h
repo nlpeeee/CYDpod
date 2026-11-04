@@ -323,8 +323,12 @@ inline void cydPrintBanner() {
   #endif
   Serial.printf("sd      : MOSI%d MISO%d SCK%d CS%d (VSPI)\n",
                 CYD_SD_MOSI_PIN, CYD_SD_MISO_PIN, CYD_SD_SCK_PIN, CYD_SD_CS_PIN);
+  #if CYD_TOUCH_CAPACITIVE
+  Serial.printf("speaker : GPIO%d (DAC), no verified amplifier-enable GPIO\n", CYD_SPEAKER_PIN);
+  #else
   Serial.printf("speaker : GPIO%d (DAC), amp enable GPIO%d active LOW (= red LED)\n",
                 CYD_SPEAKER_PIN, CYD_AMP_ENABLE_PIN);
+  #endif
 }
 
 #endif  // ARDUINO

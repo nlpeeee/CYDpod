@@ -200,11 +200,11 @@ try {
         if ($Board -eq 'jc2432w328c') {
             $imageDir = Join-Path $root ".tools/images/$imageName"
             Copy-Item -LiteralPath (Join-Path $root ".tools/build/$imageName/boot_app0.bin") -Destination $imageDir
-            $files = @('app.ino.bootloader.bin','app.ino.partitions.bin','boot_app0.bin','app.ino.bin')
-            $offsets = @('0x1000','0x8000','0xe000','0x10000')
+            $files = @(Get-ChildItem -LiteralPath $imageDir -File | Where-Object { $_.Name -ne 'MANIFEST.json' } | Sort-Object Name | Select-Object -ExpandProperty Name)
+            $offsets = @{ 'app.ino.bootloader.bin'='0x1000'; 'app.ino.partitions.bin'='0x8000'; 'boot_app0.bin'='0xe000'; 'app.ino.bin'='0x10000' }
             $regions = for ($i = 0; $i -lt $files.Count; $i++) {
                 $file = Get-Item (Join-Path $imageDir $files[$i])
-                [pscustomobject]@{ file=$file.Name; offset=$offsets[$i]; bytes=$file.Length;
+                [pscustomobject]@{ file=$file.Name; offset=$offsets[$files[$i]]; bytes=$file.Length;
                     sha256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
             }
             [pscustomobject]@{ board=$Board; chip='esp32'; flashSize='4MB'; flashMode='dio'; flashFreq='80m';

@@ -166,6 +166,9 @@ static void blueLed(bool on) {
 }
 
 void display_bootGesture() {
+#if CYD_TOUCH_CAPACITIVE
+  return; // fixed ST7789; do not switch controllers on an 8s capacitive press
+#endif
   int rx, ry, z;
   // A board that has never been calibrated may be one whose screen shows
   // nothing -- the case this gesture exists for -- and its owner cannot see

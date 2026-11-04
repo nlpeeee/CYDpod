@@ -51,10 +51,19 @@ void settings_begin() {
   prefs.end();
   // One deliberate UI migration; calibration, bonds, output and volume survive.
   if (migrateClassic) {
-    s.rotation = 0; s.theme = 8; s.style = 7; s.bgIndex = 0;
+#if CYD_TOUCH_CAPACITIVE
+    s.rotation = CYD_ROTATION; // W328C first boot: 320x240 landscape
+    s.outRoute = OUT_BT;       // this target is used as a Bluetooth player
+#else
+    s.rotation = 0;
+#endif
+    s.theme = 8; s.style = 7; s.bgIndex = 0;
     settings_save();
   }
 
+#if CYD_TOUCH_CAPACITIVE
+  s.panel = CYD_PANEL_ST7789; // fixed controller; stale NVS cannot select ILI9341
+#endif
   // The WiFi password is never printed: serial logs end up in bug reports.
   Serial.printf("settings: theme %u skin %u style %u lang %u  wifi \"%s\"\n", s.theme, s.skin,
                 s.style, s.lang, s.wifiSsid.c_str());

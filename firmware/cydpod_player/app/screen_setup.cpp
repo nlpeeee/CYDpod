@@ -80,8 +80,18 @@ static RowValue rowValue(Row r) {
     case ROW_LANGUAGE:   return ui_cycle(T_LANG_NAME);
     case ROW_INVERT:     return ui_toggleValue(g_settings.invert);
     // A chevron, not a cycle: tapping asks before it restarts.
-    case ROW_PANEL:      return ui_nav(String(display_panelName(g_settings.panel)));
-    case ROW_CALIBRATE:  return ui_nav();
+    case ROW_PANEL:
+#if CYD_TOUCH_CAPACITIVE
+      return ui_info(String("ST7789 (fixed)"));
+#else
+      return ui_nav(String(display_panelName(g_settings.panel)));
+#endif
+    case ROW_CALIBRATE:
+#if CYD_TOUCH_CAPACITIVE
+      return ui_info(String("Not required"));
+#else
+      return ui_nav();
+#endif
     case ROW_UPLOAD:     return ui_nav();
     // Shown in full: holding the device is what entitles you to it.
     case ROW_PIN:        return ui_nav(g_settings.webPin);
@@ -220,6 +230,9 @@ static void touch(TouchEvent ev, int x, int y) {
       tft.invertDisplay(g_settings.invert);
       break;
     case ROW_PANEL:
+#if CYD_TOUCH_CAPACITIVE
+      return;
+#endif
       // The wrong controller shows nothing, so this must not happen by
       // accident -- and the owner should know the way back before they need
       // it: the 8 s boot hold (display.h).

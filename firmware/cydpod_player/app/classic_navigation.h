@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "classic_layout.h"
 #include <stdlib.h>
 namespace cydclassic {
 inline int clampTop(int top,int count,int rows){int end=count>rows?count-rows:0;return top<0?0:top>end?end:top;}
@@ -25,7 +26,7 @@ struct Gesture {
   }
   // `near`: the release point is within SlopNear of the captured target.
   bool activate(bool near)const{return !claimed&&!strayed&&target!=-1&&near;}
-  int scrollTop(int py,int count,int rows)const{return clampTop(top+(y-py)/44,count,rows);}
+  int scrollTop(int py,int count,int rows)const{return clampTop(top+(y-py)/layout::RowH,count,rows);}
 };
 template<class T,unsigned Capacity=8> struct Navigation {
   T entries[Capacity]{};unsigned depth=1;

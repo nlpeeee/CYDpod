@@ -1,6 +1,7 @@
 #ifndef CYD_UPLOADER
 #include "classic_screen.h"
 #include "classic_navigation.h"
+#include "classic_layout.h"
 #include "ui.h"
 #include "display.h"
 #include "catalog.h"
@@ -20,6 +21,7 @@
 #include <esp_system.h>
 
 namespace {
+namespace L=cydclassic::layout;
 enum class Mode:uint8_t { Home,Music,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Volume,Options,About,Refresh,Message,Search,Keyboard };
 struct Page {
   Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;uint16_t top=0;
@@ -51,22 +53,16 @@ int searchShownCount=-1,searchShownProgress=-1;
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44,KeyPage=-45;
 constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27,Seek=-28;
 Page& page(){return navigation.current();}
-int rows(){return min(6,(tft.height()-88)/44);}
-int footerY(){return tft.height()-44;}
-Rect rowRect(int i){return {0,44+i*44,tft.width()-8,44};}
-Rect footerRect(int action){
-  const int w=tft.width();
-  if(action==Home)return {0,footerY(),64,44};
-  if(action==Up)return {64,footerY(),48,44};
-  if(action==Down)return {112,footerY(),48,44};
-  return {160,footerY(),w-160,44};
-}
-Rect transportRect(int action){const int column=action==Prev?0:action==Play?1:2;return {4+column*(tft.width()/3),tft.height()-100,tft.width()/3-8,52};}
-Rect sliderRect(){return {24,126,tft.width()-48,52};}
+int rows(){return L::rows(tft.height());}
+int footerY(){return L::footerY(tft.height());}
+Rect rowRect(int i){return L::row<Rect>(tft.width(),i);}
+Rect footerRect(int action){return L::footer<Rect>(tft.width(),tft.height(),action==Home?0:action==Up?1:action==Down?2:3);}
+Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
+Rect sliderRect(){return L::slider<Rect>(tft.width());}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
 void freePreview(){free(preview);preview=nullptr;previewCount=0;}
-void text(const char* s,const Rect& r,uint16_t fg,uint16_t bg,TypeRole role=TYPE_BODY){ui_text(String(s),r.x+10,r.cy(),ML_DATUM,fg,bg,r.w-20,role);}
-void centred(const String& s,int y,uint16_t fg,uint16_t bg,int width=0){ui_text(s,tft.width()/2,y,MC_DATUM,fg,bg,width?width:tft.width()-20);}
+void text(const char* s,const Rect& r,uint16_t fg,uint16_t bg,TypeRole role=TYPE_BODY){ui_text(String(s),r.x+L::TextMargin,r.cy(),ML_DATUM,fg,bg,r.w-2*L::TextMargin,role);}
+void centred(const String& s,int y,uint16_t fg,uint16_t bg,int width=0){ui_text(s,tft.width()/2,y,MC_DATUM,fg,bg,width?width:tft.width()-2*L::TextMargin);}
 const char* title(){
   if(page().title[0])return page().title;
   switch(page().mode){
@@ -80,30 +76,30 @@ const char* title(){
 }
 void header(){
   const Palette& p=theme();
-  for(int y=0;y<44;++y)tft.drawFastHLine(0,y,tft.width(),tft.alphaBlend(uint8_t(y*180/44),p.band,0xffff));
-  tft.drawFastHLine(0,43,tft.width(),p.outline);
-  if(navigation.depth>1)ui_text("< Back",6,22,ML_DATUM,p.text,p.band,54);
-  ui_text(String(title()),tft.width()/2,22,MC_DATUM,p.text,p.band,tft.width()-116);
-  if(g_settings.outRoute==OUT_WIRED)ui_icon(ICON_HEADPHONES,tft.width()-20,22,24,wired_active()?p.text:p.dim,p.band);
+  for(int y=0;y<L::HeaderH;++y)tft.drawFastHLine(0,y,tft.width(),tft.alphaBlend(uint8_t(y*180/L::HeaderH),p.band,0xffff));
+  tft.drawFastHLine(0,L::HeaderH-1,tft.width(),p.outline);
+  if(navigation.depth>1)ui_text("< Back",L::HeaderBackX,L::HeaderTextY,ML_DATUM,p.text,p.band,L::HeaderBackW);
+  ui_text(String(title()),tft.width()/2,L::HeaderTextY,MC_DATUM,p.text,p.band,tft.width()-L::HeaderTitleInset);
+  if(g_settings.outRoute==OUT_WIRED)ui_icon(ICON_HEADPHONES,tft.width()-L::RouteInset,L::HeaderTextY,L::RouteSize,wired_active()?p.text:p.dim,p.band);
   else{const char* status=bt_connected()?"BT":"BT...";
-    ui_text(String(status),tft.width()-5,22,MR_DATUM,p.dim,p.band,36,TYPE_CAPTION);}
+    ui_text(String(status),tft.width()-L::StatusInset,L::HeaderTextY,MR_DATUM,p.dim,p.band,L::StatusW,TYPE_CAPTION);}
 }
 void footer(){
-  const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),44,p.band);
+  const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),L::FooterH,p.band);
   tft.drawFastHLine(0,footerY(),tft.width(),p.outline);
   if(page().mode==Mode::Keyboard){
-    text("Space",{0,footerY(),80,44},p.text,p.band);text("Clear",{80,footerY(),80,44},p.text,p.band);text("Done",{160,footerY(),80,44},p.text,p.band);return;
+    text("Space",L::action<Rect>(tft.width(),tft.height(),0),p.text,p.band);text("Clear",L::action<Rect>(tft.width(),tft.height(),1),p.text,p.band);text("Done",L::action<Rect>(tft.width(),tft.height(),2,true),p.text,p.band);return;
   }
   if(page().mode==Mode::Player){
-    text("Volume",{0,footerY(),80,44},p.text,p.band);
+    text("Volume",L::action<Rect>(tft.width(),tft.height(),0),p.text,p.band);
     const uint16_t remaining=sleep_remainingMinutes(screenNow);
-    text((remaining?String(remaining)+" min":String(audio_volume())+"%").c_str(),{80,footerY(),80,44},p.dim,p.band,TYPE_CAPTION);
-    text("Options",{160,footerY(),tft.width()-160,44},p.text,p.band);
+    text((remaining?String(remaining)+" min":String(audio_volume())+"%").c_str(),L::action<Rect>(tft.width(),tft.height(),1),p.dim,p.band,TYPE_CAPTION);
+    text("Options",L::action<Rect>(tft.width(),tft.height(),2),p.text,p.band);
   }else{
     text("Home",footerRect(Home),p.text,p.band);
     if(count>rows()){
-      ui_icon(ICON_UP,88,footerY()+22,14,page().top?p.text:p.disabled,p.band);
-      ui_icon(ICON_DOWN,136,footerY()+22,14,page().top+rows()<count?p.text:p.disabled,p.band);
+      ui_icon(ICON_UP,L::HomeW+L::PageW/2,footerY()+L::FooterH/2,L::FooterIconSize,page().top?p.text:p.disabled,p.band);
+      ui_icon(ICON_DOWN,L::HomeW+L::PageW*3/2,footerY()+L::FooterH/2,L::FooterIconSize,page().top+rows()<count?p.text:p.disabled,p.band);
     }
     text("Playing",footerRect(Now),storage_trackCount()?p.text:p.disabled,p.band,TYPE_CAPTION);
   }
@@ -115,21 +111,21 @@ void paintRow(int i,bool pressed){
   if(!r.valid)return;
   if(page().mode==Mode::Output&&r.disabled){
     // Fixed small font keeps the no-detection hint on one line on the W328C.
-    tft.setTextDatum(ML_DATUM);tft.setTextColor(fg,bg);tft.drawString(r.label,10,box.cy(),1);
+    tft.setTextDatum(ML_DATUM);tft.setTextColor(fg,bg);tft.drawString(r.label,L::TextMargin,box.cy(),1);
   }else if(r.detail[0]){
-    ui_text(String(r.label),10,box.y+14,ML_DATUM,fg,bg,box.w-34);
-    ui_text(String(r.detail),10,box.y+33,ML_DATUM,pressed?p.onAccent:p.dim,bg,box.w-34,TYPE_CAPTION);
+    ui_text(String(r.label),L::TextMargin,box.y+L::RowTitleY,ML_DATUM,fg,bg,box.w-L::RowTextInset);
+    ui_text(String(r.detail),L::TextMargin,box.y+L::RowDetailY,ML_DATUM,pressed?p.onAccent:p.dim,bg,box.w-L::RowTextInset,TYPE_CAPTION);
   }else text(r.label,box,fg,bg);
-  if(r.navigates)ui_icon(ICON_CHEVRON,box.w-12,box.cy(),12,fg,bg);
-  else if(r.track==audio_currentTrack()&&audio_isPlaying())ui_icon(ICON_PLAY,box.w-12,box.cy(),12,fg,bg);
-  tft.drawFastHLine(0,box.y+43,box.w,p.outlineSubtle);
+  if(r.navigates)ui_icon(ICON_CHEVRON,box.w-L::RowIconInset,box.cy(),L::RowIconSize,fg,bg);
+  else if(r.track==audio_currentTrack()&&audio_isPlaying())ui_icon(ICON_PLAY,box.w-L::RowIconInset,box.cy(),L::RowIconSize,fg,bg);
+  tft.drawFastHLine(0,box.y+L::RowH-1,box.w,p.outlineSubtle);
 }
 void invalidate(){
   page().top=cydclassic::clampTop(page().top,count,rows());dirty=uint8_t((1u<<rows())-1);
   for(int i=0;i<6;++i)cache[i].valid=false;
-  const Palette& p=theme();const int x=tft.width()-7,h=rows()*44;
-  tft.fillRect(x,44,7,h,p.band);
-  if(count>rows()){const int thumb=max(12,h*rows()/count);const int y=44+(h-thumb)*page().top/max(1,count-rows());tft.fillRect(x+2,y,3,thumb,p.dim);}
+  const Palette& p=theme();const Rect strip=L::strip<Rect>(tft.width(),tft.height());const int x=strip.x,h=strip.h;
+  tft.fillRect(x,L::HeaderH,L::StripW,h,p.band);
+  if(count>rows()){const int thumb=max(L::ThumbMin,h*rows()/count);const int y=L::HeaderH+(h-thumb)*page().top/max(1,count-rows());tft.fillRect(x+L::ThumbInset,y,L::ThumbW,thumb,p.dim);}
 }
 void setRow(Row& r,const char* label,const String& detail=String(),bool navigate=false,bool disabled=false){
   cydlib::copyText(r.label,label);cydlib::copyText(r.detail,detail.c_str());r.valid=true;r.navigates=navigate;r.disabled=disabled;
@@ -224,8 +220,8 @@ void volumeAt(int x){
 void volumePaint(){
   const Palette& p=theme();centred(String(audio_volume())+"%",90,p.text,p.bg);
   Rect s=sliderRect();tft.fillRect(s.x,s.y,s.w,s.h,p.bg);ui_slider(s,audio_volume(),100,p.bg);
-  ui_textButton({8,190,96,52},T_COUNT);ui_textButton({tft.width()-104,190,96,52},T_COUNT);
-  ui_icon(ICON_VOL_DOWN,56,216,26,p.text,p.btn);ui_icon(ICON_VOL_UP,tft.width()-56,216,26,p.text,p.btn);
+  ui_textButton(L::step<Rect>(tft.width(),false),T_COUNT);ui_textButton(L::step<Rect>(tft.width(),true),T_COUNT);
+  ui_icon(ICON_VOL_DOWN,L::StepIconX,L::StepIconY,L::StepIconSize,p.text,p.btn);ui_icon(ICON_VOL_UP,tft.width()-L::StepIconX,L::StepIconY,L::StepIconSize,p.text,p.btn);
 }
 void playerTransport(){
   ui_button(transportRect(Prev),ICON_PREV);
@@ -238,7 +234,7 @@ void playerTrack(){
   if(!storage_trackInfo(audio_currentTrack(),playingInfo)){
     cydlib::copyText(playingInfo.title,"No songs");cydlib::copyText(playingInfo.artist,"Add M4A files to /music");
   }
-  const bool portrait=tft.height()>=300;
+  const bool portrait=tft.height()>=L::PortraitMinH;
   if(portrait){Rect art{tft.width()/2-28,48,56,56};tft.fillRect(art.x,art.y,art.w,art.h,p.band);ui_icon(ICON_NOTE,art.cx(),art.cy(),34,p.dim,p.band);}
   const int y=portrait?120:54;
   tft.fillRect(0,y-12,tft.width(),58,p.bg);
@@ -253,39 +249,39 @@ void playerTick(uint32_t now){
   if(shownSerial!=audio_trackSerial())playerTrack();
   if(shownPlaying!=audio_isPlaying())playerTransport();
   const uint32_t pos=seekPreview?seekMs:audio_positionMs(),duration=audio_durationMs();
-  const int barY=tft.height()-136,barWidth=tft.width()-24;
+  const int barY=tft.height()-L::ProgressBottom,barWidth=tft.width()-2*L::ProgressInset;
   int progress=duration?min<int>(barWidth,uint64_t(pos)*barWidth/duration):0;
-  if(progress!=shownProgress){tft.fillRect(12,barY,progress,5,p.bar);tft.fillRect(12+progress,barY,barWidth-progress,5,p.barBg);shownProgress=progress;}
+  if(progress!=shownProgress){tft.fillRect(L::ProgressInset,barY,progress,L::ProgressH,p.bar);tft.fillRect(L::ProgressInset+progress,barY,barWidth-progress,L::ProgressH,p.barBg);shownProgress=progress;}
   const bool busy=audio_isSeeking(),waiting=audio_isPlaying()&&g_settings.outRoute==OUT_BT&&!bt_connected();
-  if(int(pos/1000)!=shownSecond||busy!=shownSeeking||waiting!=shownWaiting){shownSecond=pos/1000;shownSeeking=busy;shownWaiting=waiting;tft.fillRect(0,barY+7,tft.width(),18,p.bg);
-    ui_text(busy?String("Seeking..."):waiting?String("Waiting for BT"):ui_time(pos),12,barY+16,ML_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);
-    ui_text(String("-")+ui_time(duration>pos?duration-pos:0,duration>0),tft.width()-12,barY+16,MR_DATUM,p.dim,p.bg,tft.width()/2-16,TYPE_CAPTION);}
+  if(int(pos/1000)!=shownSecond||busy!=shownSeeking||waiting!=shownWaiting){shownSecond=pos/1000;shownSeeking=busy;shownWaiting=waiting;tft.fillRect(0,barY+L::TimeGap,tft.width(),L::TimeH,p.bg);
+    ui_text(busy?String("Seeking..."):waiting?String("Waiting for BT"):ui_time(pos),L::ProgressInset,barY+L::TimeY,ML_DATUM,p.dim,p.bg,tft.width()/2-L::TimeInset,TYPE_CAPTION);
+    ui_text(String("-")+ui_time(duration>pos?duration-pos:0,duration>0),tft.width()-L::ProgressInset,barY+L::TimeY,MR_DATUM,p.dim,p.bg,tft.width()/2-L::TimeInset,TYPE_CAPTION);}
   int connection=g_settings.outRoute==OUT_BT?(bt_connected()?2:1):0;
   static uint16_t shownSleep=UINT16_MAX;
   const uint16_t remaining=sleep_remainingMinutes(now);
   if(connection!=shownConnection||remaining!=shownSleep){shownSleep=remaining;shownConnection=connection;header();footer();}
 }
 // Five rows of 40 px keys, with a 44 px action bar. No title list in RAM.
-const char* keyLetters(){return digitKeys?"0123456789":tft.height()<300?(lettersSecond?"qrstuvwxyz":"abcdefghijklmnop"):"abcdefghijklmnopqrstuvwxyz";}
-Rect keyRect(int i){const int cols=tft.height()<300?8:digitKeys?5:6;return {(i%cols)*(tft.width()/cols),76+(i/cols)*40,tft.width()/cols,40};}
-Rect keyBackRect(){return tft.height()<300?Rect{0,156,106,40}:Rect{80,236,80,40};}
-Rect keyDigitsRect(){return tft.height()<300?Rect{212,156,108,40}:Rect{160,236,80,40};}
+const char* keyLetters(){return digitKeys?"0123456789":tft.height()<L::PortraitMinH?(lettersSecond?"qrstuvwxyz":"abcdefghijklmnop"):"abcdefghijklmnopqrstuvwxyz";}
+Rect keyRect(int i){return L::key<Rect>(tft.width(),tft.height(),i,digitKeys);}
+Rect keyBackRect(){return L::keyBack<Rect>(tft.height());}
+Rect keyDigitsRect(){return L::keyDigits<Rect>(tft.height());}
 void keyFace(const Rect& r,const char* label){
-  tft.fillRect(r.x+1,r.y+1,r.w-2,r.h-2,theme().band);
-  ui_text(String(label),r.cx(),r.cy(),MC_DATUM,theme().text,theme().band,r.w-4);
+  tft.fillRect(r.x+L::KeyGap/2,r.y+L::KeyGap/2,r.w-L::KeyGap,r.h-L::KeyGap,theme().band);
+  ui_text(String(label),r.cx(),r.cy(),MC_DATUM,theme().text,theme().band,r.w-L::KeyTextInset);
 }
 void queryPaint(){
-  tft.fillRect(0,44,tft.width(),32,theme().bg);
-  ui_text(String(query[0]?query:"Type a title or artist"),8,60,ML_DATUM,theme().text,theme().bg,tft.width()-54);
-  ui_text(storage_searchFailed()?String("SD!"):storage_searchBusy()?String(storage_searchProgress())+"%":String(storage_searchCount()),tft.width()-6,60,MR_DATUM,theme().dim,theme().bg,42,TYPE_CAPTION);
+  tft.fillRect(0,L::HeaderH,tft.width(),L::QueryH,theme().bg);
+  ui_text(String(query[0]?query:"Type a title or artist"),L::QueryInset,L::QueryY,ML_DATUM,theme().text,theme().bg,tft.width()-L::QueryTextInset);
+  ui_text(storage_searchFailed()?String("SD!"):storage_searchBusy()?String(storage_searchProgress())+"%":String(storage_searchCount()),tft.width()-L::QueryStatusInset,L::QueryY,MR_DATUM,theme().dim,theme().bg,L::QueryStatusW,TYPE_CAPTION);
 }
 void keyboardPaint(){
-  tft.fillRect(0,76,tft.width(),footerY()-76,theme().bg);
+  tft.fillRect(0,L::KeyY,tft.width(),footerY()-L::KeyY,theme().bg);
   const char* keys=keyLetters();
   for(int i=0;keys[i];++i){char label[2]={keys[i],0};keyFace(keyRect(i),label);}
   keyFace(keyBackRect(),"Delete");keyFace(keyDigitsRect(),digitKeys?"ABC":"123");
-  if(tft.height()<300)keyFace({106,156,106,40},lettersSecond?"A-P":"Q-Z");
-  keyFace({0,footerY(),80,44},"Space");keyFace({80,footerY(),80,44},"Clear");keyFace({160,footerY(),tft.width()-160,44},"Done");
+  if(tft.height()<L::PortraitMinH)keyFace(L::keyPage<Rect>(),lettersSecond?"A-P":"Q-Z");
+  keyFace(L::action<Rect>(tft.width(),tft.height(),0),"Space");keyFace(L::action<Rect>(tft.width(),tft.height(),1),"Clear");keyFace(L::action<Rect>(tft.width(),tft.height(),2),"Done");
   queryPaint();
 }
 void editQuery(int target){
@@ -423,33 +419,33 @@ void activate(int at){
   }
 }
 int targetAt(int x,int y){
-  if(y<44)return navigation.depth>1&&x<64?Back:-1;
+  if(y<L::HeaderH)return navigation.depth>1&&x<L::BackW?Back:-1;
   if(page().mode==Mode::Keyboard){
-    if(y>=footerY())return x<80?KeySpace:x<160?KeyClear:KeyDone;
+    if(y>=footerY())return x<L::ActionW?KeySpace:x<L::PlayingX?KeyClear:KeyDone;
     if(keyBackRect().contains(x,y))return KeyBack;
     if(keyDigitsRect().contains(x,y))return KeyDigits;
-    if(tft.height()<300&&Rect{106,156,106,40}.contains(x,y))return KeyPage;
+    if(tft.height()<L::PortraitMinH&&L::keyPage<Rect>().contains(x,y))return KeyPage;
     const char* keys=keyLetters();
     for(int i=0;keys[i];++i)if(keyRect(i).contains(x,y))return KeyBase+keys[i];
     return -1;
   }
   if(y>=footerY()){
-    if(page().mode==Mode::Player)return x<80?Volume:x>=160?Options:-1;
+    if(page().mode==Mode::Player)return x<L::ActionW?Volume:x>=L::PlayingX?Options:-1;
     if(footerRect(Home).contains(x,y))return Home;
     if(footerRect(Up).contains(x,y))return count>rows()?Up:-1;
     if(footerRect(Down).contains(x,y))return count>rows()?Down:-1;
     return Now;
   }
   if(page().mode==Mode::Player){
-    if(Rect{8,tft.height()-148,tft.width()-16,44}.contains(x,y))return Seek;
+    if(L::seek<Rect>(tft.width(),tft.height()).contains(x,y))return Seek;
     for(int a:{Prev,Play,Next})if(transportRect(a).contains(x,y))return a;return -1;
   }
   if(page().mode==Mode::Volume){
     if(sliderRect().contains(x,y))return Slider;
-    if(Rect{8,190,96,52}.contains(x,y))return Minus;
-    if(Rect{tft.width()-104,190,96,52}.contains(x,y))return Plus;return -1;
+    if(L::step<Rect>(tft.width(),false).contains(x,y))return Minus;
+    if(L::step<Rect>(tft.width(),true).contains(x,y))return Plus;return -1;
   }
-  int row=(y-44)/44;return row>=0&&row<rows()&&page().top+row<count?page().top+row:-1;
+  int row=(y-L::HeaderH)/L::RowH;return row>=0&&row<rows()&&page().top+row<count?page().top+row:-1;
 }
 // True when (x,y) is within `slop` px of the control the press landed on. Probing the
 // hit test keeps this exact for every control shape and can never reach a neighbour:
@@ -460,8 +456,8 @@ bool within(int x,int y,int slop){
   return false;
 }
 void seekPreviewAt(int x){
-  const int width=tft.width()-24;
-  seekMs=seekDuration?uint32_t(uint64_t(constrain(x-12,0,width))*(seekDuration-1)/width):0;
+  const int width=tft.width()-2*L::ProgressInset;
+  seekMs=seekDuration?uint32_t(uint64_t(constrain(x-L::ProgressInset,0,width))*(seekDuration-1)/width):0;
   shownProgress=shownSecond=-1;lastPlayer=0;
 }
 // Play/Pause, Previous and Next act on the admitted touch-down: a touch the UI has
@@ -557,7 +553,7 @@ std::string classic_geometry(){
     for(int i=0;i<rows();++i)rect(rowRect(i));
     for(int a:{Home,Up,Down,Now})rect(footerRect(a));
     for(int a:{Prev,Play,Next})rect(transportRect(a));rect(sliderRect());
-    rect({8,tft.height()-148,tft.width()-16,44});rect({tft.width()-7,44,7,rows()*44});rect({8,190,96,52});rect({tft.width()-104,190,96,52});rect({0,44,tft.width(),32});out<<'\n';
+    rect(L::seek<Rect>(tft.width(),tft.height()));rect(L::strip<Rect>(tft.width(),tft.height()));rect(L::step<Rect>(tft.width(),false));rect(L::step<Rect>(tft.width(),true));rect({0,L::HeaderH,tft.width(),L::QueryH});out<<'\n';
     for(int m=0;m<=int(Mode::Keyboard);++m){
       out<<"mode="<<m;
       for(int variant=0;variant<4;++variant){

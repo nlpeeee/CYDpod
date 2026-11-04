@@ -116,6 +116,7 @@ try {
         # 32-bit-slot fallback (BCK = 64 x fS) in case the PCM5100A PLL does not lock at 32 x fS.
         $jobs += @{ Name = 'i2s-tone'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-tone-jc2432w328c' }
         $jobs += @{ Name = 'i2s-tone-slot32'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C -DI2S_TEST_SLOT_BITS=32'; ImageName = 'i2s-tone-slot32-jc2432w328c' }
+        $jobs += @{ Name = 'i2s-diag'; Sketch = 'firmware/cydpod_i2s_diag'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-diag-jc2432w328c' }
     }
     $results = @()
     foreach ($job in $jobs) {
@@ -144,7 +145,7 @@ try {
             }
         }
         if ($job.Name -eq 'cydpod-player') { Copy-Item -LiteralPath (Join-Path $root 'vendor/miniflac/miniflac.h') -Destination $stage }
-        if ($job.Name -like 'i2s-tone*') { Copy-Item -LiteralPath (Join-Path $root 'firmware/cydpod_player/app/board.h') -Destination $stage }
+        if ($job.Name -like 'i2s-*') { Copy-Item -LiteralPath (Join-Path $root 'firmware/cydpod_player/app/board.h') -Destination $stage }
         # GCC -w suppresses even local diagnostic-error pragmas. Keep it for
         # stock builds only; the probe enables format errors in its own files.
         $warnings = if ($job.Name -eq 'aac-probe') { 'default' } else { 'none' }
@@ -185,7 +186,7 @@ try {
         if ((Get-FileHash (Join-Path $root ".tools/build/$imageName/partitions.csv")).Hash.ToLowerInvariant() -ne $lock.core.partitionsSha256) {
             throw 'Built partition table differs from the locked min_spiffs layout.'
         }
-        if ($job.Name -ne 'aac-probe' -and $job.Name -notlike 'i2s-tone*') {
+        if ($job.Name -ne 'aac-probe' -and $job.Name -notlike 'i2s-*') {
             $imageText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($binary.FullName))
             $isPlayer = $imageText.Contains('heap before audio + bt')
             $isUploader = $imageText.Contains('upload: hotspot')
@@ -231,6 +232,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'WAV/MP3 pool/FIR host checks failed.' }
         & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_i2s_tone.sh')
         if ($LASTEXITCODE -ne 0) { throw 'I2S test-tone host checks failed.' }
+        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_i2s_diag.sh')
+        if ($LASTEXITCODE -ne 0) { throw 'I2S diagnostic host checks failed.' }
         & python tools/media_check.py
         if ($LASTEXITCODE -ne 0) { throw 'Host media checks failed. See output above.' }
     }

@@ -52,6 +52,20 @@ static int resampleTask(const char* path,bool expectReject){
  decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);free(order);return 0;
 }
 int main(int argc,char** argv){
+ // CY-72: a fresh process models boot after an output-switch restart. The
+ // persisted queue identity is restored before releasing the startup barrier.
+ if(argc==2&&!strcmp(argv[1],"--output-resume")){
+   SD.root="tests/out/miniaac_seek/fixtures";
+   audio_begin(1,8456,40,false,REPEAT_ALL);
+   audio_setQueue(nullptr,2,1,false);audio_start();waitIdle();waitBuffered();
+   assert(audio_startupComplete()&&audio_currentTrack()==1&&!audio_isPlaying());
+   assert(audio_queuePos(1)>=0&&audio_positionMs()>=8455&&audio_positionMs()<=8456);
+   int16_t out[256];const auto pos=audio_positionMs();
+   for(int i=0;i<10;++i){audio_pull(out,128);assert(silent(out,256));}
+   assert(audio_positionMs()==pos&&!audio_isPlaying());
+   decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);free(order);
+   puts("OUTPUT_RESTART_RESUME_OK: same track 1, queue position and 8456 ms; paused pulls stay silent without advancing");return 0;
+ }
  if(argc>2)return resampleTask(argv[1],!strcmp(argv[2],"reject"));
  if(argc>1)return seekFormat(argv[1]);
  SD.root="tests/out/miniaac_seek/fixtures";

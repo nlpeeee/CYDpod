@@ -50,5 +50,6 @@ class TFT_eSPI {
     fillRect(left,top,width,height,bg);labels.push_back(s.c_str());svg<<"<text x='"<<left<<"' y='"<<top+height-3<<"' font-family='Arial,sans-serif' font-size='"<<(f==1?9:16)<<"' fill='"<<color(fg)<<"'>"<<escape(s.c_str())<<"</text>";
   }
   void classicText(const char* text,int x,int y,int height,uint16_t fg,uint16_t){labels.push_back(text);svg<<"<text x='"<<x<<"' y='"<<y+height/2-3<<"' font-family='Arial,sans-serif' font-size='"<<height<<"' fill='"<<color(fg)<<"'>"<<escape(text)<<"</text>";}
+  int colorCount(uint16_t c)const{const std::string content=svg.str(),needle="fill='"+color(c)+"'";int n=0;size_t at=0;while((at=content.find(needle,at))!=std::string::npos){++n;at+=needle.size();}return n;}
   void println(const char* s){drawString(String(s),cursorX,cursorY,font);cursorY+=fontHeight(font);}
 };

@@ -263,6 +263,8 @@ static void nowPlayingRegression(){
     check(classic_target(-1,hit.cy())==-1&&classic_target(w,hit.cy())==-1&&classic_target(track.x,h)==-1,"outside screen never hits volume");
     check(classic_target(seek.x,seek.y)==-28&&classic_target(seek.x+seek.w-1,seek.y+seek.h-1)==-28,"seek hit zone includes outer edges");
     check(classic_target(seek.x-1,seek.cy())==-1&&classic_target(seek.x+seek.w,seek.cy())==-1,"outside seek hit zone stays inactive");
+    check(L::sliderValue(track.x-1,track.x,track.w,100)==0&&L::sliderValue(track.x+track.w+1,track.x,track.w,100)==100,"volume values clamp outside the visible track");
+    check(L::sliderValue(bar.x-1,bar.x,bar.w,bar.w)==0&&L::sliderValue(bar.x+bar.w+1,bar.x,bar.w,bar.w)==bar.w,"seek values clamp outside the visible track");
     const int arms=classic_volumeSaveArms(),saves=settingsSaves,callsBefore=volumeCalls;
     tx=track.x;ty=track.cy();down=true;ui_tick(clockNow+=130);
     check(volume==0&&volumeCalls==callsBefore+1,"volume sets minimum in one touch-down event");
@@ -277,10 +279,10 @@ static void nowPlayingRegression(){
     down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(seekCalls==seeks+1&&lastSeek==239999,"seek commits once through existing seek path");
     // The final up may arrive without a move; near slop accepts 7 px, 9 px rejects.
     for(int slop:{7,9}){seeks=seekCalls;SCREEN_CLASSIC.press(PRESS_DOWN,bar.x,bar.cy());SCREEN_CLASSIC.press(PRESS_UP,bar.x,seek.y+seek.h-1+slop);check(seekCalls==seeks+(slop==7),"seek tolerant release boundary");}
-    const Rect f=L::favourite<Rect>(w);bool favourite=playlist_isFavourite(current);tap(f.cx(),18);check(playlist_isFavourite(current)!=favourite,"favourite star toggles");tap(f.cx(),18);
+    const Rect f=L::favourite<Rect>(w);bool favourite=playlist_isFavourite(current);pressRun(200,10,0,[=](uint32_t t,int& x,int& y){x=t<60?f.x:f.x-7;y=18;});check(playlist_isFavourite(current)!=favourite,"favourite star toggles");tap(f.cx(),18);
     const Rect sh=L::playerToggle<Rect>(w,h,false),rep=L::playerToggle<Rect>(w,h,true);bool wasShuffle=shuffle;tap(sh.cx(),sh.cy());check(shuffle!=wasShuffle,"shuffle toggle");const int repeat=repeatMode;tap(rep.cx(),rep.cy());check(repeatMode==(repeat+1)%REPEAT_MODE_COUNT,"repeat toggle");
-    const Rect play=L::transport<Rect>(w,h,1);const int toggles=toggleCalls;tx=play.cx();ty=play.cy();down=true;ui_tick(clockNow+=130);check(toggleCalls==toggles+1,"transport fires once on down");down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(toggleCalls==toggles+1,"transport release does nothing");
-    const Rect output=L::output<Rect>(w,h);tap(output.cx(),output.cy());check(label("Audio Output"),"output chip opens Output page");
+    const Rect play=L::transport<Rect>(w,h,1);const int toggles=toggleCalls,pressedFaces=tft.colorCount(theme().pressed);tx=play.cx();ty=play.cy();down=true;ui_tick(clockNow+=130);check(toggleCalls==toggles+1,"transport fires once on down");check(tft.colorCount(theme().pressed)>pressedFaces,"transport visibly pressed on touch-down");down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(toggleCalls==toggles+1,"transport release does nothing");
+    const Rect output=L::output<Rect>(w,h);pressRun(200,10,0,[=](uint32_t t,int& x,int& y){x=t<60?output.x:output.x-7;y=output.cy();});check(label("Audio Output"),"output chip opens Output page");
     tap(20,20);const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
     ui_redraw();pump();snapshot(rotation==0?"cy61-player-portrait.svg":rotation==1?"cy61-player-landscape.svg":"cy61-player-landscape3.svg");
   }

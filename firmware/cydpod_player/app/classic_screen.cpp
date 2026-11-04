@@ -284,12 +284,18 @@ void volumePaint(){
   ui_textButton(L::step<Rect>(0,false),T_COUNT);ui_textButton(L::step<Rect>(tft.width(),true),T_COUNT);
   ui_icon(ICON_VOL_DOWN,L::StepIconX,L::StepIconY,L::StepIconSize,p.text,p.btn);ui_icon(ICON_VOL_UP,tft.width()-L::StepIconX,L::StepIconY,L::StepIconSize,p.text,p.btn);
 }
+// ui_button normally insets its face. Clip an expanded cell so the painted
+// Player face, as well as its hit target, matches the proposal's rectangle.
+void playerButton(const Rect& r,Icon icon,bool active,bool pressed){
+  const int inset=style().inset;tft.setViewport(r.x,r.y,r.w,r.h);
+  ui_button({-inset,-inset,r.w+2*inset,r.h+2*inset},icon,active,pressed);tft.resetViewport();
+}
 void playerTransport(){
-  ui_button(transportRect(Prev),ICON_PREV,false,playerPressed==Prev);
-  ui_button(transportRect(Play),audio_isPlaying()?ICON_PAUSE:ICON_PLAY,audio_isPlaying(),playerPressed==Play);
-  ui_button(transportRect(Next),ICON_NEXT,false,playerPressed==Next);
-  ui_button(L::playerToggle<Rect>(tft.width(),tft.height(),false),ICON_SHUFFLE,audio_shuffle(),playerPressed==Shuffle);
-  ui_button(L::playerToggle<Rect>(tft.width(),tft.height(),true),audio_repeat()==REPEAT_ONE?ICON_REPEAT_ONE:ICON_REPEAT,audio_repeat()!=REPEAT_OFF,playerPressed==Repeat);
+  playerButton(transportRect(Prev),ICON_PREV,false,playerPressed==Prev);
+  playerButton(transportRect(Play),audio_isPlaying()?ICON_PAUSE:ICON_PLAY,audio_isPlaying(),playerPressed==Play);
+  playerButton(transportRect(Next),ICON_NEXT,false,playerPressed==Next);
+  playerButton(L::playerToggle<Rect>(tft.width(),tft.height(),false),ICON_SHUFFLE,audio_shuffle(),playerPressed==Shuffle);
+  playerButton(L::playerToggle<Rect>(tft.width(),tft.height(),true),audio_repeat()==REPEAT_ONE?ICON_REPEAT_ONE:ICON_REPEAT,audio_repeat()!=REPEAT_OFF,playerPressed==Repeat);
   shownPlaying=audio_isPlaying();
 }
 void playerBar(const Rect& r,int value,int maximum){

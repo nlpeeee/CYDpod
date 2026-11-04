@@ -31,6 +31,8 @@
 #include "background.h"
 #include "audio.h"
 #include "bt.h"
+#include "boot_plan.h"
+#include <esp32-hal-bt.h>
 #include "speaker.h"
 #if CYD_WIRED_OUTPUT
 #include "wired.h"
@@ -55,6 +57,7 @@ static const char* FIRMWARE_LABEL = FIRMWARE_VERSION " uploader";
 #else
 static const char* FIRMWARE_LABEL = FIRMWARE_VERSION;
 static bool bluetoothStarted = false;
+static bool bluetoothPlanned = false;
 #endif
 
 // ---------------------------------------------------------------------------
@@ -160,6 +163,15 @@ void setup() {
   cydPrintBanner();
 
   settings_begin();
+#ifndef CYD_UPLOADER
+  bluetoothPlanned = boot_plan(g_settings.outRoute, CYD_WIRED_OUTPUT).bluetooth;
+  if (!bluetoothPlanned) {
+    // The linked Classic stack reserves controller/host RAM even before start.
+    // Releasing it is safe for this whole boot: switching output always restarts.
+    if (!btMemRelease(BT_MODE_CLASSIC_BT)) Serial.println("bt: memory release failed");
+    Serial.println("bt: skipped (headphones)");
+  }
+#endif
   Serial.printf("heap: after settings %u\n", ESP.getFreeHeap());
   cydRgbLedOff();
   display_begin();
@@ -223,16 +235,21 @@ void loop() {}
   while (!audio_startupComplete() && millis() - audioWaitAt < 5000) delay(10);
   Serial.printf("heap: after audio startup %u largest %u ready %d\n",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap(), audio_startupComplete());
-  if (audio_startupComplete()) { bt_begin(); bluetoothStarted = true; }
-  else Serial.println("bt: deferred until initial track open completes");
+  if (bluetoothPlanned) {
+    if (audio_startupComplete()) { bt_begin(); bluetoothStarted = true; }
+    else Serial.println("bt: deferred until initial track open completes");
+  }
   if (!speaker_begin(g_settings.outRoute)) {
-    speaker_setRoute(OUT_BT); g_settings.outRoute = OUT_BT;
-    Serial.println("speaker: startup failed, Bluetooth route selected");
+    // Keep the saved plan: a failed wired allocation must not secretly start
+    // Bluetooth, nor overwrite the route and create a reboot loop.
+    Serial.println("speaker: startup failed; saved output retained");
   }
 
   // Only the Bluetooth route has anything to set up before it can play; the
   // on-board speaker just works, so it lands on the player.
-  const bool needSpeaker = g_settings.outRoute == OUT_BT &&
+  Serial.printf("heap: after init %u min %u largest %u\n",
+                ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
+  const bool needSpeaker = bluetoothStarted && g_settings.outRoute == OUT_BT &&
                            (bt_pairing() || bt_speakerName().isEmpty());
   classic_home();
   ui_go(needSpeaker ? SCR_BLUETOOTH : SCR_CLASSIC);
@@ -274,7 +291,7 @@ static void persistResume(uint32_t now) {
 void loop() {
   const uint32_t now = millis();
 
-  if (!bluetoothStarted && audio_startupComplete()) { bt_begin(); bluetoothStarted = true; }
+  if (bluetoothPlanned && !bluetoothStarted && audio_startupComplete()) { bt_begin(); bluetoothStarted = true; }
   if (bluetoothStarted) bt_tick();
   audio_tick();
   persistResume(now);

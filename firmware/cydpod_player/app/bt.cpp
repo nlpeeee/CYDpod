@@ -390,6 +390,7 @@ static void remember(const uint8_t addr[6], const char* name) {
 }
 
 void bt_tick() {
+  if (!bluetoothReady) return;
   if(failure!=BT_FAIL_NONE){haveTarget=false;pendingKnown=-1;connectDeadline=0;}
   // Give up on a connection the owner asked for, rather than saying
   // "connecting" until the board is restarted.
@@ -522,6 +523,7 @@ bool bt_requestPairing() {
   Serial.println("cmd: pair queued");return true;
 }
 bool bt_cancelPairing() {
+  if (!bluetoothReady) return false;
   if(!a2dp.post(CydSource::Cancel)){failure=BT_FAIL_TIMEOUT;Serial.println("cmd: cancel pair ignored (queue busy)");return false;}
   haveTarget=false;pendingKnown=-1;connectDeadline=0;passkey=0;
   Serial.println("cmd: cancel pair queued");return true;
@@ -557,6 +559,7 @@ bool bt_known(int i, BtDevice& out) {
 }
 
 void bt_connectKnown(int i) {
+  if (!bluetoothReady) return;
   BtDevice d;
   if (!bt_known(i, d)){Serial.println("cmd: connect ignored (invalid saved device)");return;}
   Serial.printf("cmd: connect saved %d accepted\n",i);
@@ -593,6 +596,7 @@ void bt_connectKnown(int i) {
 }
 
 void bt_forget(int i) {
+  if (!bluetoothReady) return;
   if (i < 0 || i >= g_settings.btKnownCount) return;
   uint8_t addr[6];
   memcpy(addr, g_settings.btKnown[i].addr, 6);
@@ -635,6 +639,7 @@ void bt_forget(int i) {
 }
 
 void bt_choose(int i) {
+  if (!bluetoothReady) return;
   BtDevice d;
   if (!bt_device(i, d)){Serial.println("cmd: choose ignored (device disappeared)");return;}
   Serial.printf("cmd: choose device %d accepted\n",i);

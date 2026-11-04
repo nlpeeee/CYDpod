@@ -32,7 +32,7 @@ constexpr int PortraitMinH=300,QueryH=32,KeyY=76,KeyH=40,KeyGap=2,KeyTextInset=4
 constexpr int LandscapeCols=8,DigitCols=5,LetterCols=6,KeyActionY=156,PortraitActionY=236;
 constexpr int KeyActionW=106,KeyDigitsX=212,KeyDigitsW=108;
 constexpr inline int columns(int h,bool digits){return h<PortraitMinH?LandscapeCols:digits?DigitCols:LetterCols;}
-template<class R> constexpr inline R key(int w,int h,int i,bool digits){return {(i%columns(h,digits))*(w/columns(h,digits)),KeyY+(i/columns(h,digits))*KeyH,w/columns(h,digits),KeyH};}
+template<class R> constexpr inline R key(int w,int h,int i,bool digits){const int cols=columns(h,digits),cell=w/cols;return {(i%cols)*cell,KeyY+(i/cols)*KeyH,cell,KeyH};}
 template<class R> constexpr inline R keyBack(int h){return h<PortraitMinH?R{0,KeyActionY,KeyActionW,KeyH}:R{ActionW,PortraitActionY,ActionW,KeyH};}
 template<class R> constexpr inline R keyDigits(int h){return h<PortraitMinH?R{KeyDigitsX,KeyActionY,KeyDigitsW,KeyH}:R{PlayingX,PortraitActionY,ActionW,KeyH};}
 template<class R> constexpr inline R keyPage(){return {KeyActionW,KeyActionY,KeyActionW,KeyH};}

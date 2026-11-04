@@ -56,7 +56,13 @@ Page& page(){return navigation.current();}
 int rows(){return L::rows(tft.height());}
 int footerY(){return L::footerY(tft.height());}
 Rect rowRect(int i){return L::row<Rect>(tft.width(),i);}
-Rect footerRect(int action){return L::footer<Rect>(tft.width(),tft.height(),action==Home?0:action==Up?1:action==Down?2:3);}
+Rect footerRect(int action){
+  const int w=tft.width();
+  if(action==Home)return L::footer<Rect>(w,tft.height(),0);
+  if(action==Up)return L::footer<Rect>(w,tft.height(),1);
+  if(action==Down)return L::footer<Rect>(w,tft.height(),2);
+  return L::footer<Rect>(w,tft.height(),3);
+}
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
 Rect sliderRect(){return L::slider<Rect>(tft.width());}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
@@ -88,12 +94,12 @@ void footer(){
   const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),L::FooterH,p.band);
   tft.drawFastHLine(0,footerY(),tft.width(),p.outline);
   if(page().mode==Mode::Keyboard){
-    text("Space",L::action<Rect>(tft.width(),tft.height(),0),p.text,p.band);text("Clear",L::action<Rect>(tft.width(),tft.height(),1),p.text,p.band);text("Done",L::action<Rect>(tft.width(),tft.height(),2,true),p.text,p.band);return;
+    text("Space",L::action<Rect>(0,tft.height(),0),p.text,p.band);text("Clear",L::action<Rect>(0,tft.height(),1),p.text,p.band);text("Done",L::action<Rect>(0,tft.height(),2,true),p.text,p.band);return;
   }
   if(page().mode==Mode::Player){
-    text("Volume",L::action<Rect>(tft.width(),tft.height(),0),p.text,p.band);
+    text("Volume",L::action<Rect>(0,tft.height(),0),p.text,p.band);
     const uint16_t remaining=sleep_remainingMinutes(screenNow);
-    text((remaining?String(remaining)+" min":String(audio_volume())+"%").c_str(),L::action<Rect>(tft.width(),tft.height(),1),p.dim,p.band,TYPE_CAPTION);
+    text((remaining?String(remaining)+" min":String(audio_volume())+"%").c_str(),L::action<Rect>(0,tft.height(),1),p.dim,p.band,TYPE_CAPTION);
     text("Options",L::action<Rect>(tft.width(),tft.height(),2),p.text,p.band);
   }else{
     text("Home",footerRect(Home),p.text,p.band);
@@ -123,7 +129,7 @@ void paintRow(int i,bool pressed){
 void invalidate(){
   page().top=cydclassic::clampTop(page().top,count,rows());dirty=uint8_t((1u<<rows())-1);
   for(int i=0;i<6;++i)cache[i].valid=false;
-  const Palette& p=theme();const Rect strip=L::strip<Rect>(tft.width(),tft.height());const int x=strip.x,h=strip.h;
+  const Palette& p=theme();const int x=tft.width()-L::StripW,h=rows()*L::RowH;
   tft.fillRect(x,L::HeaderH,L::StripW,h,p.band);
   if(count>rows()){const int thumb=max(L::ThumbMin,h*rows()/count);const int y=L::HeaderH+(h-thumb)*page().top/max(1,count-rows());tft.fillRect(x+L::ThumbInset,y,L::ThumbW,thumb,p.dim);}
 }
@@ -220,7 +226,7 @@ void volumeAt(int x){
 void volumePaint(){
   const Palette& p=theme();centred(String(audio_volume())+"%",90,p.text,p.bg);
   Rect s=sliderRect();tft.fillRect(s.x,s.y,s.w,s.h,p.bg);ui_slider(s,audio_volume(),100,p.bg);
-  ui_textButton(L::step<Rect>(tft.width(),false),T_COUNT);ui_textButton(L::step<Rect>(tft.width(),true),T_COUNT);
+  ui_textButton(L::step<Rect>(0,false),T_COUNT);ui_textButton(L::step<Rect>(tft.width(),true),T_COUNT);
   ui_icon(ICON_VOL_DOWN,L::StepIconX,L::StepIconY,L::StepIconSize,p.text,p.btn);ui_icon(ICON_VOL_UP,tft.width()-L::StepIconX,L::StepIconY,L::StepIconSize,p.text,p.btn);
 }
 void playerTransport(){
@@ -281,7 +287,7 @@ void keyboardPaint(){
   for(int i=0;keys[i];++i){char label[2]={keys[i],0};keyFace(keyRect(i),label);}
   keyFace(keyBackRect(),"Delete");keyFace(keyDigitsRect(),digitKeys?"ABC":"123");
   if(tft.height()<L::PortraitMinH)keyFace(L::keyPage<Rect>(),lettersSecond?"A-P":"Q-Z");
-  keyFace(L::action<Rect>(tft.width(),tft.height(),0),"Space");keyFace(L::action<Rect>(tft.width(),tft.height(),1),"Clear");keyFace(L::action<Rect>(tft.width(),tft.height(),2),"Done");
+  keyFace(L::action<Rect>(0,tft.height(),0),"Space");keyFace(L::action<Rect>(0,tft.height(),1),"Clear");keyFace(L::action<Rect>(tft.width(),tft.height(),2),"Done");
   queryPaint();
 }
 void editQuery(int target){

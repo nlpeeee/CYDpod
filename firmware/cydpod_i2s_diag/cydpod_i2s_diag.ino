@@ -82,7 +82,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   pinMode(CYD_SPEAKER_PIN, OUTPUT); digitalWrite(CYD_SPEAKER_PIN, LOW);
-  Serial.println("i2s-diag: bck=16 din=4 ws=17; 12 s phases + 500 ms zeros + 40 ms drain; PLL_160M dma=6x256");
+  Serial.println("i2s-diag: bck=16 din=4 ws=17; 12 s phases + 500 ms zeros + 50 ms drain; PLL_160M dma=6x256");
   Serial.println("i2s-diag: start -12 dBFS; phase6 FULL SCALE; SD=3V3 MC=GND; no MCLK wire");
   epoch = uint64_t(esp_timer_get_time()) / 1000;
   enterPhase(0);

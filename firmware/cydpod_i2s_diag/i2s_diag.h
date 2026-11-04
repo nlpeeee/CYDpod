@@ -6,7 +6,7 @@
 
 namespace i2sdiag {
 constexpr uint32_t kPhaseMs = 12000, kZeroMs = 500, kStatusMs = 4000;
-constexpr uint32_t kDrainMs = 40;  // > 6*256/44100 s of queued DMA
+constexpr uint32_t kDrainMs = 50;  // > queued DMA plus one in-flight 256-frame write
 constexpr uint32_t kPeriodMs = kPhaseMs + kZeroMs + kDrainMs;
 constexpr unsigned kPhaseCount = 7;
 constexpr int32_t kAmplitude = 8231;  // -12 dBFS peak, round(32767 * 10^(-12/20))

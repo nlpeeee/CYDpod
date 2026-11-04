@@ -1,6 +1,7 @@
 # Compile-only. There is deliberately no upload, monitor, port or erase option.
 [CmdletBinding()]
-param([switch]$SkipProbe, [switch]$SkipHostMedia)
+param([switch]$SkipProbe, [switch]$SkipHostMedia,
+    [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
 $ErrorActionPreference = 'Stop'
 
 function Test-FileInventory {
@@ -106,8 +107,16 @@ try {
         $jobs += @{ Name = 'aac-probe'; Sketch = 'firmware/cydpod_probe'; Flags = '-DCYDPOD_AAC_LC_ONLY'
             Library = (Join-Path $root '.tools/staging/miniaac-patched') }
     }
+    if ($Board -eq 'jc2432w328c') {
+        # Only the maintained player is ported; stock vendor images stay untouched.
+        $jobs = @($jobs | Where-Object { $_.Name -eq 'cydpod-player' })
+        $setupHeader = (Join-Path $root 'tools/tft/User_Setup_JC2432W328C.h').Replace([char]92,[char]47)
+        $jobs[0].Flags += (' -DCYD_BOARD_JC2432W328C -include"' + $setupHeader + '"')
+    }
     $results = @()
     foreach ($job in $jobs) {
+        $imageName = $job.Name
+        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v8-jc2432w328c' }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.
         $stageParent = Join-Path $root ".tools/staging/$($job.Name)"
@@ -134,8 +143,8 @@ try {
         # stock builds only; the probe enables format errors in its own files.
         $warnings = if ($job.Name -eq 'aac-probe') { 'default' } else { 'none' }
         $arguments = @('--config-file', $config, 'compile', '--fqbn', $lock.core.fqbn,
-            '--warnings', $warnings, '--build-path', (Join-Path $root ".tools/build/$($job.Name)"),
-            '--output-dir', (Join-Path $root ".tools/images/$($job.Name)"))
+            '--warnings', $warnings, '--build-path', (Join-Path $root ".tools/build/$imageName"),
+            '--output-dir', (Join-Path $root ".tools/images/$imageName"))
         if ($job.Flags) {
             $arguments += @('--build-property', "compiler.cpp.extra_flags=$($job.Flags)",
                 '--build-property', "compiler.c.extra_flags=$($job.Flags)")
@@ -143,7 +152,7 @@ try {
         if ($job.Name -eq 'cydpod-player') { $arguments += @('--build-property', 'compiler.c.elf.extra_flags=-Wl,--wrap=xmp3_UnpackFrameHeader', '--library', (Join-Path $root '.tools/staging/helix-mp3-core')) }
         if ($job.Library) { $arguments += @('--library', $job.Library) }
         $arguments += $stage
-        $log = Join-Path $root ".tools/logs/$($job.Name).log"
+        $log = Join-Path $root ".tools/logs/$imageName.log"
         Write-Host "Compiling $($job.Name)..."
         $writer = [System.IO.StreamWriter]::new($log, $false, [System.Text.UTF8Encoding]::new($false))
         $writer.AutoFlush = $true
@@ -165,9 +174,9 @@ try {
             $ErrorActionPreference = $previous
         }
         if ($code -ne 0) { throw "$($job.Name) failed ($code). See $log" }
-        $binary = Get-Item (Join-Path $root ".tools/images/$($job.Name)/*.ino.bin")
+        $binary = Get-Item (Join-Path $root ".tools/images/$imageName/*.ino.bin")
         if ($binary.Length -gt 1966080) { throw "$($job.Name) exceeds min_spiffs app slot." }
-        if ((Get-FileHash (Join-Path $root ".tools/build/$($job.Name)/partitions.csv")).Hash.ToLowerInvariant() -ne $lock.core.partitionsSha256) {
+        if ((Get-FileHash (Join-Path $root ".tools/build/$imageName/partitions.csv")).Hash.ToLowerInvariant() -ne $lock.core.partitionsSha256) {
             throw 'Built partition table differs from the locked min_spiffs layout.'
         }
         if ($job.Name -ne 'aac-probe') {
@@ -181,17 +190,32 @@ try {
         }
         if ($job.Name -eq 'cydpod-player') {
             $nm = Join-Path $dependencyRoot 'arduino/packages/esp32/tools/esp-x32/2601/bin/xtensa-esp32-elf-nm.exe'
-            $symbols = & $nm -S --defined-only (Join-Path $root '.tools/build/cydpod-player/app.ino.elf')
+            $symbols = & $nm -S --defined-only (Join-Path $root ".tools/build/$imageName/app.ino.elf")
             $poolSymbols = @($symbols | Where-Object { $_ -match ' codecPool$|codecPoolE$' })
             if ($poolSymbols.Count -ne 1 -or $poolSymbols[0] -notmatch '\s0000a000\s[bB]\s') { throw 'Expected exactly one 40960 B codec pool in .bss.' }
             if ($symbols -match 'xmp3_AllocateBuffers|xmp3_FreeBuffers| MP3InitDecoder$| MP3FreeDecoder$') { throw 'Heap-based MP3 decoder allocation unexpectedly linked.' }
-            $poolSymbols | Set-Content (Join-Path $root '.tools/logs/codec-pool-map.txt')
+            $poolSymbols | Set-Content (Join-Path $root ".tools/logs/$imageName-codec-pool-map.txt")
             Write-Host ('PASS single pool: ' + $poolSymbols[0])
+        }
+        if ($Board -eq 'jc2432w328c') {
+            $imageDir = Join-Path $root ".tools/images/$imageName"
+            Copy-Item -LiteralPath (Join-Path $root ".tools/build/$imageName/boot_app0.bin") -Destination $imageDir
+            $files = @('app.ino.bootloader.bin','app.ino.partitions.bin','boot_app0.bin','app.ino.bin')
+            $offsets = @('0x1000','0x8000','0xe000','0x10000')
+            $regions = for ($i = 0; $i -lt $files.Count; $i++) {
+                $file = Get-Item (Join-Path $imageDir $files[$i])
+                [pscustomobject]@{ file=$file.Name; offset=$offsets[$i]; bytes=$file.Length;
+                    sha256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+            }
+            [pscustomobject]@{ board=$Board; chip='esp32'; flashSize='4MB'; flashMode='dio'; flashFreq='80m';
+                fqbn=$lock.core.fqbn; files=@($regions) } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $imageDir 'MANIFEST.json')
         }
         $results += [pscustomobject]@{ name=$job.Name; bytes=$binary.Length;
             sha256=(Get-FileHash $binary.FullName).Hash.ToLowerInvariant(); log=$log }
     }
-    $results | ConvertTo-Json | Set-Content .tools/logs/build-results.json
+    $resultsPath = '.tools/logs/build-results.json'
+    if ($Board -ne 'default') { $resultsPath = ".tools/logs/build-results-$Board.json" }
+    $results | ConvertTo-Json | Set-Content $resultsPath
     if (!$SkipHostMedia) {
         & cmd.exe /d /c tests\build_catalog.cmd
         if ($LASTEXITCODE -ne 0) { throw 'Catalogue/navigation host checks failed.' }

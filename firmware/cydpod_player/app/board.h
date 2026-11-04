@@ -59,6 +59,10 @@
 #define CYD_BOARD_2432S028R        28   // 2.8" ILI9341, micro-USB + USB-C, BL GPIO21
 #define CYD_BOARD_2432S028R_ST7789 29   // same 2.8" board, ST7789 panel instead
 
+#ifdef CYD_BOARD_JC2432W328C
+  #define CYD_BOARD 30
+#endif
+
 #ifndef CYD_BOARD
 #define CYD_BOARD CYD_BOARD_2432S028R_ST7789
 #endif
@@ -66,7 +70,29 @@
 // ---------------------------------------------------------------------------
 // Per-board differences
 // ---------------------------------------------------------------------------
-#if CYD_BOARD == CYD_BOARD_2432S028R_ST7789
+#if CYD_BOARD == 30
+  // Factory capacitive demo + GPIO table, maxpill/JC2432W328 @9712396.
+  // Full source URLs/confidence: hq docs/research/cy67-jc2432w328c-port.md.
+  #define CYD_BOARD_NAME "JC2432W328C (ST7789, CST820)"
+  #define CYD_PANEL_DRIVER CYD_PANEL_ST7789
+  #define CYD_PANEL_NAME "ST7789"
+  #define CYD_TFT_BL_PIN 27
+  #define CYD_TFT_INVERT 0
+  #define CYD_ROTATION 1
+  #define CYD_TOUCH_CAPACITIVE 1
+  #define CYD_TOUCH_SDA_PIN 33
+  #define CYD_TOUCH_SCL_PIN 32
+  #define CYD_TOUCH_RST_PIN 25
+  #define CYD_TOUCH_INT_PIN 21
+  #define CYD_TOUCH_I2C_ADDRESS 0x15
+  #define CYD_BOOT_PIN 0
+  #define CYD_BOOT_ACTIVE_LEVEL 0
+  #define CYD_BOOT_RTC_CAPABLE 1
+  // SW1 net is unproved: never treat -1 as a readable button or wake pin.
+  #define CYD_SW1_PIN -1
+  #define CYD_SW1_ACTIVE_LEVEL -1
+  #define CYD_SW1_RTC_CAPABLE -1
+#elif CYD_BOARD == CYD_BOARD_2432S028R_ST7789
 
   #define CYD_BOARD_NAME "ESP32-2432S028R (2.8\", micro-USB + USB-C, ST7789)"
   #define CYD_PANEL_DRIVER CYD_PANEL_ST7789   // boot default; Settings::panel wins
@@ -154,6 +180,10 @@
 #define CYD_SCREEN_H 240
 
 // ---- Touch (XPT2046, bit-banged -- VSPI belongs to the SD card) -----------
+#ifndef CYD_TOUCH_CAPACITIVE
+#define CYD_TOUCH_CAPACITIVE 0
+#endif
+#if !CYD_TOUCH_CAPACITIVE
 #define CYD_TOUCH_MOSI_PIN 32
 #define CYD_TOUCH_MISO_PIN 39   // input-only pin (GPIO39 = SVN)
 #define CYD_TOUCH_CLK_PIN  25
@@ -162,6 +192,7 @@
 
 // XPT2046 tops out around 2.5 MHz; going faster returns garbage.
 #define CYD_TOUCH_SPI_HZ 2500000
+#endif
 
 // ---- SD card (hardware VSPI) -- music, backgrounds, system files ----------
 #define CYD_SD_MOSI_PIN 23
@@ -206,7 +237,12 @@
 // sounded three times out of three, GPIO16 none out of three. Boards sold under
 // this part number vary, so if a different one is silent, suspect this pin
 // first and re-run that sweep before suspecting the firmware.
+#if CYD_TOUCH_CAPACITIVE
+#define CYD_AMP_ENABLE_PIN -1  // Factory table gives no amplifier-enable GPIO.
+#else
 #define CYD_AMP_ENABLE_PIN 4        // ACTIVE LOW. Same pin as CYD_RGB_R_PIN.
+
+ #endif
 
 // ---------------------------------------------------------------------------
 // Small runtime helpers (Arduino only)
@@ -246,16 +282,20 @@ inline void cydRgbLedOff() {
 // The on-board amplifier. ACTIVE LOW, and the same pin as the red LED, so
 // enabling the amp lights the red LED -- see CYD_AMP_ENABLE_PIN above.
 inline void cydAmpEnable() {
+#if CYD_AMP_ENABLE_PIN >= 0
   pinMode(CYD_AMP_ENABLE_PIN, OUTPUT);
   digitalWrite(CYD_AMP_ENABLE_PIN, LOW);
+#endif
 }
 
 // Shutdown. Leaves the pin driven HIGH rather than floating: a floating GPIO4
 // is also shutdown, but it lets the red LED glow at whatever the leakage
 // decides, which looks like a fault.
 inline void cydAmpDisable() {
+#if CYD_AMP_ENABLE_PIN >= 0
   pinMode(CYD_AMP_ENABLE_PIN, OUTPUT);
   digitalWrite(CYD_AMP_ENABLE_PIN, HIGH);
+#endif
 }
 
 // Identification banner, printed at the top of every sketch so
@@ -273,9 +313,14 @@ inline void cydPrintBanner() {
   Serial.printf("tft     : MOSI%d MISO%d SCLK%d CS%d DC%d RST%d BL%d (HSPI)\n",
                 CYD_TFT_MOSI_PIN, CYD_TFT_MISO_PIN, CYD_TFT_SCLK_PIN,
                 CYD_TFT_CS_PIN, CYD_TFT_DC_PIN, CYD_TFT_RST_PIN, CYD_TFT_BL_PIN);
+  #if CYD_TOUCH_CAPACITIVE
+  Serial.printf("touch   : CST820 SDA%d SCL%d RST%d INT%d addr 0x15 (I2C)\n",
+                CYD_TOUCH_SDA_PIN, CYD_TOUCH_SCL_PIN, CYD_TOUCH_RST_PIN, CYD_TOUCH_INT_PIN);
+  #else
   Serial.printf("touch   : MOSI%d MISO%d CLK%d CS%d IRQ%d (bit-bang)\n",
                 CYD_TOUCH_MOSI_PIN, CYD_TOUCH_MISO_PIN, CYD_TOUCH_CLK_PIN,
                 CYD_TOUCH_CS_PIN, CYD_TOUCH_IRQ_PIN);
+  #endif
   Serial.printf("sd      : MOSI%d MISO%d SCK%d CS%d (VSPI)\n",
                 CYD_SD_MOSI_PIN, CYD_SD_MISO_PIN, CYD_SD_SCK_PIN, CYD_SD_CS_PIN);
   Serial.printf("speaker : GPIO%d (DAC), amp enable GPIO%d active LOW (= red LED)\n",

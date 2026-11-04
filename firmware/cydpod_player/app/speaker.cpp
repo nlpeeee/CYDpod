@@ -17,7 +17,7 @@
 // pull, and a switch parks on OUT_NONE long enough for whichever of them was
 // mid-callback to finish. That is cheaper and safer than a lock the A2DP task
 // would have to take on every 128 frames.
-static const uint8_t OUT_NONE = 0xFF;
+
 static volatile uint8_t route  = OUT_NONE;
 static volatile bool    parked = true;        // the writer task is not pulling
 static volatile uint32_t stalls = 0;
@@ -164,8 +164,8 @@ static void writerTask(void*) {
 bool speaker_begin(uint8_t startRoute) { return speaker_setRoute(startRoute); }
 
 bool speaker_setRoute(uint8_t r) {
-  if (r >= OUT_ROUTE_COUNT) r = OUT_BT;
-  if (r == route) return true;
+  if (r != OUT_NONE && r >= OUT_ROUTE_COUNT) r = OUT_BT;
+  if (r == route && r != OUT_NONE) return true;
   // Reserve the new buffers before interrupting a working Bluetooth route.
   int16_t* nextStereo = nullptr;
   uint8_t* nextMono = nullptr;
@@ -241,7 +241,7 @@ bool speaker_setRoute(uint8_t r) {
 #endif
   else route = r;
 #if CYD_WIRED_OUTPUT
-  const char* const name = r == OUT_SPEAKER ? "speaker" : r == OUT_WIRED ? "wired" : "bluetooth";
+  const char* const name = r == OUT_NONE ? "off" : r == OUT_SPEAKER ? "speaker" : r == OUT_WIRED ? "wired" : "bluetooth";
   Serial.printf("cmd: route %s\n", name);
   Serial.printf("speaker: route -> %s  heap %u largest %u\n", name, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 #else

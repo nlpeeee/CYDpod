@@ -155,3 +155,27 @@ void settings_savePanel() {
   prefs.putUShort("panel", g_settings.panel);
   prefs.end();
 }
+
+// Preferences put* commits synchronously (nvs_commit); end closes the handle.
+// The route is last so a partial resume write cannot select a new boot plan.
+bool settings_saveOutputResume(uint8_t next) {
+  if (!prefs.begin(NVS_NS, false)) return false;
+  const Settings& s = g_settings;
+  bool ok = prefs.putUShort("track", s.lastTrack) == sizeof(s.lastTrack);
+  ok = ok && prefs.putULong("pos", s.lastPosMs) == sizeof(s.lastPosMs);
+  // putString returns zero for BOTH an empty string and a failed commit.
+  // Removing an old identity instead gives an unambiguous committed result.
+  if (s.lastPath.length()) ok = ok && prefs.putString("lastPath", s.lastPath) == s.lastPath.length();
+  else if (prefs.isKey("lastPath")) ok = ok && prefs.remove("lastPath");
+  ok = ok && prefs.putUChar("srcKind", s.srcKind) == sizeof(s.srcKind);
+  ok = ok && prefs.putULong("srcKey", s.srcKey) == sizeof(s.srcKey);
+  ok = ok && prefs.putUChar("catKind", s.catalogKind) == sizeof(s.catalogKind);
+  ok = ok && prefs.putUShort("catGroup", s.catalogGroup) == sizeof(s.catalogGroup);
+  ok = ok && prefs.putULong("catCrc", s.catalogCrc) == sizeof(s.catalogCrc);
+  ok = ok && prefs.putUChar("out", next) == sizeof(next);
+  prefs.end();
+#if CYD_DEFAULT_OUT_ROUTE >= 0
+  if (ok) storedOutRoute = next;
+#endif
+  return ok;
+}

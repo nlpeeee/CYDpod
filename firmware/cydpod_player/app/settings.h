@@ -99,6 +99,8 @@ extern Settings g_settings;
 
 void settings_begin();
 void settings_save();
+// Commit resume first and output last; false means no restart is allowed.
+bool settings_saveOutputResume(uint8_t next);
 
 // Just the resume point (track + position), written often while playing --
 // kept separate so it does not rewrite every other key each time.

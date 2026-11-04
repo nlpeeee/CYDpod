@@ -10,6 +10,7 @@
 #include "sleep_mode.h"
 #include "settings.h"
 #include "bt.h"
+#include "output_switch.h"
 #include "speaker.h"
 #include "wired.h"
 #include "background.h"
@@ -400,8 +401,8 @@ void activate(int at){
     case Mode::Output:
       if(at<OUT_SELECTABLE_COUNT){const uint8_t next=outRouteSelectable(at);
         if(next==g_settings.outRoute)break;
-        if(!speaker_setRoute(next)){message("Unable to change output. Try again.");break;}
-        g_settings.outRoute=next;settings_save();invalidate();header();}break;
+        if(!output_switch(next)){message("Unable to change output. Try again.");break;}
+        invalidate();header();}break;
     case Mode::Options:
       if(at==0){
         if(storage_trackCount()){

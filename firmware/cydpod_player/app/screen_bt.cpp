@@ -13,6 +13,7 @@
 #include "display.h"
 #include "theme.h"
 #include "bt.h"
+#include "output_switch.h"
 
 static const int STATUS_Y = UI_HEADER_H + 4;
 static const int LIST_Y   = UI_HEADER_H + 34;
@@ -151,7 +152,20 @@ static void drawPairButton() {
   ui_textButton(pairRect(), T_PAIR_NEW, true, pairLit, theme().band);
 }
 
+static Rect useBluetoothRect() { return {10, LIST_Y + 44, tft.width()-20, 40}; }
+static void drawOff() {
+  tft.fillScreen(theme().bg);
+  ui_header(T_BLUETOOTH);
+  // Keep the complete status visible even in portrait and in larger-font styles.
+  tft.setTextDatum(TL_DATUM);tft.setTextColor(theme().text, theme().bg);
+  tft.drawString("Bluetooth is off (output: Headphones)", 10, LIST_Y, 1);
+  const Rect r = useBluetoothRect();
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, 6, theme().btn);
+  ui_text("Use Bluetooth", r.cx(), r.cy(), MC_DATUM, theme().text, theme().btn);
+}
+
 static void enter() {
+  if (!output_usesBluetooth()) { waitingToPair=false; drawOff(); return; }
   tft.fillScreen(theme().bg);
   ui_header(T_BLUETOOTH);
   pairLit = false;
@@ -163,6 +177,7 @@ static void enter() {
 }
 
 static void tick(uint32_t) {
+  if (!output_usesBluetooth()) return;
   if (stateNow() != shownState || shownName != bt_speakerName()) {
     shownState = stateNow();
     shownName = bt_speakerName();
@@ -183,11 +198,18 @@ static void tick(uint32_t) {
 // The row whose cross was tapped, waiting on the dialog's answer.
 static int dropRow = -1;
 static void dropConfirmed() {
-  if (dropRow >= 0) bt_forget(dropRow);
+  if (output_usesBluetooth() && dropRow >= 0) bt_forget(dropRow);
   dropRow = -1;
 }
 
 static void touch(TouchEvent ev, int x, int y) {
+  if (!output_usesBluetooth()) {
+    if (ev == TOUCH_TAP) {
+      if (UI_BACK_RECT.contains(x,y)) ui_go(SCR_PLAYER);
+      else if (useBluetoothRect().contains(x,y)) output_switch(OUT_BT);
+    }
+    return;
+  }
   if (ev != TOUCH_TAP && ev != TOUCH_LONG_PRESS) return;
   if (UI_BACK_RECT.contains(x, y)) {
     // Cancel even while the former link is still disconnecting.
@@ -219,6 +241,7 @@ static void touch(TouchEvent ev, int x, int y) {
 }
 
 static bool press(PressPhase phase, int x, int y) {
+  if (!output_usesBluetooth()) return false;
   const bool on = phase == PRESS_DOWN && pairRect().contains(x, y);
   if (on != pairLit && phase != PRESS_MOVE) {
     pairLit = on;

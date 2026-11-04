@@ -6,7 +6,7 @@
 // ===========================================================================
 // One row per setting. Tapping a row changes it on the spot (values cycle, the
 // screen redraws in the new theme / orientation / language) or opens its own
-// screen. More rows than fit, so ▲ / ▼ page the list; the layout is sized from
+// screen. More rows than fit, so ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â² / ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â¼ page the list; the layout is sized from
 // the screen and works in either orientation.
 
 #include "ui.h"
@@ -18,6 +18,7 @@
 #include "calibrate.h"
 #include "storage.h"
 #include "bt.h"
+#include "output_switch.h"
 #include "speaker.h"
 #include "wired.h"
 #include "audio.h"
@@ -60,7 +61,7 @@ static RowValue rowValue(Row r) {
     case ROW_OUTPUT:
       return ui_cycle(g_settings.outRoute == OUT_WIRED ? T_HEADPHONES : T_BLUETOOTH);
     case ROW_BLUETOOTH:
-      return ui_nav(bt_speakerName().length() ? bt_speakerName() : String(tr(T_NONE)));
+      return ui_nav(output_usesBluetooth() ? (bt_speakerName().length() ? bt_speakerName() : String(tr(T_NONE))) : String("Off (Headphones)"));
     case ROW_THEME:
       return ui_cycle(String(g_settings.lang == LANG_ZH ? theme().nameZh : theme().nameEn));
     case ROW_STYLE:
@@ -174,8 +175,8 @@ static void touch(TouchEvent ev, int x, int y) {
       // Bluetooth and the row does nothing. A failed switch keeps the old setting.
       if (OUT_SELECTABLE_COUNT > 1) {
         const uint8_t next = g_settings.outRoute == OUT_WIRED ? outRouteSelectable(0) : outRouteSelectable(1);
-        if (speaker_setRoute(next)) g_settings.outRoute = next;
-        else ui_toast("Unable to change output");
+        output_switch(next);
+        return;
       }
       break;
     case ROW_BLUETOOTH:

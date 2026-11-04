@@ -66,8 +66,8 @@ class Fade {
   explicit Fade(int32_t ceilingQ15 = kCeilingQ15, bool dither = false)
       : ceiling_(ceilingQ15), dither_(dither) {
     for (int32_t p = 0; p <= kRampFrames; ++p) {
-      const double c = 0.5 * (1.0 - cos(3.14159265358979323846 * (double)p / (double)kRampFrames));
-      int32_t q = (int32_t)(c * (double)kUnityQ15 + 0.5);
+      const float c = 0.5f * (1.0f - cosf(3.14159265358979f * (float)p / (float)kRampFrames));
+      int32_t q = (int32_t)(c * (float)kUnityQ15 + 0.5f);
       table_[p] = (uint16_t)(q > kUnityQ15 ? kUnityQ15 : q);
     }
     table_[0] = 0;

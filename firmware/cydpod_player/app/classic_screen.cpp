@@ -113,7 +113,10 @@ void paintRow(int i,bool pressed){
   uint16_t bg=pressed?p.accent:p.bg,fg=pressed?p.onAccent:r.disabled?p.disabled:p.text;
   tft.fillRect(box.x,box.y,box.w,box.h,bg);
   if(!r.valid)return;
-  if(r.detail[0]){
+  if(page().mode==Mode::Output&&r.disabled){
+    // Fixed small font keeps the no-detection hint on one line on the W328C.
+    tft.setTextDatum(ML_DATUM);tft.setTextColor(fg,bg);tft.drawString(r.label,10,box.cy(),1);
+  }else if(r.detail[0]){
     ui_text(String(r.label),10,box.y+14,ML_DATUM,fg,bg,box.w-34);
     ui_text(String(r.detail),10,box.y+33,ML_DATUM,pressed?p.onAccent:p.dim,bg,box.w-34,TYPE_CAPTION);
   }else text(r.label,box,fg,bg);
@@ -141,7 +144,7 @@ int rowCount(){
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
-    case Mode::Settings:return 7;case Mode::Playback:return 4;case Mode::Display:return 5;case Mode::Output:return OUT_SELECTABLE_COUNT;
+    case Mode::Settings:return 7;case Mode::Playback:return 4;case Mode::Display:return 5;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 1 : 0);
     case Mode::Options:return 4;case Mode::Refresh:return 2;
     default:return 0;
   }
@@ -168,7 +171,7 @@ void loadRow(int i){
       if(at<2)setRow(r,at==0?"Shuffle":"Repeat",at==0?String(audio_shuffle()?"On":"Off"):String(audio_repeat()==REPEAT_ONE?"One":audio_repeat()==REPEAT_ALL?"All":"Off"));
       else setRow(r,at==2?"Screen timeout":"Sleep timer",at==2?String(sleep_timeoutLabel(g_settings.screenTimeout)):String(sleep_timerLabel(g_settings.sleepTimer)));break;
     case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Flip portrait","Calibrate touch","Panel / Advanced"};setRow(r,names[at],at<2?String(g_settings.brightness)+"%":String(),at>=3);break;}
-    case Mode::Output:{const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
+    case Mode::Output:{if(at==OUT_SELECTABLE_COUNT){setRow(r,"Switch back to Bluetooth if there is no sound",String(),false,true);break;}const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
     case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):String(),at==3);break;}
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
     default:break;

@@ -32,6 +32,9 @@
 #include "audio.h"
 #include "bt.h"
 #include "speaker.h"
+#if CYD_WIRED_OUTPUT
+#include "wired.h"
+#endif
 #include "ui.h"
 #include "titles.h"
 #include "playlist.h"
@@ -257,6 +260,17 @@ static void persistResume(uint32_t now) {
   lastSave = now;
 }
 
+// The route as the periodic stat line shows it. Boards without the wired route keep the
+// original two-way expression.
+#if CYD_WIRED_OUTPUT
+#define STAT_ROUTE_LABEL (g_settings.outRoute == OUT_WIRED ? (wired_active() ? "wired" : "wired-off") : \
+                          g_settings.outRoute == OUT_SPEAKER ? (speaker_active() ? "spk" : "spk-off") : \
+                          (bt_connected() ? "bt" : "no-bt"))
+#else
+#define STAT_ROUTE_LABEL (g_settings.outRoute == OUT_SPEAKER ? (speaker_active() ? "spk" : "spk-off") : \
+                          (bt_connected() ? "bt" : "no-bt"))
+#endif
+
 void loop() {
   const uint32_t now = millis();
 
@@ -293,10 +307,17 @@ void loop() {
                   audio_bufferPct(), audio_underruns(), audio_maxRequest(),commands.track,(long)commands.seekMs,(unsigned long)commands.serial,commands.opening,commands.seeking,commands.blocked,
                   bg_current(), frames * 1000 / (now - lastStat),
                   (frames * 10000 / (now - lastStat)) % 10, avgMs,
-                  g_settings.outRoute == OUT_SPEAKER
-                    ? (speaker_active() ? "spk" : "spk-off")
-                    : (bt_connected() ? "bt" : "no-bt"),
+                  STAT_ROUTE_LABEL,
                   audio_isPlaying() ? "playing" : "paused", audio_pullCalls(), audio_pullFrames());
+#if CYD_WIRED_OUTPUT
+    {
+      const WiredStats w = wired_stats();
+      Serial.printf("stat: wired %s frames %u chunks %u underruns %u errors %u stalls %u dropped %u sessions %u stack %u heapCost %u\n",
+                    w.active ? "on" : "off", (unsigned)w.frames, (unsigned)w.chunks, (unsigned)w.underruns,
+                    (unsigned)w.writeErrors, (unsigned)w.stalls, (unsigned)w.dropped, (unsigned)w.sessions,
+                    (unsigned)w.stackFree, (unsigned)w.heapCost);
+    }
+#endif
     const AudioPcmStats pcm=audio_pcmStats();
     Serial.printf("stat: pcm input %lu output 44100 pumpMaxMs %lu yields %lu resampleBlockUs %lu resampleMaxUs %lu taps 32 phases 256\n",
                   (unsigned long)pcm.inputRate,(unsigned long)pcm.maxPumpMs,(unsigned long)pcm.yields,(unsigned long)pcm.blockUs,(unsigned long)pcm.maxBlockUs);

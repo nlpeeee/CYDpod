@@ -112,6 +112,10 @@ try {
         $jobs = @($jobs | Where-Object { $_.Name -eq 'cydpod-player' })
         $setupHeader = (Join-Path $root 'tools/tft/User_Setup_JC2432W328C.h').Replace([char]92,[char]47)
         $jobs[0].Flags += (' -DCYD_BOARD_JC2432W328C -include"' + $setupHeader + '"')
+        # CY-71: the same player forced onto the wired I2S route at every boot (board.h CYD_DEFAULT_OUT_ROUTE, 2 = OUT_WIRED),
+        # for testing before the Settings row exists. The saved route in NVS is not overwritten.
+        $jobs += @{ Name = 'cydpod-player-wired'; Sketch = $jobs[0].Sketch; Flags = ($jobs[0].Flags + ' -DCYD_DEFAULT_OUT_ROUTE=2'); Library = $jobs[0].Library
+            ImageName = 'codec-pool-v10-wired-jc2432w328c' }
         # CY-70: standalone I2S test tone (no TFT, SD, touch or Bluetooth). The second image is the
         # 32-bit-slot fallback (BCK = 64 x fS) in case the PCM5100A PLL does not lock at 32 x fS.
         $jobs += @{ Name = 'i2s-tone'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-tone-jc2432w328c' }
@@ -121,7 +125,7 @@ try {
     $results = @()
     foreach ($job in $jobs) {
         $imageName = $job.Name
-        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v8-jc2432w328c' }
+        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v10-jc2432w328c' }
         if ($job.ImageName) { $imageName = $job.ImageName }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.
@@ -144,7 +148,7 @@ try {
                 Copy-Item -LiteralPath $_.FullName -Destination $dest
             }
         }
-        if ($job.Name -eq 'cydpod-player') { Copy-Item -LiteralPath (Join-Path $root 'vendor/miniflac/miniflac.h') -Destination $stage }
+        if ($job.Name -like 'cydpod-player*') { Copy-Item -LiteralPath (Join-Path $root 'vendor/miniflac/miniflac.h') -Destination $stage }
         if ($job.Name -like 'i2s-*') { Copy-Item -LiteralPath (Join-Path $root 'firmware/cydpod_player/app/board.h') -Destination $stage }
         # GCC -w suppresses even local diagnostic-error pragmas. Keep it for
         # stock builds only; the probe enables format errors in its own files.
@@ -156,7 +160,7 @@ try {
             $arguments += @('--build-property', "compiler.cpp.extra_flags=$($job.Flags)",
                 '--build-property', "compiler.c.extra_flags=$($job.Flags)")
         }
-        if ($job.Name -eq 'cydpod-player') { $arguments += @('--build-property', 'compiler.c.elf.extra_flags=-Wl,--wrap=xmp3_UnpackFrameHeader', '--library', (Join-Path $root '.tools/staging/helix-mp3-core')) }
+        if ($job.Name -like 'cydpod-player*') { $arguments += @('--build-property', 'compiler.c.elf.extra_flags=-Wl,--wrap=xmp3_UnpackFrameHeader', '--library', (Join-Path $root '.tools/staging/helix-mp3-core')) }
         if ($job.Library) { $arguments += @('--library', $job.Library) }
         $arguments += $stage
         $log = Join-Path $root ".tools/logs/$imageName.log"
@@ -190,12 +194,12 @@ try {
             $imageText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($binary.FullName))
             $isPlayer = $imageText.Contains('heap before audio + bt')
             $isUploader = $imageText.Contains('upload: hotspot')
-            if ((($job.Name -eq 'player' -or $job.Name -eq 'cydpod-player') -and (!$isPlayer -or $isUploader)) -or
+            if ((($job.Name -eq 'player' -or $job.Name -like 'cydpod-player*') -and (!$isPlayer -or $isUploader)) -or
                 ($job.Name -eq 'uploader' -and (!$isUploader -or $isPlayer))) {
                 throw "Wrong program in $($job.Name) image (upstream marker check)."
             }
         }
-        if ($job.Name -eq 'cydpod-player') {
+        if ($job.Name -like 'cydpod-player*') {
             $nm = Join-Path $dependencyRoot 'arduino/packages/esp32/tools/esp-x32/2601/bin/xtensa-esp32-elf-nm.exe'
             $symbols = & $nm -S --defined-only (Join-Path $root ".tools/build/$imageName/app.ino.elf")
             $poolSymbols = @($symbols | Where-Object { $_ -match ' codecPool$|codecPoolE$' })

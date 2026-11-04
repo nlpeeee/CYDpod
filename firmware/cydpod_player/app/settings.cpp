@@ -5,6 +5,9 @@
 Settings g_settings;
 
 static Preferences prefs;
+#if CYD_DEFAULT_OUT_ROUTE >= 0
+static uint8_t storedOutRoute = 0;   // what NVS held at boot, before the forced route replaced it
+#endif
 static const char* NVS_NS = "mp3cfg";
 
 void settings_begin() {
@@ -23,7 +26,10 @@ void settings_begin() {
   s.screenTimeout = min<uint8_t>(prefs.getUChar("screenTime",s.screenTimeout),3);
   s.sleepTimer = min<uint8_t>(prefs.getUChar("sleepTime",s.sleepTimer),4);
   s.volume     = min<uint8_t>(prefs.getUChar("vol", s.volume), 100);
-  s.outRoute   = prefs.getUChar ("out",    s.outRoute) % OUT_ROUTE_COUNT;
+  s.outRoute   = outRouteSanitize(prefs.getUChar("out", s.outRoute));
+#if CYD_DEFAULT_OUT_ROUTE >= 0
+  storedOutRoute = s.outRoute;
+#endif
   s.lastTrack  = prefs.getUShort("track",  s.lastTrack);
   s.lastPosMs  = prefs.getULong ("pos",    s.lastPosMs);
   s.lastPath   = prefs.getString("lastPath", s.lastPath);
@@ -64,6 +70,13 @@ void settings_begin() {
 #if CYD_TOUCH_CAPACITIVE
   s.panel = CYD_PANEL_ST7789; // fixed controller; stale NVS cannot select ILI9341
 #endif
+#if CYD_DEFAULT_OUT_ROUTE >= 0
+  // Test build (board.h): boot on this route whatever NVS holds. storedOutRoute (read
+  // above) keeps the saved value so settings_save() does not overwrite it.
+  s.outRoute = outRouteSanitize(CYD_DEFAULT_OUT_ROUTE);
+  Serial.printf("cmd: route %u forced by CYD_DEFAULT_OUT_ROUTE (saved route %u stays in NVS)\n",
+                s.outRoute, storedOutRoute);
+#endif
   // The WiFi password is never printed: serial logs end up in bug reports.
   Serial.printf("settings: theme %u skin %u style %u lang %u  wifi \"%s\"\n", s.theme, s.skin,
                 s.style, s.lang, s.wifiSsid.c_str());
@@ -102,7 +115,14 @@ void settings_save() {
   prefs.putUChar ("screenTime",s.screenTimeout);
   prefs.putUChar ("sleepTime",s.sleepTimer);
   prefs.putUChar ("vol",      s.volume);
+#if CYD_DEFAULT_OUT_ROUTE >= 0
+  // Writing the forced route would clobber the saved choice; only a route the user
+  // picked in the UI (anything other than the forced one) is persisted.
+  if (s.outRoute != outRouteSanitize(CYD_DEFAULT_OUT_ROUTE)) storedOutRoute = s.outRoute;
+  prefs.putUChar ("out",      storedOutRoute);
+#else
   prefs.putUChar ("out",      s.outRoute);
+#endif
   prefs.putUShort("track",    s.lastTrack);
   prefs.putULong ("pos",      s.lastPosMs);
   prefs.putString("lastPath", s.lastPath);

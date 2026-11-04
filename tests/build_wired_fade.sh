@@ -1,12 +1,18 @@
 #!/bin/sh
-# CY-71: host tests for the wired route: wired_fade.h (gain ramps, ceiling, dither)
+# CY-71: host tests for the wired route: wired_fade.h (gain ramps, ceiling, dither),
+# wired_pump.h (chunk accounting, bounded writes, final fade) and out_route.h (route
+# numbering and fallback, built for a wired and a non-wired board). No hardware, no Arduino.
 set -eu
 cd "$(dirname "$0")/.."
 OUT=tests/out/wired
 mkdir -p "$OUT"
-for t in wired_fade; do
+for t in wired_fade wired_pump; do
   g++ -O2 -std=c++17 -Wall -Wextra -Werror tests/${t}_test.cpp -o "$OUT/${t}_test"
   g++ -O1 -g -std=c++17 -fsanitize=address,undefined -fno-sanitize-recover=undefined tests/${t}_test.cpp -o "$OUT/${t}_test_san"
   "$OUT/${t}_test"
   "$OUT/${t}_test_san" | tail -1
 done
+g++ -O2 -std=c++17 -Wall -Wextra -Werror -DCYD_BOARD_JC2432W328C tests/out_route_test.cpp -o "$OUT/out_route_wired"
+g++ -O2 -std=c++17 -Wall -Wextra -Werror tests/out_route_test.cpp -o "$OUT/out_route_plain"
+"$OUT/out_route_wired"
+"$OUT/out_route_plain"

@@ -169,8 +169,15 @@ static void touch(TouchEvent ev, int x, int y) {
     case ROW_OUTPUT:
       // The switch itself parks one consumer before it starts the other, so
       // it takes a moment; the row is redrawn after, with the route settled.
+#if CYD_WIRED_OUTPUT
+      // This row still knows two routes; the wired choice arrives with the three-way
+      // Settings row (CY-72). Tapping it from wired lands on the speaker.
+      if (speaker_setRoute(g_settings.outRoute == OUT_SPEAKER ? OUT_BT : OUT_SPEAKER))
+        g_settings.outRoute = g_settings.outRoute == OUT_SPEAKER ? OUT_BT : OUT_SPEAKER;
+#else
       if (speaker_setRoute((g_settings.outRoute + 1) % OUT_ROUTE_COUNT))
         g_settings.outRoute = (g_settings.outRoute + 1) % OUT_ROUTE_COUNT;
+#endif
       else ui_toast("Unable to change output");
       break;
     case ROW_BLUETOOTH:

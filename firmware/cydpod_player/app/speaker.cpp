@@ -5,6 +5,9 @@
 #include "audio.h"
 #include "board.h"
 #include "driver/dac_continuous.h"
+#if CYD_WIRED_OUTPUT
+#include "wired.h"
+#endif
 
 // ---------------------------------------------------------------------------
 // The route
@@ -21,6 +24,9 @@ static volatile uint32_t stalls = 0;
 static TaskHandle_t writerHandle = nullptr;
 
 uint8_t speaker_route() { return route; }
+#if CYD_WIRED_OUTPUT
+void speaker_routeFailed(uint8_t r) { if (route == r) route = OUT_NONE; }
+#endif
 uint32_t speaker_stalls() { return stalls; }
 
 // ---------------------------------------------------------------------------
@@ -172,20 +178,41 @@ bool speaker_setRoute(uint8_t r) {
       return false;
     }
   }
+#if CYD_WIRED_OUTPUT
+  if (r == OUT_WIRED && !wired_reserve()) {
+    Serial.println("speaker: no memory for the wired route, route unchanged");
+    return false;
+  }
+#endif
   const uint8_t previous = route;
   route = OUT_NONE;
   // One 500 ms write and eight 200 ms ramp writes can be outstanding.
   const uint32_t waitAt = millis();
+#if CYD_WIRED_OUTPUT
+  // The wired task needs a final fade and a channel teardown: a few chunks of writes
+  // at 100 ms timeouts, well inside this.
+  while (((writerHandle && !parked) || !wired_parked()) && millis() - waitAt < 3000) delay(10);
+  if ((writerHandle && !parked) || !wired_parked()) {
+#else
   while (writerHandle && !parked && millis() - waitAt < 3000) delay(10);
   if (writerHandle && !parked) {
+#endif
     route = previous;
     free(nextStereo); free(nextMono);
+#if CYD_WIRED_OUTPUT
+    if (r == OUT_WIRED) wired_release();   // refuses while a wired task still exists
+#endif
     Serial.println("speaker: park timed out, route unchanged");
     return false;
   }
   // parked is published only AFTER dacStop() has finished using the buffers.
   if (writerHandle) { vTaskDelete(writerHandle); writerHandle = nullptr; }
   free(stereo); free(mono); stereo = nullptr; mono = nullptr;
+#if CYD_WIRED_OUTPUT
+  // wired_parked() is published only AFTER the channel is gone and the last write has returned.
+  wired_deleteTask();
+  if (r != OUT_WIRED) wired_release();
+#endif
   delay(50); // let any in-flight Bluetooth audio_pull finish before the new consumer
   if (r == OUT_SPEAKER) {
     stereo = nextStereo; mono = nextMono;
@@ -199,9 +226,28 @@ bool speaker_setRoute(uint8_t r) {
     }
     route = r;
     xTaskNotifyGive(writerHandle);
-  } else route = r;
+  }
+#if CYD_WIRED_OUTPUT
+  else if (r == OUT_WIRED) {
+    if (!wired_startTask()) {
+      wired_release();
+      route = previous == OUT_BT ? OUT_BT : OUT_NONE;
+      Serial.println("speaker: wired task allocation failed");
+      return false;
+    }
+    route = r;
+    wired_kick();
+  }
+#endif
+  else route = r;
+#if CYD_WIRED_OUTPUT
+  const char* const name = r == OUT_SPEAKER ? "speaker" : r == OUT_WIRED ? "wired" : "bluetooth";
+  Serial.printf("cmd: route %s\n", name);
+  Serial.printf("speaker: route -> %s  heap %u largest %u\n", name, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+#else
   Serial.printf("speaker: route -> %s  heap %u largest %u\n",
                 r == OUT_SPEAKER ? "speaker" : "bluetooth", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+#endif
   return true;
 }
 

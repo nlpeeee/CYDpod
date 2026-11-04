@@ -166,6 +166,24 @@
 #define CYD_I2S_WS_PIN -1
 #endif
 
+// The wired output route (wired.cpp, OUT_WIRED) exists only where all three
+// I2S pins are routed. Everywhere else it is not compiled and the route enum
+// stops at Bluetooth, so those images are unchanged by it.
+#if CYD_I2S_BCK_PIN >= 0 && CYD_I2S_DOUT_PIN >= 0 && CYD_I2S_WS_PIN >= 0
+#define CYD_WIRED_OUTPUT 1
+#else
+#define CYD_WIRED_OUTPUT 0
+#endif
+
+// Output route forced at compile time, for test builds before the Settings row
+// exists (CY-71). -1 (the default) keeps whatever NVS holds. 0 = on-board speaker,
+// 1 = Bluetooth, 2 = wired I2S (-DCYD_DEFAULT_OUT_ROUTE=2). A forced route is
+// applied at every boot and is NOT written back to NVS unless the user changes the
+// route in the UI, so the saved choice survives a test image.
+#ifndef CYD_DEFAULT_OUT_ROUTE
+#define CYD_DEFAULT_OUT_ROUTE -1
+#endif
+
 // ---------------------------------------------------------------------------
 // Common to both boards
 // ---------------------------------------------------------------------------

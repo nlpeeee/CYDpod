@@ -24,8 +24,9 @@
 
 #include <Arduino.h>
 
-// Stored in Settings::outRoute, so the values are persisted: do not renumber.
-enum OutRoute : uint8_t { OUT_SPEAKER = 0, OUT_BT = 1, OUT_ROUTE_COUNT = 2 };
+// OutRoute is stored in Settings::outRoute, so the values are persisted: do not
+// renumber (out_route.h).
+#include "out_route.h"
 
 bool    speaker_begin(uint8_t route);
 uint8_t speaker_route();
@@ -35,3 +36,10 @@ bool    speaker_active();                  // the DAC is running right now
 // Times the writer task found the DMA still full after half a second. Should
 // stay at 0; it is in the 10 s stat line next to audio_underruns().
 uint32_t speaker_stalls();
+
+#if CYD_WIRED_OUTPUT
+// Called by the wired writer when it cannot bring the I2S channel up: leaves the
+// route parked on nothing (silence) rather than pretending. No-op if the route
+// has already moved on.
+void speaker_routeFailed(uint8_t route);
+#endif

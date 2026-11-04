@@ -19,6 +19,7 @@
 #include "storage.h"
 #include "bt.h"
 #include "speaker.h"
+#include "wired.h"
 #include "audio.h"
 #include "layouts.h"
 #include "firmware.h"
@@ -57,7 +58,7 @@ static Rect downRect() {
 static RowValue rowValue(Row r) {
   switch (r) {
     case ROW_OUTPUT:
-      return ui_cycle(g_settings.outRoute == OUT_BT ? T_BLUETOOTH : T_SPEAKER);
+      return ui_cycle(g_settings.outRoute == OUT_WIRED ? T_HEADPHONES : T_BLUETOOTH);
     case ROW_BLUETOOTH:
       return ui_nav(bt_speakerName().length() ? bt_speakerName() : String(tr(T_NONE)));
     case ROW_THEME:
@@ -169,16 +170,13 @@ static void touch(TouchEvent ev, int x, int y) {
     case ROW_OUTPUT:
       // The switch itself parks one consumer before it starts the other, so
       // it takes a moment; the row is redrawn after, with the route settled.
-#if CYD_WIRED_OUTPUT
-      // This row still knows two routes; the wired choice arrives with the three-way
-      // Settings row (CY-72). Tapping it from wired lands on the speaker.
-      if (speaker_setRoute(g_settings.outRoute == OUT_SPEAKER ? OUT_BT : OUT_SPEAKER))
-        g_settings.outRoute = g_settings.outRoute == OUT_SPEAKER ? OUT_BT : OUT_SPEAKER;
-#else
-      if (speaker_setRoute((g_settings.outRoute + 1) % OUT_ROUTE_COUNT))
-        g_settings.outRoute = (g_settings.outRoute + 1) % OUT_ROUTE_COUNT;
-#endif
-      else ui_toast("Unable to change output");
+      // Bluetooth and Headphones alternate; a board without the module has only
+      // Bluetooth and the row does nothing. A failed switch keeps the old setting.
+      if (OUT_SELECTABLE_COUNT > 1) {
+        const uint8_t next = g_settings.outRoute == OUT_WIRED ? outRouteSelectable(0) : outRouteSelectable(1);
+        if (speaker_setRoute(next)) g_settings.outRoute = next;
+        else ui_toast("Unable to change output");
+      }
       break;
     case ROW_BLUETOOTH:
       ui_go(SCR_BLUETOOTH);

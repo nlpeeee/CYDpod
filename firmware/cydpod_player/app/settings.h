@@ -51,9 +51,9 @@ struct Settings {
   uint8_t  screenTimeout = 2;             // Off / 30 s / 1 min / 5 min; dim halfway
   uint8_t  sleepTimer = 0;                  // Off / 15 / 30 / 60 / 90 minutes
   uint8_t  volume     = 40;                 // 0-100
-  // Where the sound comes out: OUT_SPEAKER / OUT_BT (speaker.h). The on-board
-  // speaker by default, so a board that has never been paired makes a noise.
-  uint8_t  outRoute   = 0;                  // OUT_SPEAKER
+  // Where the sound comes out: OUT_BT or OUT_WIRED (out_route.h). Bluetooth by default; a
+  // stored speaker choice from an older build is read back as Bluetooth.
+  uint8_t  outRoute   = 1;                  // OUT_BT
   uint16_t lastTrack  = 0;                  // resume point: track index...
   uint32_t lastPosMs  = 0;                  // ...and position in it
   String lastPath;                         // stable identity across catalogue rebuilds

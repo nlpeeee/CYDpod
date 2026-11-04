@@ -57,6 +57,9 @@ uint32_t audio_positionMs(){return 84000;}
 uint32_t audio_trackSerial(){return serial;}
 bool bt_connected(){return true;}
 bool speaker_setRoute(uint8_t){return routeAllowed;}
+#if CYD_WIRED_OUTPUT
+bool wired_active(){return true;}
+#endif
 bool calibrate_run(){return true;}
 void display_setRotation(uint8_t r){tft.setRotation(r);}
 void display_setBacklight(uint8_t p){backlight=p;}
@@ -78,6 +81,7 @@ static void check(bool value,const char* message){if(!value)throw std::runtime_e
 static void pump(){for(int i=0;i<10;++i)ui_tick(clockNow+=130);}
 static void tap(int x,int y){tx=x;ty=y;down=true;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,x,y);pump();}
 static bool label(const char* s){return std::find(tft.labels.begin(),tft.labels.end(),s)!=tft.labels.end();}
+static int countLabel(const char* s){return int(std::count(tft.labels.begin(),tft.labels.end(),s));}
 static void snapshot(const char* path){tft.save(path);}
 
 // ---------------------------------------------------------------------------
@@ -241,10 +245,24 @@ int main(){try{
   tap(135,300);tap(80,198);check(ui_current()==SCR_SETUP,"advanced settings bridge");ui_go(SCR_PLAYER);pump();check(label("Refresh Library"),"legacy Back returns to scrolled settings parent");tap(88,300);
   // CT-05: an unclaimed 0.6 to 4 s press activates the row like a tap.
   tx=80;ty=60;down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=900);down=false;ui_touch(TOUCH_LONG_PRESS,80,66);pump();
-  check(label("On-board speaker"),"long press activates the row (CT-05)");
-  // CY-43: failed output allocation must not persist/select an unusable route.
-  routeAllowed=false;tap(80,110);check(g_settings.outRoute==OUT_BT,"failed speaker selection retains BT setting");
+  check(label("Bluetooth")&&label("Selected"),"long press activates the row (CT-05)");
+  // CY-71 scope: Bluetooth and Headphones only. No speaker, no line out, no placeholder text, no SPK badge.
+  check(!label("On-board speaker")&&!label("Stereo line out")&&!label("Hardware path pending")&&!label("SPK"),"speaker and line out are gone from the Output page and header");
+#if CYD_WIRED_OUTPUT
+  check(label("Headphones"),"Headphones is offered next to Bluetooth");
+  // CY-43: failed output change must not persist/select an unusable route, and says so.
+  routeAllowed=false;tap(80,110);check(g_settings.outRoute==OUT_BT,"failed headphones selection retains BT setting");
+  check(label("Unable to change output. Try again."),"failed output change is reported");
   routeAllowed=true;tap(20,20);
+  tap(80,110);check(g_settings.outRoute==OUT_WIRED,"Headphones selected after a successful switch");
+  ui_redraw();pump();check(countLabel("Selected")==1&&countLabel("Headphones")==1&&!label("SPK")&&!label("BT")&&!label("BT..."),"exactly the active entry is selected; the header shows no SPK or BT text for Headphones");
+  tap(80,66);check(g_settings.outRoute==OUT_BT,"Bluetooth selected again");
+  ui_redraw();pump();check(countLabel("Selected")==1&&label("BT"),"back on Bluetooth: one Selected, BT badge");
+#else
+  check(!label("Headphones"),"a board without the module offers Bluetooth only");
+  routeAllowed=false;tap(80,110);check(g_settings.outRoute==OUT_BT,"the single entry cannot select an unavailable route");routeAllowed=true;
+  ui_redraw();pump();check(countLabel("Selected")==1,"one Selected entry");
+#endif
   // Folder preview must be dropped above the source page, then rebuilt at its old scroll position.
   tap(30,300);tap(80,66);tap(80,242);tap(80,66);
   tap(135,300);tap(80,66);check(playing,"folder preview starts playback");

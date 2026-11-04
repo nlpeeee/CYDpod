@@ -44,4 +44,7 @@ struct WiredStats {
   uint32_t heapCost;     // free heap consumed from reserve to channel enabled, bytes
 };
 WiredStats wired_stats();
+#else
+// UI code asks without caring whether the board has the module.
+inline bool wired_active() { return false; }
 #endif

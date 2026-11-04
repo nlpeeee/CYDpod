@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "bt.h"
 #include "speaker.h"
+#include "wired.h"
 #include "background.h"
 #include "calibrate.h"
 #include "titles.h"
@@ -82,8 +83,9 @@ void header(){
   tft.drawFastHLine(0,43,tft.width(),p.outline);
   if(navigation.depth>1)ui_text("< Back",6,22,ML_DATUM,p.text,p.band,54);
   ui_text(String(title()),tft.width()/2,22,MC_DATUM,p.text,p.band,tft.width()-116);
-  const char* status=g_settings.outRoute==OUT_BT?(bt_connected()?"BT":"BT..."):"SPK";
-  ui_text(String(status),tft.width()-5,22,MR_DATUM,p.dim,p.band,36,TYPE_CAPTION);
+  if(g_settings.outRoute==OUT_WIRED)ui_icon(ICON_HEADPHONES,tft.width()-20,22,24,wired_active()?p.text:p.dim,p.band);
+  else{const char* status=bt_connected()?"BT":"BT...";
+    ui_text(String(status),tft.width()-5,22,MR_DATUM,p.dim,p.band,36,TYPE_CAPTION);}
 }
 void footer(){
   const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),44,p.band);
@@ -138,7 +140,7 @@ int rowCount(){
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
-    case Mode::Settings:return 7;case Mode::Playback:return 4;case Mode::Display:return 5;case Mode::Output:return 4;
+    case Mode::Settings:return 7;case Mode::Playback:return 4;case Mode::Display:return 5;case Mode::Output:return OUT_SELECTABLE_COUNT;
     case Mode::Options:return 4;case Mode::Refresh:return 2;
     default:return 0;
   }
@@ -165,7 +167,7 @@ void loadRow(int i){
       if(at<2)setRow(r,at==0?"Shuffle":"Repeat",at==0?String(audio_shuffle()?"On":"Off"):String(audio_repeat()==REPEAT_ONE?"One":audio_repeat()==REPEAT_ALL?"All":"Off"));
       else setRow(r,at==2?"Screen timeout":"Sleep timer",at==2?String(sleep_timeoutLabel(g_settings.screenTimeout)):String(sleep_timerLabel(g_settings.sleepTimer)));break;
     case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Flip portrait","Calibrate touch","Panel / Advanced"};setRow(r,names[at],at<2?String(g_settings.brightness)+"%":String(),at>=3);break;}
-    case Mode::Output:{const char* names[]={"Bluetooth","On-board speaker","Stereo line out","Headphones"};setRow(r,names[at],at<2?String((at==0)==(g_settings.outRoute==OUT_BT)?"Selected":""):String("Hardware path pending"),false,at>=2);break;}
+    case Mode::Output:{const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
     case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):String(),at==3);break;}
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
     default:break;
@@ -396,7 +398,8 @@ void activate(int at){
       else if(at==2){g_settings.rotation=(g_settings.rotation&2)?0:2;display_setRotation(g_settings.rotation);settings_save();enter();}
       else if(at==3){calibrate_run();enter();}else external(SCR_SETUP);break;
     case Mode::Output:
-      if(at<2){const uint8_t next=at==0?OUT_BT:OUT_SPEAKER;
+      if(at<OUT_SELECTABLE_COUNT){const uint8_t next=outRouteSelectable(at);
+        if(next==g_settings.outRoute)break;
         if(!speaker_setRoute(next)){message("Unable to change output. Try again.");break;}
         g_settings.outRoute=next;settings_save();invalidate();header();}break;
     case Mode::Options:

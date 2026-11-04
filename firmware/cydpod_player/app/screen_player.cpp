@@ -23,6 +23,7 @@
 #include "audio.h"
 #include "bt.h"
 #include "speaker.h"
+#include "wired.h"
 #include "background.h"
 #include "storage.h"
 #include "settings.h"
@@ -109,10 +110,10 @@ static void drawTitle() {
 static void drawStatus() {
   const Palette& p = theme();
   // The chip says where the sound is going as well as how loud. On the
-  // speaker route that is settled -- there is nothing to connect to -- so the
+  // wired route that is settled -- there is nothing to connect to -- so the
   // icon is simply lit.
-  if (g_settings.outRoute == OUT_SPEAKER) {
-    ui_chip(L->status, ICON_SPEAKER, speaker_active() ? p.accent : p.dim,
+  if (g_settings.outRoute == OUT_WIRED) {
+    ui_chip(L->status, ICON_HEADPHONES, wired_active() ? p.accent : p.dim,
             String(audio_volume()) + "%", p.band);
     return;
   }
@@ -279,8 +280,8 @@ static void tick(uint32_t now) {
     shownPlaying = audio_isPlaying();
     drawButton(PB_PLAY);
   }
-  const int btState = g_settings.outRoute == OUT_SPEAKER
-                        ? (speaker_active() ? 4 : 3)
+  const int btState = g_settings.outRoute == OUT_WIRED
+                        ? (wired_active() ? 4 : 3)
                         : (bt_connected() ? 2 : (bt_connecting() ? 1 : 0));
   if (btState != shownBt || audio_volume() != shownVolume) {
     shownBt = btState;

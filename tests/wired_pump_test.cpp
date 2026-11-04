@@ -166,11 +166,26 @@ int main() {
     CHECK(maxStep(tail) <= 80, "final fade step %d", maxStep(tail));
     size_t lastNz = 0; for (size_t i = 0; i < tail.size(); ++i) if (tail[i]) lastNz = i;
     CHECK(lastNz / 2 < (size_t)kRampFrames + 1, "final fade ends within a ramp (+%zu frames)", lastNz / 2);
-    CHECK(tail.size() / 2 >= (size_t)kRampFrames + (size_t)kTailFrames - (size_t)kChunkFrames, "tail zeros written: %zu frames", tail.size() / 2);
+    CHECK(tail.size() / 2 >= (size_t)kTailFrames, "tail zeros written: %zu frames", tail.size() / 2);
+    // The DMA holds kDmaCapacityFrames behind the write position, so everything before the
+    // last kDmaCapacityFrames accepted frames is on the wire. The fade must be inside that part.
+    CHECK(tail.size() / 2 > (size_t)kDmaCapacityFrames + lastNz / 2, "fade (ends +%zu) is not behind a full DMA of zeros (%zu frames written)", lastNz / 2, tail.size() / 2);
     // Already-silent stage: only the tail zeros.
     Counters c2; MockSink s2; Fade f2;
     finishStream(f2, buf, s2, c2);
-    CHECK(c2.chunks == (uint32_t)(1 + kTailFrames / kChunkFrames), "idle finish chunks %u", c2.chunks);
+    CHECK(c2.chunks == (uint32_t)(1 + (kTailFrames + kChunkFrames - 1) / kChunkFrames), "idle finish chunks %u", c2.chunks);
+  }
+
+  // A sink that errors on every call: pumpOnce reports the drop (the writer then backs off),
+  // finishStream gives up at the first dropped chunk instead of grinding through the tail.
+  {
+    MockRing ring; ring.isPlaying = true; ring.have = 100000; Fade fade; Counters c; MockSink s;
+    for (int i = 0; i < 40; ++i) s.script.push_back(WriteStatus::Error);
+    int16_t buf[kChunkFrames * 2];
+    CHECK(!pumpOnce(ring, fade, buf, s, c, true, false), "failed sink reported");
+    CHECK(c.dropped == 1 && c.writeErrors == (uint32_t)kMaxWriteAttempts, "drop counted");
+    Counters c2; MockSink s2; for (int i = 0; i < 40; ++i) s2.script.push_back(WriteStatus::Timeout);
+    CHECK(!finishStream(fade, buf, s2, c2) && c2.dropped == 1 && s2.calls == kMaxWriteAttempts, "finishStream stops at the first dropped chunk (calls %d)", s2.calls);
   }
 
   // Lead-in.

@@ -10,9 +10,20 @@ for t in wired_fade wired_pump; do
   g++ -O2 -std=c++17 -Wall -Wextra -Werror tests/${t}_test.cpp -o "$OUT/${t}_test"
   g++ -O1 -g -std=c++17 -fsanitize=address,undefined -fno-sanitize-recover=undefined tests/${t}_test.cpp -o "$OUT/${t}_test_san"
   "$OUT/${t}_test"
-  "$OUT/${t}_test_san" | tail -1
+  # Run first, print after: a pipe into tail would hide a failing sanitizer run (no pipefail in sh).
+  "$OUT/${t}_test_san" > "$OUT/${t}_san.log"
+  tail -1 "$OUT/${t}_san.log"
 done
 g++ -O2 -std=c++17 -Wall -Wextra -Werror -DCYD_BOARD_JC2432W328C tests/out_route_test.cpp -o "$OUT/out_route_wired"
 g++ -O2 -std=c++17 -Wall -Wextra -Werror tests/out_route_test.cpp -o "$OUT/out_route_plain"
 "$OUT/out_route_wired"
 "$OUT/out_route_plain"
+# The Output setting through the real settings.cpp: persistence, speaker -> Bluetooth migration,
+# and the forced-route test image leaving the saved choice alone.
+INC="-Itests/settings_shim -Ifirmware/cydpod_player/app"
+g++ -O2 -std=c++17 -Wall -Wextra -Werror $INC -DCYD_BOARD_JC2432W328C tests/settings_route_test.cpp -o "$OUT/settings_route_wired"
+g++ -O2 -std=c++17 -Wall -Wextra -Werror $INC -DCYD_BOARD_JC2432W328C -DCYD_DEFAULT_OUT_ROUTE=2 tests/settings_route_test.cpp -o "$OUT/settings_route_forced"
+g++ -O2 -std=c++17 -Wall -Wextra -Werror $INC tests/settings_route_test.cpp -o "$OUT/settings_route_plain"
+"$OUT/settings_route_wired" 2>/dev/null
+"$OUT/settings_route_forced" 2>/dev/null
+"$OUT/settings_route_plain" 2>/dev/null

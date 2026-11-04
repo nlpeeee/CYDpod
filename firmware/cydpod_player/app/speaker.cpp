@@ -164,7 +164,7 @@ static void writerTask(void*) {
 bool speaker_begin(uint8_t startRoute) { return speaker_setRoute(startRoute); }
 
 bool speaker_setRoute(uint8_t r) {
-  if (r >= OUT_ROUTE_COUNT) r = OUT_SPEAKER;
+  if (r >= OUT_ROUTE_COUNT) r = OUT_BT;
   if (r == route) return true;
   // Reserve the new buffers before interrupting a working Bluetooth route.
   int16_t* nextStereo = nullptr;

@@ -47,8 +47,13 @@ const uint32_t kDmaDescNum = 6;
 const uint32_t kDmaFrameNum = 256;       // 6 x 256 x 4 B = 6 KB, 35 ms behind the 46 ms ring
 // A write blocks until the DMA has room. 100 ms is 17 chunks of headroom; three
 // failures in a row drop the chunk (wired_pump.h). Nothing in the audio path
-// waits forever.
-const TickType_t kWriteTimeoutTicks = pdMS_TO_TICKS(100);
+// waits forever. i2s_channel_write() takes MILLISECONDS (esp_driver_i2s/include/
+// driver/i2s_common.h), not ticks.
+const uint32_t kWriteTimeoutMs = 100;
+// After a dropped chunk, one chunk time before trying again: a sink that fails at once
+// (driver error) would otherwise spin, pulling the ring dry at CPU speed.
+const TickType_t kBackoffTicks = pdMS_TO_TICKS(6);
+static_assert(cydwired::kDmaCapacityFrames == 6 * 256, "keep kDmaCapacityFrames in step with the DMA config");
 // Core 0 priority 5, the same as the on-board speaker's writer: Bluetooth's
 // controller tasks sit far above it and are idle on this route, the decode task
 // (core 1, priority 5) and the UI loop are on the other core, and a 35 ms DMA
@@ -85,7 +90,7 @@ struct AudioSource {
 
 struct Sink {
   cydwired::WriteStatus operator()(const uint8_t* p, size_t bytes, size_t* written) const {
-    const esp_err_t err = i2s_channel_write(tx, p, bytes, written, kWriteTimeoutTicks);
+    const esp_err_t err = i2s_channel_write(tx, p, bytes, written, kWriteTimeoutMs);
     if (err == ESP_OK) return cydwired::WriteStatus::Ok;
     if (err == ESP_ERR_TIMEOUT) return cydwired::WriteStatus::Timeout;
     lastWriteErr = err;
@@ -167,8 +172,8 @@ bool startStream() {
 void stopStream() {
   if (!tx) return;
   Sink sink;
-  // Final fade-out of the held sample, then zeros, then the channel goes away:
-  // a route switch must not pop.
+  // Final fade-out of the held sample, then enough zeros to push it through the DMA
+  // (wired_pump.h kTailFrames), then the channel goes away: a route switch must not pop.
   const bool clean = cydwired::finishStream(work->fade, work->chunk, sink, counters);
   teardownChannel();
   Serial.printf("i2s-wired: stop%s frames=%u underruns=%u errors=%u stalls=%u dropped=%u\n",
@@ -207,7 +212,8 @@ void writerTask(void*) {
       speaker_routeFailed(OUT_WIRED);
       continue;
     }
-    cydwired::pumpOnce(audio, work->fade, work->chunk, sink, counters, true, muted);
+    if (!cydwired::pumpOnce(audio, work->fade, work->chunk, sink, counters, true, muted))
+      vTaskDelay(kBackoffTicks);
     logWriteErrors(errorsSeen);
     if (counters.stalls != stallsSeen) {
       if (stallsSeen == 0) Serial.printf("i2s-wired: DMA stall (write timed out), stalls=%u\n", (unsigned)counters.stalls);

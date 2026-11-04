@@ -82,7 +82,7 @@ static const Entry TABLE[] = {
   { "Forget this device?",   "刪除此裝置？" },
   { "It can be paired again later.", "之後可以重新配對。" },
   { "Audio out",             "音訊輸出" },
-  { "Speaker",               "喇叭" },
+  { "Headphones",            "耳機" },
   { "All songs",             "全部歌曲" },
   { "Favourites",            "我的最愛" },
   { "Playlists",             "播放清單" },

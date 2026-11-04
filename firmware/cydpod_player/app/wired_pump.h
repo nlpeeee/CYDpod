@@ -26,7 +26,11 @@ constexpr int32_t kChunkFrames = 256;                       // 5.8 ms, same as s
 constexpr size_t kChunkBytes = kChunkFrames * 2 * sizeof(int16_t);
 constexpr int kMaxWriteAttempts = 3;                         // per chunk, timeouts and errors together
 constexpr int32_t kLeadInFrames = 9 * kChunkFrames;          // 52 ms of zeros: PLL lock + DAC un-mute
-constexpr int32_t kTailFrames = 4 * kChunkFrames;            // 23 ms of zeros after the final fade
+// Zeros after the final fade. i2s_channel_write() returns once the data is QUEUED, and the
+// DMA holds up to kDmaCapacityFrames of it, so the fade is on the wire only after at least
+// that many further frames have been accepted. One chunk of margin on top.
+constexpr int32_t kDmaCapacityFrames = 6 * 256;              // dma_desc_num x dma_frame_num (wired.cpp)
+constexpr int32_t kTailFrames = kDmaCapacityFrames + kChunkFrames;   // 1792 frames, 40.6 ms
 
 enum class WriteStatus : uint8_t { Ok, Timeout, Error };
 

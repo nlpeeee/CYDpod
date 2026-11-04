@@ -65,6 +65,22 @@ void ui_icon(Icon icon, int cx, int cy, int s, uint16_t fg, uint16_t bg) {
       tft.drawLine(wx + 3, cy - s / 3, wx + 3, cy + s / 3, fg);
       break;
     }
+    case ICON_HEADPHONES: {
+      // Band over the top, a cup at each end.
+      const int rr = h * 3 / 4 + 1, ay = cy + h / 6;
+      int px = cx - rr, py = ay;
+      for (int i = 1; i <= 12; ++i) {
+        const float a = PI + i * PI / 12;
+        const int x = cx + (int)(cos(a) * rr), y = ay + (int)(sin(a) * rr);
+        tft.drawLine(px, py, x, y, fg);
+        tft.drawLine(px, py + 1, x, y + 1, fg);
+        px = x; py = y;
+      }
+      const int cw = max(4, s / 5), ch = max(5, h * 2 / 3);
+      tft.fillRoundRect(cx - rr - cw / 2, ay - 1, cw, ch, 2, fg);
+      tft.fillRoundRect(cx + rr - cw / 2, ay - 1, cw, ch, 2, fg);
+      break;
+    }
     case ICON_BLUETOOTH: {
       // The rune: a vertical stroke with two chevrons on the right.
       const int t = cy - h, b = cy + h, x0 = cx - h / 2, x1 = cx + h / 2;

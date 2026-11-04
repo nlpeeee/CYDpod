@@ -61,9 +61,9 @@ void touch_begin() {
   pinMode(CYD_TOUCH_RST_PIN, OUTPUT);
   digitalWrite(CYD_TOUCH_RST_PIN, LOW); delay(10);
   digitalWrite(CYD_TOUCH_RST_PIN, HIGH); delay(300);
-  Wire.setBufferSize(16); // 16-byte RX + TX, allocated by begin; no per-poll heap
+  const bool buffersReady = Wire.setBufferSize(32) == 32; // pinned Wire minimum: 32-byte RX + TX
   Wire.setTimeOut(2);     // pinned ESP32 Wire combined write/read transaction timeout
-  busReady = Wire.begin(CYD_TOUCH_SDA_PIN, CYD_TOUCH_SCL_PIN, 400000);
+  busReady = buffersReady && Wire.begin(CYD_TOUCH_SDA_PIN, CYD_TOUCH_SCL_PIN, 400000);
   const bool awake = busReady && wake();
   lastReset = millis();
   if (!awake) failed(lastReset);

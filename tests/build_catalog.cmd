@@ -28,6 +28,10 @@ cl /nologo /O2 /EHsc /W4 /std:c++17 /I..\..\firmware\cydpod_player\app /Fe:touch
 if errorlevel 1 exit /b 1
 .\touch_gesture_test.exe
 if errorlevel 1 exit /b 1
+cl /nologo /O2 /EHsc /W4 /std:c++17 /I..\..\firmware\cydpod_player\app /Fe:cst820_report_test.exe ..\cst820_report_test.cpp
+if errorlevel 1 exit /b 1
+.\cst820_report_test.exe
+if errorlevel 1 exit /b 1
 cl /nologo /O2 /EHsc /W4 /std:c++17 /DCYDPOD_CATALOG_HOST /I..\catalog_shim /I..\..\firmware\cydpod_player\app /Fe:classic_ui_test.exe ..\classic_ui_test.cpp ..\..\firmware\cydpod_player\app\storage.cpp ..\..\firmware\cydpod_player\app\playlist.cpp ..\..\firmware\cydpod_player\app\ui.cpp ..\..\firmware\cydpod_player\app\classic_screen.cpp ..\..\firmware\cydpod_player\app\sleep_mode.cpp ..\..\firmware\cydpod_player\app\theme.cpp ..\..\firmware\cydpod_player\app\style.cpp ..\..\firmware\cydpod_player\app\i18n.cpp
 if errorlevel 1 exit /b 1
 .\classic_ui_test.exe

@@ -137,13 +137,18 @@ void playerHeader(){
 void header(){
   if(page().mode==Mode::Player){playerHeader();return;}
   const Palette& p=theme();
-  for(int y=0;y<L::HeaderH;++y)tft.drawFastHLine(0,y,tft.width(),tft.alphaBlend(uint8_t(y*180/L::HeaderH),p.band,0xffff));
+  tft.fillRect(0,0,tft.width(),L::HeaderH,p.band);
   tft.drawFastHLine(0,L::HeaderH-1,tft.width(),p.outline);
-  if(navigation.depth>1)ui_text("< Back",L::HeaderBackX,L::HeaderTextY,ML_DATUM,p.text,p.band,L::HeaderBackW);
-  ui_text(String(title()),tft.width()/2,L::HeaderTextY,MC_DATUM,p.text,p.band,tft.width()-L::HeaderTitleInset);
-  if(g_settings.outRoute==OUT_WIRED)ui_icon(ICON_HEADPHONES,tft.width()-L::RouteInset,L::HeaderTextY,L::RouteSize,wired_active()?p.text:p.dim,p.band);
-  else{const char* status=bt_connected()?"BT":"BT...";
-    ui_text(String(status),tft.width()-L::StatusInset,L::HeaderTextY,MR_DATUM,p.dim,p.band,L::StatusW,TYPE_CAPTION);}
+  if(navigation.depth>1){
+    const Page& parent=navigation.entries[navigation.depth-2];
+    ui_icon(ICON_BACK,L::HeaderBackX,L::HeaderTextY,L::HeaderIconSize,p.text,p.band);
+    ui_text(String(parent.mode==Mode::Home?"Home":pageTitle(parent)),L::HeaderParentX,L::HeaderTextY,ML_DATUM,p.text,p.band,L::BackW-L::HeaderParentX,TYPE_CAPTION);
+  }
+  const int left=navigation.depth>1?L::BackW:0,right=tft.width()-L::HeaderTitleRight;
+  ui_text(String(title()),(left+right)/2,L::HeaderTextY,MC_DATUM,p.text,p.band,right-left);
+  const bool wired=g_settings.outRoute==OUT_WIRED;
+  const bool connected=wired?wired_active():bt_connected();
+  ui_icon(wired?ICON_HEADPHONES:ICON_BLUETOOTH,tft.width()-L::RouteInset,L::HeaderTextY,L::RouteSize,connected?p.text:p.dim,p.band);
 }
 void footer(){
   if(page().mode==Mode::Player)return;
@@ -659,6 +664,7 @@ const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};
 #ifdef CYDPOD_CATALOG_HOST
 // Exercise the original private geometry/hit test, without adding firmware state.
 #include <sstream>
+#include <cassert>
 int classic_volumeSaveArms(){return volumeSaveArms;}
 uint32_t classic_volumeSaveAt(){return saveAt;}
 int classic_target(int x,int y){return targetAt(x,y);}
@@ -666,7 +672,7 @@ uint32_t classic_seekPreviewMs(){return seekMs;}
 std::string classic_geometry(){
   std::ostringstream out;
   auto rect=[&](Rect r){out<<r.x<<','<<r.y<<','<<r.w<<','<<r.h<<';';};
-  for(unsigned rotation:{0u,1u,3u}){
+  for(unsigned rotation:{0u,1u,2u,3u}){
     tft.setRotation(rotation);out<<"rotation="<<rotation<<" size="<<tft.width()<<'x'<<tft.height()<<" rows="<<rows()<<" rects=";
     for(int i=0;i<rows();++i)rect(rowRect(i));
     for(int a:{Home,Up,Down,Now})rect(footerRect(a));
@@ -679,6 +685,17 @@ std::string classic_geometry(){
         navigation.home();navigation.depth=variant==0?1:2;page().mode=Mode(m);
         count=variant==0?0:variant==1?1:7;page().top=variant==3?2:0;
         digitKeys=variant==2;lettersSecond=variant==3;
+        assert(rows()==(tft.height()==240?4:6));
+        const Rect strip=L::strip<Rect>(tft.width(),tft.height());
+        assert(strip.y==L::HeaderH&&strip.h==rows()*L::RowH&&strip.y+strip.h==footerY());
+        for(int i=0;i<rows();++i){const Rect r=rowRect(i);
+          assert(r.x>=0&&r.y==L::HeaderH+i*40&&r.h==40&&r.y+r.h<=footerY());
+          assert(r.x+r.w<=strip.x);
+          if(i)assert(rowRect(i-1).y+rowRect(i-1).h==r.y);
+        }
+        int end=0;for(int a:{Home,Up,Down,Now}){const Rect r=footerRect(a);
+          assert(r.x==end&&r.y==footerY()&&r.y+r.h==tft.height());end=r.x+r.w;
+        }assert(end==tft.width());
         out<<" v="<<variant;
         if(page().mode==Mode::Keyboard){out<<" keys=";for(int i=0;keyLetters()[i];++i)rect(keyRect(i));rect(keyBackRect());rect(keyDigitsRect());}
         // Lossless run-length table: each y band contains x-end:target runs.

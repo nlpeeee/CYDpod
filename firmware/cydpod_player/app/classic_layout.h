@@ -2,13 +2,13 @@
 #include <stdint.h>
 namespace cydclassic { namespace layout {
 // All Classic pages: chrome, list rows, text margins and Back hit width.
-constexpr int HeaderH=44,FooterH=44,RowH=44,MaxRows=6,BackW=64,TextMargin=10;
-constexpr int HeaderTextY=22,HeaderTitleInset=116,HeaderBackX=6,HeaderBackW=54;
-constexpr int StatusInset=5,StatusW=36,RouteInset=20,RouteSize=24;
+constexpr int HeaderH=36,FooterH=44,RowH=40,MaxRows=6,BackW=100,TextMargin=10;
+constexpr int HeaderTextY=18,HeaderTitleRight=40,HeaderBackX=16,HeaderParentX=28,HeaderIconSize=16;
+constexpr int RouteInset=20,RouteSize=24;
 constexpr inline int rows(int h){return (h-HeaderH-FooterH)/RowH<MaxRows?(h-HeaderH-FooterH)/RowH:MaxRows;}
 constexpr inline int footerY(int h){return h-FooterH;}
 // Browse pages: row width reserves 8 px; the painted strip is only 7 px wide.
-constexpr int RowTitleY=14,RowDetailY=33,RowTextInset=34,RowIconInset=12,RowIconSize=12;
+constexpr int RowTitleY=12,RowDetailY=29,RowTextInset=34,RowIconInset=12,RowIconSize=12;
 constexpr int RowInset=8,StripW=7,ThumbMin=12,ThumbInset=2,ThumbW=3;
 template<class R> constexpr inline R row(int w,int i){return {0,HeaderH+i*RowH,w-RowInset,RowH};}
 template<class R> constexpr inline R strip(int w,int h){return {w-StripW,HeaderH,StripW,rows(h)*RowH};}
@@ -16,7 +16,7 @@ template<class R> constexpr inline R strip(int w,int h){return {w-StripW,HeaderH
 constexpr int HomeW=64,PageW=48,ActionW=80,PlayingX=160,FooterIconSize=14;
 template<class R> constexpr inline R footer(int w,int h,int cell){return {cell==0?0:cell==1?HomeW:cell==2?HomeW+PageW:PlayingX,footerY(h),cell==0?HomeW:cell<3?PageW:w-PlayingX,FooterH};}
 template<class R> constexpr inline R action(int w,int h,int cell,bool fixed=false){return {cell*ActionW,footerY(h),cell<2||fixed?ActionW:w-PlayingX,FooterH};}
-// Proposal A: Player-only chrome. Browse geometry remains unchanged.
+// Proposal A: Player-only chrome and controls remain independent of browse rows.
 constexpr int PlayerHeaderH=36,PlayerHeaderY=18,PlayerHeaderHitH=40;
 constexpr int PlayerBackW=100,PlayerCountX=150,PlayerPortraitCountX=125,PlayerCountW=96,PlayerPortraitCountW=48,PlayerCountH=11,PlayerPortraitCountH=8,PlayerBackX=16,PlayerParentX=28;
 constexpr int PlayerFavouriteInset=90,PlayerOptionsInset=48,PlayerHeaderIcon=16;

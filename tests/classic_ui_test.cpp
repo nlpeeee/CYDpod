@@ -20,6 +20,7 @@
 #include <chrono>
 #include <thread>
 #include <functional>
+#include <cmath>
 #include "touch_gesture.h"
 #include "classic_layout.h"
 TFT_eSPI tft;
@@ -60,8 +61,8 @@ void audio_seekRelative(int s){relativeSeek=s;++seekCalls;}
 uint32_t audio_durationMs(){return seekAllowed?240000:0;}
 uint32_t audio_positionMs(){return 84000;}
 uint32_t audio_trackSerial(){return serial;}
-static int btCalls=0;
-bool bt_connected(){++btCalls;return true;}
+static int btCalls=0;static bool btConnected=true;
+bool bt_connected(){++btCalls;return btConnected;}
 bool bt_connecting(){++btCalls;return false;}
 bool bt_pairing(){++btCalls;return false;}
 bool bt_choosing(){++btCalls;return false;}
@@ -151,7 +152,7 @@ static void pressRun(uint32_t dur,uint32_t period,uint32_t phase,const Path& pat
 static Path at(int x,int y){return [=](uint32_t,int& px,int& py){px=x;py=y;};}
 static void home(){classic_home();ui_go(SCR_CLASSIC);pump();}
 static void toPlayer(){home();tap(80,110);}
-static void toPlayback(){home();tap(80,198);tap(80,154);}
+static void toPlayback(){home();tap(80,176);tap(80,154);}
 static void toMusic(){home();tap(80,66);}
 static void touchRegression(){
   const uint32_t durations[]={1,20,50,100,300,650,4000,4500},periods[]={10,80,150};
@@ -199,25 +200,25 @@ static void touchRegression(){
   // Edge excursions: 1 to 8 px past the row edge and back, or ending there, still activate.
   for(int e=1;e<=8;++e){
     toPlayback();before=shuffleCalls;
-    pressRun(300,10,0,[e](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<200)?87+e:84;});
+    pressRun(300,10,0,[e](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<200)?75+e:72;});
     check(shuffleCalls==before+1,"excursion that returns activates");
     toPlayback();before=shuffleCalls;
-    pressRun(300,10,0,[e](uint32_t t,int& x,int& y){x=80;y=t>=100?87+e:84;});
+    pressRun(300,10,0,[e](uint32_t t,int& x,int& y){x=80;y=t>=100?75+e:72;});
     check(shuffleCalls==before+1,"release within the slop of the captured row activates");
   }
   // 14 px out: not within the slop, so releasing there does nothing; coming back re-arms; 40 px is a deliberate exit.
   const uint32_t slopBefore=cydtouch::stats().slop;
   toPlayback();before=shuffleCalls;
-  pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=t>=100?101:84;});
+  pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=t>=100?89:72;});
   check(shuffleCalls==before&&cydtouch::stats().slop==slopBefore+1,"release 14 px outside the row cancels and is counted");
   toPlayback();before=shuffleCalls;
-  pressRun(400,10,0,[](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<250)?101:84;});
+  pressRun(400,10,0,[](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<250)?89:72;});
   check(shuffleCalls==before+1,"returning inside the slop re-arms the press");
   toPlayback();before=shuffleCalls;
-  pressRun(400,10,0,[](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<250)?127:84;});
+  pressRun(400,10,0,[](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<250)?115:72;});
   check(shuffleCalls==before,"a deliberate far exit cancels for good, even after returning");
   // A footer control: slop reaches past its edge into the neighbouring Up button without retargeting it.
-  home();tap(80,198);   // Settings: seven rows, so the footer has Up/Down arrows beside Home
+  home();tap(80,176);   // Settings: seven rows, so the footer has Up/Down arrows beside Home
   pressRun(200,10,0,[](uint32_t t,int& x,int& y){x=t<60?60:70;y=300;});   // Home is x 0-63; 70 is inside Up
   check(label("Music")&&label("Search Songs"),"Home released 7 px into the Up button still goes Home");
   std::cout<<"PASS CY-62 tolerant release: 1-8 px excursions return or end near, 14 px outside cancels and re-arms, 40 px exits for good, neighbour not retargeted\n";
@@ -230,7 +231,7 @@ static void touchRegression(){
   check(!label("Fixture Artist")&&cydtouch::stats().claim==claimBefore+1,"a large sideways swing claims the press and is counted");
   toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+(t>=50?3:0);y=t>=50?52:66;});
   check(!label("Fixture Artist"),"a mostly vertical 14 px move claims the press");
-  toMusic();check(!label("Favourites"),"Music page starts at the top");
+  toMusic();check(!label("Search Songs"),"Music page starts at the top");
   pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=int(150-std::min<uint32_t>(t,200)*120/200);});
   check(label("Favourites")&&!label("Fixture Artist"),"a true vertical drag scrolls the list instead of activating a row");
   std::cout<<"PASS CY-62 lists: jitter under 16 px keeps the row tap, sideways/vertical drags claim, vertical drag scrolls\n";
@@ -286,10 +287,69 @@ static void nowPlayingRegression(){
     tap(20,20);const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
     ui_redraw();pump();snapshot(rotation==0?"cy61-player-portrait.svg":rotation==1?"cy61-player-landscape.svg":"cy61-player-landscape3.svg");
   }
-  tft.setRotation(0);home();tap(80,198);tap(200,300); // Settings -> footer Playing
+  tft.setRotation(0);home();tap(80,176);tap(200,300); // Settings -> footer Playing
   ui_redraw();pump();check(label("Settings"),"Player Back label names a Settings parent, not Home");
   tap(20,18);check(label("Audio Output"),"Back returns to the named Settings parent");home();
   std::cout<<"CY61_NOWPLAYING_OK: rotations 0/1/3, SVG geometry, slider/seek edges and monotonic drag, live shared volume, one deferred save, down-only transport, favourite, shuffle, repeat, Output and Options\n";
+}
+// Linear Rec.709 luminance, normalized to 0..1 after RGB565 expansion.
+static double luminance(uint16_t c){
+  auto linear=[](double v){return v<=0.04045?v/12.92:std::pow((v+0.055)/1.055,2.4);};
+  return 0.2126*linear(((c>>11)&31)/31.0)+0.7152*linear(((c>>5)&63)/63.0)+0.0722*linear((c&31)/31.0);
+}
+static std::string routeDrawing(Icon icon,uint16_t ink){
+  namespace L=cydclassic::layout;
+  tft.fillScreen(theme().bg);const auto start=tft.drawing().size();
+  ui_icon(icon,tft.width()-L::RouteInset,L::HeaderTextY,L::RouteSize,ink,theme().band);
+  return tft.drawing().substr(start);
+}
+static void compactChromeRegression(){
+  namespace L=cydclassic::layout;
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);const int w=tft.width(),h=tft.height();
+    check(L::HeaderH==36&&L::RowH==40&&L::rows(h)==(w==320?4:6),"compact header, four landscape / six portrait rows");
+    const int right=w-L::HeaderTitleRight;
+    check(L::HeaderParentX+(L::BackW-L::HeaderParentX)<=L::BackW&&right<=w-L::RouteInset-L::RouteSize/2,"parent, title and route have disjoint bounds");
+    home();tap(80,L::row<Rect>(w,0).cy());tap(80,L::row<Rect>(w,2).cy());
+    check(label("Music")&&!label("< Back"),"nested Songs header Back names Music");
+    for(int row=0;row<L::rows(h);++row){const Rect r=L::row<Rect>(w,row);
+      check(classic_target(r.x,r.y)==row&&classic_target(r.x+r.w-1,r.y+r.h-1)==row,"row outer edges follow the 40 px hit grid");
+    }
+    check(classic_target(L::BackW-1,L::HeaderH-1)==-10&&classic_target(L::BackW,L::HeaderH-1)==-1,"Back hit ends at the parent-label boundary");
+    snapshot(rotation==0?"cy78-songs-portrait.svg":rotation==1?"cy78-songs-landscape.svg":rotation==2?"cy78-songs-portrait2.svg":"cy78-songs-landscape3.svg");
+    // Parent labels are release actions with existing CY-62 slop, including the enlarged right edge.
+    const int commands=calls;
+    SCREEN_CLASSIC.press(PRESS_DOWN,L::BackW-1,L::HeaderTextY);
+    check(label("Music")&&calls==commands,"Back does not navigate or play on down");
+    SCREEN_CLASSIC.press(PRESS_UP,L::BackW+6,L::HeaderTextY);SCREEN_CLASSIC.touch(TOUCH_TAP,L::BackW+6,L::HeaderTextY);pump();
+    check(label("Artists")&&label("Albums"),"Back releases within 7 px slop to the named Music parent");
+    home();tap(80,L::row<Rect>(w,3).cy());tap(80,L::row<Rect>(w,2).cy());
+    check(label("Settings")&&label("Shuffle"),"Playback header names its Settings parent");
+    tap(L::HeaderBackX,L::HeaderTextY);check(label("Audio Output"),"Back returns to Settings");
+  }
+  tft.setRotation(1);g_settings.outRoute=OUT_BT;
+  double minimum=1;
+  for(int i=0;i<theme_count();++i){
+    g_settings.theme=i;const Palette& p=theme();const double difference=std::abs(luminance(p.text)-luminance(p.band));minimum=std::min(minimum,difference);
+    check(difference>0.25,"every theme header text has linear luminance difference > 0.25 from band");
+    check(std::abs(luminance(p.dim)-luminance(p.band))>0.08,"every theme dimmed route has luminance difference > 0.08 from band");
+    btConnected=true;const auto connected=routeDrawing(ICON_BLUETOOTH,p.text);home();
+    check(tft.drawing().find(connected)!=std::string::npos&&!label("BT")&&!label("BT..."),"connected route uses the Bluetooth icon in header text ink");
+    check(tft.drawing().find("x='0' y='0' width='320' height='36'")!=std::string::npos,"header paints one flat 36 px band");
+    if(i==0)snapshot("cy78-dark-home.svg");
+    btConnected=false;const auto reconnecting=routeDrawing(ICON_BLUETOOTH,p.dim);home();
+    check(tft.drawing().find(reconnecting)!=std::string::npos,"reconnecting Bluetooth icon is dimmed");
+    btConnected=true;ui_tick(clockNow+=1100);
+    check(tft.drawing().find(connected)!=std::string::npos,"Bluetooth reconnection refreshes the icon without page navigation");
+#if CYD_WIRED_OUTPUT
+    g_settings.outRoute=OUT_WIRED;const auto headphones=routeDrawing(ICON_HEADPHONES,p.text);const int radio=btCalls;home();
+    check(tft.drawing().find(headphones)!=std::string::npos&&btCalls==radio,"Headphones icon swaps without touching Bluetooth");
+    if(i==8)snapshot("cy78-headphones-home.svg");g_settings.outRoute=OUT_BT;
+#endif
+    std::cout<<"CY78_HEADER_CONTRAST "<<p.nameEn<<" luminance_difference="<<difference<<"\n";
+  }
+  std::cout<<"CY78_COMPACT_CHROME_OK: all rotations, 4/6 rows, parent Back on release, both route icons, reconnect dimming, flat band; "<<theme_count()<<" themes, minimum text luminance difference="<<minimum<<" (>0.25)\n";
+  g_settings.theme=8;tft.setRotation(0);home();
 }
 std::string classic_geometry();std::string classic_dialog_geometry();
 static void geometryGolden(){
@@ -299,7 +359,7 @@ static void geometryGolden(){
   if(std::getenv("CYDPOD_REGENERATE_LAYOUT")){std::ofstream("../golden/classic_layout.txt")<<actual;}
   std::ifstream f("../golden/classic_layout.txt");std::string expected((std::istreambuf_iterator<char>(f)),{});
   check(actual==expected,"Classic geometry differs from approved golden table");
-  std::cout<<"CLASSIC_GEOMETRY_GOLDEN: 17 modes x 4 variants x rotations 0/1/3, 240x320 and 320x240\n";
+  std::cout<<"CLASSIC_GEOMETRY_GOLDEN: 17 modes x 4 variants x rotations 0/1/2/3, 240x320 and 320x240\n";
 }
 int main(){try{
   geometryGolden();
@@ -316,7 +376,7 @@ int main(){try{
   tap(80,66);check(label("Fixture Artist"),"artist view");snapshot("ui-artists.svg");
   tap(80,66);check(label("All Songs")&&label("Fixture Album"),"artist album view");snapshot("ui-albums.svg");
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");
-  int before=calls;tx=80;ty=180;down=true;ui_tick(clockNow+=130);ty=60;ui_tick(clockNow+=5000);
+  int before=calls;tx=80;ty=160;down=true;ui_tick(clockNow+=130);ty=60;ui_tick(clockNow+=5000);
   check(ui_pressClaimed(),"long drag claims recalibration hold");down=false;ui_touch(TOUCH_RECALIBRATE,80,198);pump();check(calls==before,"drag does not play");
   tap(80,66);check(label("Song 02")&&playing,"select track");
   tap(120,246);check(!playing,"pause transport hit target");tap(120,246);check(playing,"play transport hit target");
@@ -340,8 +400,8 @@ int main(){try{
   tap(20,20);check(label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");
-  tap(30,300);tap(80,198);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
-  tap(135,300);tap(80,198);check(ui_current()==SCR_SETUP,"advanced settings bridge");ui_go(SCR_PLAYER);pump();check(label("Refresh Library"),"legacy Back returns to scrolled settings parent");tap(88,300);
+  tap(30,300);tap(80,176);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
+  tap(135,300);tap(80,216);check(ui_current()==SCR_SETUP,"advanced settings bridge");ui_go(SCR_PLAYER);pump();check(label("Refresh Library"),"legacy Back returns to scrolled settings parent");tap(88,300);
   // CT-05: an unclaimed 0.6 to 4 s press activates the row like a tap.
   tx=80;ty=60;down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=900);down=false;ui_touch(TOUCH_LONG_PRESS,80,66);pump();
   check(label("Bluetooth")&&label("Selected"),"long press activates the row (CT-05)");
@@ -389,24 +449,24 @@ int main(){try{
   g_settings.skin=0;
   ui_go(SCR_BLUETOOTH);pump();tap(120,126);
   check(g_settings.outRoute==OUT_BT&&hostRestarts==restartsBefore+2,"Use Bluetooth saves Bluetooth then restarts");
-  home();tap(80,198);tap(80,66);
-  ui_redraw();pump();check(countLabel("Selected")==1&&label("BT"),"back on Bluetooth: one Selected, BT badge");
+  home();tap(80,176);tap(80,66);
+  ui_redraw();pump();check(countLabel("Selected")==1&&!label("BT")&&!label("BT..."),"back on Bluetooth: one Selected and no text badge");
 #else
   check(!label("Headphones"),"a board without the module offers Bluetooth only");
   routeAllowed=false;tap(80,110);check(g_settings.outRoute==OUT_BT,"the single entry cannot select an unavailable route");routeAllowed=true;
   ui_redraw();pump();check(countLabel("Selected")==1,"one Selected entry");
 #endif
   // Folder preview must be dropped above the source page, then rebuilt at its old scroll position.
-  tap(30,300);tap(80,66);tap(80,242);tap(80,66);
+  tap(30,300);tap(80,66);tap(80,216);tap(80,66);
   tap(135,300);tap(80,66);check(playing,"folder preview starts playback");
   before=calls;hostFreeHeap=10000;tap(20,20);
   check(label("Unable to reload list. Check SD card or try again."),"Back rebuild is gated after preview release");
   check(calls==before,"failed preview rebuild preserves active playback queue");
-  hostFreeHeap=64000;tap(20,20);check(label("Song 05"),"Back rebuild restores source scroll position");
+  hostFreeHeap=64000;tap(20,20);check(label("Song 04"),"Back rebuild restores source scroll position");
   tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable");
   std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
   classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
-  const int stopsBefore=bgStops;tap(80,242);check(bgStops>stopsBefore,"F-12 background .anim handle is released when Search opens");check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
+  const int stopsBefore=bgStops;tap(80,216);check(bgStops>stopsBefore,"F-12 background .anim handle is released when Search opens");check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
   tap(20,216);tap(100,176);tap(60,176);tap(20,136); // song
   tap(40,300);tap(200,256);check(label("0")&&label("9"),"digit keyboard page");
   tap(24,96);tap(168,96);tap(216,96);tap(120,256); // 034, backspace -> 03
@@ -422,9 +482,9 @@ int main(){try{
   tap(80,66);tft.setRotation(1);ui_redraw();pump();
   tap(150,176);check(label("q")&&label("z"),"landscape alphabet second page");snapshot("ui-search-landscape.svg");
   tft.setRotation(0);ui_redraw();pump();
-  classic_home();ui_go(SCR_CLASSIC);pump();tap(80,198);tap(80,154);check(label("Screen timeout")&&label("Sleep timer"),"Playback exposes both sleep settings");g_settings.screenTimeout=2;ui_redraw();pump();snapshot("ui-playback-sleep.svg");g_settings.screenTimeout=0;
+  classic_home();ui_go(SCR_CLASSIC);pump();tap(80,176);tap(80,154);check(label("Screen timeout")&&label("Sleep timer"),"Playback exposes both sleep settings");g_settings.screenTimeout=2;ui_redraw();pump();snapshot("ui-playback-sleep.svg");g_settings.screenTimeout=0;
   tap(80,154);check(g_settings.screenTimeout==1,"screen timeout cycles and persists setting");
-  tap(80,198);check(g_settings.sleepTimer==1,"sleep timer cycles setting");sleep_setTimer(0,clockNow);
+  tap(80,176);check(g_settings.sleepTimer==1,"sleep timer cycles setting");sleep_setTimer(0,clockNow);
   classic_home();ui_go(SCR_CLASSIC);pump();tap(80,110);playing=true;
   g_settings.screenTimeout=2;sleep_begin(clockNow);
   g_settings.sleepTimer=2;sleep_begin(clockNow);check(g_settings.sleepTimer==2&&!sleep_remainingMinutes(clockNow),"F-10 boot does not re-arm the persisted sleep timer");sleep_tick(clockNow+31*60000,false);check(playing,"F-10 no sleep at boot+31 min");g_settings.sleepTimer=0;
@@ -440,6 +500,7 @@ int main(){try{
   ui_tick(clockNow+=1500);check(!playing&&backlight==0&&volume==savedVolume&&fadeGain==100&&!sleep_remainingMinutes(clockNow),"timer pauses, restores user gain, turns screen off and disarms");
   sleep_tick(++clockNow,true);sleep_tick(++clockNow,false);sleep_tick(++clockNow,false);
   g_settings.screenTimeout=0;ui_tick(clockNow+=600000);check(backlight==100,"Off disables screen timeout");
+  compactChromeRegression();
   nowPlayingRegression();
   touchRegression();
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");

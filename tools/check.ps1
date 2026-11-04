@@ -232,6 +232,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'WAV/MP3 pool/FIR host checks failed.' }
         & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_i2s_tone.sh')
         if ($LASTEXITCODE -ne 0) { throw 'I2S test-tone host checks failed.' }
+        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_wired_fade.sh')
+        if ($LASTEXITCODE -ne 0) { throw 'Wired-route host checks failed.' }
         & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_i2s_diag.sh')
         if ($LASTEXITCODE -ne 0) { throw 'I2S diagnostic host checks failed.' }
         & python tools/media_check.py

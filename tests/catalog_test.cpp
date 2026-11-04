@@ -1,5 +1,6 @@
 #include "command_queue.h"
 #include "catalog.h"
+#include "search_fold.h"
 #include "storage.h"
 #include "playlist.h"
 #include "settings.h"
@@ -129,6 +130,31 @@ int main(){try{
    check(q.push(0x44)&&q.push(0x4b)&&q.push(0x4c)&&!q.push(0x46),"AVRCP full queue refuses without overwrite");
    check(q.pop(key)&&key==0x44&&q.push(0x46)&&q.pop(key)&&key==0x4b&&q.pop(key)&&key==0x4c&&q.pop(key)&&key==0x46&&!q.pop(key),"AVRCP FIFO wrap and empty");
    check(!cyd::currentCompletion(2,3)&&cyd::currentCompletion(3,3),"stale decoder completion cannot replace explicit command");}
+  { // CY-64: pure helper, exact byte budgets and malformed input (also under sanitizers).
+    auto folded=[](const std::string& in,size_t cap){char out[64]={};
+      const size_t n=cydsearch::fold(out,cap,in.data(),in.size());check(n<=cap,"fold budget");return std::string(out,n);};
+    check(folded(u8"\u00c0\u00c1\u00c2\u00c3\u00c4\u00c5\u00e0\u00e1\u00e2\u00e3\u00e4\u00e5",35)==std::string(12,'a'),"Latin-1 upper/lower accents");
+    check(folded(u8"\u00c6\u00e6\u0152\u0153\u00df\u00de\u00fe\u00d8\u00f8\u0141\u0142\u0110\u0111\u00d0\u00f0",35)=="aeaeoeoessththoolldddd","ligatures and stroked letters");
+    check(folded(u8"\u0100\u0101\u0106\u0107\u0112\u0113\u0130\u0131\u0143\u0144\u0160\u0161\u0178\u017f",35)=="aacceeiinnssys","Extended-A uppercase/lowercase");
+    check(folded(u8"\u0132\u0133",35)=="ijij","Extended-A IJ ligatures");
+    check(folded(std::string("beyonc\xcc\x81")+"e",31)=="beyonce"&&folded(u8"e\u0300\u036f",31)=="e","combining mark range after base");
+    check(folded(u8"\u0301",31)==u8"\u0301"&&folded(u8" \u0301",31)==u8" \u0301","unattached combining marks retained");
+    for(size_t cap:{size_t(25),size_t(31),size_t(35)}){
+      check(folded(std::string(cap-1,'x')+u8"\u00e9",cap)==std::string(cap-1,'x')+"e","accent straddles source budget and fits folded output");
+      check(folded(std::string(cap-1,'x')+u8"\u00dfZ",cap)==std::string(cap-1,'x'),"expansion stops whole");
+      check(folded(std::string(cap-2,'x')+u8"\u00dfZ",cap)==std::string(cap-2,'x')+"ss","expansion exact fit");
+      check(folded(std::string(cap-2,'x')+u8"\u4f60Z",cap)==std::string(cap-2,'x'),"CJK never cut");
+      check(folded(std::string(cap-3,'x')+u8"\U0001f600Z",cap)==std::string(cap-3,'x'),"emoji never cut");
+    }
+    for(const std::string malformed:{std::string("\xc3",1),std::string("\xe2\x82",2),std::string("\x80",1),std::string("\xc0\xaf",2),std::string("\xe0\x80\xaf",3),std::string("\xed\xa0\x80",3),std::string("\xf4\x90\x80\x80",4),std::string("\xe2x",2)}){
+      check(folded(malformed,35)==malformed,"invalid UTF-8 bytes preserved deterministically");
+      // Exact-sized non-terminated allocations expose any lookahead overread to ASan.
+      for(size_t n=1;n<=malformed.size();++n){auto bytes=new char[n];memcpy(bytes,malformed.data(),n);
+        for(size_t cap=0;cap<=n;++cap){char out[8];memset(out,0x55,sizeof(out));
+          size_t used=cydsearch::fold(out,cap,bytes,n);check(used<=cap&&out[cap]==0x55,"malformed bounded read/write");}
+        delete[] bytes;}
+    }
+  }
   SD.root=std::filesystem::current_path()/("catalog-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   put("music/A/Disc 1/z.m4a",tagged("Zebra","Artist A","Greatest Hits",1,1));
   put("music/A/Disc 2/a.m4a",tagged("alpha","Artist A","Greatest Hits",1,2));
@@ -231,6 +257,29 @@ int main(){try{
    const std::vector<int> withKeys=libraryOrder();
    hostLargestBlock=1000;check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"mixed rebuild without keys");hostLargestBlock=64000;
    check(libraryOrder()==withKeys,"mixed data: key sort equals record sort (CT-03)");}
+  // CY-64 fixtures use a separate card so existing ordering/group expectations remain intact.
+  SD.root=std::filesystem::current_path()/("catalog-fold-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  put("music/accent.m4a",tagged(u8"Beyonc\u00e9","Singer","Fold",1));
+  put("music/cjk.m4a",tagged(u8"\u4f60\u597d","CJK","Fold",2));
+  put("music/cyrillic.m4a",tagged(u8"\u041f\u0440\u0438\u0432\u0435\u0442","Cyrillic","Fold",3));
+  put("music/boundary.m4a",tagged(std::string(34,'t')+u8"\u00e9Z",std::string(24,'r')+u8"\u00e9Z","Fold",4));
+  put("music/whole.m4a",tagged(std::string(34,'w')+u8"\u4f60",std::string(24,'v')+u8"\u4f60","Fold",5));
+  put("music/decomposed.m4a",tagged(std::string("decompos")+"e\xcc\x81"+"d","Singer","Fold",6));
+  check(storage_begin(nullptr)&&storage_trackCount()==6,"accent fixture catalogue");
+  for(const char* query:{"beyonce","BEYONCE",u8"Beyonc\u00e9",u8"B\u00c9YONC\u00c9","beyonc\xcc\x81" "e"}){
+    storage_searchStart(query);finishSearch();check(storage_searchCount()==1&&storage_trackLabel(storage_searchTracks()[0])==u8"Beyonc\u00e9","all query spellings find same accented title");}
+  for(const char* query:{u8"\u4f60\u597d",u8"\u041f\u0440\u0438\u0432\u0435\u0442","decomposed","te re"}){
+    storage_searchStart(query);finishSearch();check(storage_searchCount()==1,"unsupported UTF-8, decomposed key, title/artist folded boundary");}
+  storage_searchStart("ez");finishSearch();check(storage_searchCount()==0,"35/25 output boundaries exclude trailing letter");
+  storage_searchStart(u8"\u4f60");finishSearch();check(storage_searchCount()==1,"boundary keys contain no partial unsupported codepoint");
+  storage_searchStart(u8"\u043f\u0440\u0438\u0432\u0435\u0442");finishSearch();check(storage_searchCount()==0,"unsupported script case remains exact");
+  {std::ifstream f(SD.root/".sys/search.idx",std::ios::binary);Bytes old((std::istreambuf_iterator<char>(f)),{});
+   check(old.size()==20+6*64&&!memcmp(old.data(),"CYDSRCH2",8),"new index magic and fixed key size");
+   memcpy(old.data(),"CYDSRCH1",8);put(".sys/search.idx",old); // Valid identity/body/CRC, obsolete folding only.
+   storage_searchStart("beyonce");check(storage_searchBuilding(),"old-version valid cache rejected");finishSearch();
+   check(storage_searchCount()==1,"old-version cache rebuilt and matches");
+   storage_searchStart("beyonce");check(!storage_searchBuilding(),"new cache reused after one rebuild");finishSearch();}
+  std::cout<<"PASS CY-64 folding: Latin accents/case/ligatures, combining marks, CJK/Cyrillic exact, 35/25/31 boundaries, malformed UTF-8, CYDSRCH1 rejected/rebuilt\n";
   // CT-02: 2,002 files: the extra two are skipped and counted, the library still builds. (A 256+ character path cannot be created by the MSVC host shim, so that branch is covered by reading only.)
   SD.root=std::filesystem::current_path()/("catalog-limit-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   for(int i=0;i<2002;++i){char path[64],name[32];snprintf(path,sizeof(path),"music/G%d/%04d.m4a",i/200,i);snprintf(name,sizeof(name),"L%04d",i);put(path,tagged(name,"Limit Artist","Limit Album",i%99+1));}

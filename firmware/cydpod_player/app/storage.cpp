@@ -1,6 +1,7 @@
 #include "storage.h"
 #include "catalog.h"
 #include "small_file.h"
+#include "search_fold.h"
 #ifndef CYDPOD_CATALOG_HOST
 #include "board.h"
 #include <SPI.h>
@@ -441,7 +442,6 @@ int searchCount=0;
 uint32_t searchSum=0,buildSum=0;
 bool searchBusy=false,searchBuilding=false,searchFailed=false,searchFallback=false,searchResume=false;
 void searchFail(){searchFile.close();searchBusy=searchBuilding=searchResume=false;searchFailed=true;searchCount=0;Serial.println("cmd: search failed (SD index I/O)");}
-void lowerCopy(char* out,const char* in,size_t n){for(size_t i=0;i<n;++i)out[i]=in[i]?((unsigned char)in[i]<128?char(tolower((unsigned char)in[i])):in[i]):0;}
 bool searchMatches(const char* text){
   // All space-separated query words may occur anywhere in title or artist.
   char word[32];const char* q=searchQuery;
@@ -452,11 +452,10 @@ bool searchMatches(const char* text){
 void makeSearchKey(SearchKey& key,int id){
   key={};key.id=id;
   const Record* r=recordLocked(id);if(!r){key.id=UINT16_MAX;return;}
-  // 35 title bytes + separator + 25 artist bytes. ASCII case folding matches
-  // catalogue ordering; non-ASCII UTF-8 bytes are retained without case folding.
-  const size_t titleBytes=min<size_t>(35,strlen(r->title));
-  lowerCopy(key.text,r->title,titleBytes);key.text[titleBytes]=' ';
-  lowerCopy(key.text+titleBytes+1,r->artist,min<size_t>(25,strlen(r->artist)));
+  // Whole folded codepoints within the fixed 35/25 output-byte budgets.
+  const size_t titleBytes=cydsearch::fold(key.text,35,r->title,strlen(r->title));
+  key.text[titleBytes]=' ';
+  cydsearch::fold(key.text+titleBytes+1,25,r->artist,strlen(r->artist));
 }
 }
 void storage_searchCancel(){
@@ -466,7 +465,7 @@ void storage_searchCancel(){
 }
 void storage_searchStart(const char* query){
   const bool continuingBuild=searchBuilding&&searchHeader.catalogue==storage_libraryCrc();
-  memset(searchQuery,0,sizeof(searchQuery));lowerCopy(searchQuery,query,min<size_t>(31,strlen(query)));
+  memset(searchQuery,0,sizeof(searchQuery));cydsearch::fold(searchQuery,31,query,strlen(query));
   searchAt=0;searchCount=0;searchSum=0;searchFailed=false;searchBusy=true;searchFallback=readOnly;
   if(searchResume&&!searchFallback&&searchHeader.catalogue==storage_libraryCrc()&&searchHeader.count==storage_trackCount()){
     File r=openSmallFile(SEARCH,"r+");
@@ -479,7 +478,7 @@ void storage_searchStart(const char* query){
   if(searchFallback)return; // read-only cards stream the authoritative catalogue
   File f=openSmallFile(SEARCH);
   SearchHeader h{};
-  const bool valid=f&&readAt(f,0,&h,sizeof(h))&&!memcmp(h.magic,"CYDSRCH1",8)&&
+  const bool valid=f&&readAt(f,0,&h,sizeof(h))&&!memcmp(h.magic,"CYDSRCH2",8)&&
     h.catalogue==storage_libraryCrc()&&h.count==storage_trackCount()&&h.keyBytes==sizeof(SearchKey)&&
     f.size()==sizeof(h)+uint32_t(h.count)*sizeof(SearchKey);
   if(valid){searchHeader=h;searchFile=f;return;}
@@ -501,7 +500,7 @@ void storage_searchTick(){
     if(!searchFile||searchFile.write((uint8_t*)searchChunk,n*sizeof(SearchKey))!=n*sizeof(SearchKey)){searchFail();return;}
     buildSum=crc(buildSum,searchChunk,n*sizeof(SearchKey));searchBuilt+=n;
     if(searchBuilt==searchHeader.count){
-      memcpy(searchHeader.magic,"CYDSRCH1",8);searchHeader.checksum=buildSum;
+      memcpy(searchHeader.magic,"CYDSRCH2",8);searchHeader.checksum=buildSum;
       searchFile.close();File f=openSmallFile(SEARCH,"r+");
       if(!f||!f.seek(0)||f.write((uint8_t*)&searchHeader,sizeof(searchHeader))!=sizeof(searchHeader)){f.close();searchFail();return;}
       f.close();searchBuilding=searchResume=false;

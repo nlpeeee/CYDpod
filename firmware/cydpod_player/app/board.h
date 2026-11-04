@@ -92,6 +92,12 @@
   #define CYD_SW1_PIN -1
   #define CYD_SW1_ACTIVE_LEVEL -1
   #define CYD_SW1_RTC_CAPABLE -1
+  // Wired I2S output (CY-69/CY-70), all three on connector P6 (silkscreen top to
+  // bottom: GND, IO16, IO4, IO17). These are also the RGB LED channels (active
+  // low), so the LED may glow faintly while I2S runs. None is a strapping pin.
+  #define CYD_I2S_BCK_PIN 16
+  #define CYD_I2S_DOUT_PIN 4
+  #define CYD_I2S_WS_PIN 17
 #elif CYD_BOARD == CYD_BOARD_2432S028R_ST7789
 
   #define CYD_BOARD_NAME "ESP32-2432S028R (2.8\", micro-USB + USB-C, ST7789)"
@@ -151,6 +157,13 @@
 
 #else
   #error "Unknown CYD_BOARD -- set it to CYD_BOARD_2432S028R_ST7789, CYD_BOARD_2432S028R or CYD_BOARD_2432S024R"
+#endif
+
+// Wired I2S output pins: only the JC2432W328C routes them (-1 = not available).
+#ifndef CYD_I2S_BCK_PIN
+#define CYD_I2S_BCK_PIN -1
+#define CYD_I2S_DOUT_PIN -1
+#define CYD_I2S_WS_PIN -1
 #endif
 
 // ---------------------------------------------------------------------------

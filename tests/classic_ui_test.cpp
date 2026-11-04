@@ -21,6 +21,7 @@
 #include <thread>
 #include <functional>
 #include "touch_gesture.h"
+#include "classic_layout.h"
 TFT_eSPI tft;
 Settings g_settings;
 static int current=0,calls=0,volume=32,queueLength=0;
@@ -34,7 +35,8 @@ static const uint16_t* queueData=nullptr;
 static int tx=0,ty=0;
 static int nextCalls=0,prevCalls=0,toggleCalls=0,shuffleCalls=0,recalCount=0;
 static cydtouch::PressTracker tracker;static bool useTracker=false;
-void settings_save(){}
+static int settingsSaves=0,volumeCalls=0;
+void settings_save(){++settingsSaves;}
 bool audio_ready(){return true;}
 uint32_t audio_error(char*,size_t,int*){return 0;}
 void audio_setQueue(const uint16_t* p,int n,int,bool){queueData=p;queueLength=n;++calls;}
@@ -44,7 +46,7 @@ bool audio_isPlaying(){return playing;}
 void audio_next(){++nextCalls;int pos=0;for(int i=0;i<queueLength;++i)if(queueData[i]==current)pos=i;audio_playTrack(queueData[(pos+1)%queueLength]);}
 void audio_prev(){++prevCalls;audio_playTrack(current);}
 void audio_togglePause(){++toggleCalls;playing=!playing;}
-void audio_setVolume(uint8_t n){volume=n;}
+void audio_setVolume(uint8_t n){volume=n;++volumeCalls;}
 uint8_t audio_volume(){return uint8_t(volume);}
 void audio_setShuffle(bool on){shuffle=on;++shuffleCalls;}
 bool audio_shuffle(){return shuffle;}
@@ -156,7 +158,7 @@ static void touchRegression(){
   int cases=0;
   // Every recognised press takes effect exactly once, whatever its length or the poll rate.
   struct Button{const char* name;int x,y;int* counter;};
-  const Button buttons[]={{"Play",120,246,&toggleCalls},{"Next",200,246,&nextCalls},{"Previous",40,246,&prevCalls}};
+  const Button buttons[]={{"Play",120,246,&toggleCalls},{"Next",182,246,&nextCalls},{"Previous",40,246,&prevCalls}};
   for(const Button& b:buttons)for(uint32_t d:durations)for(uint32_t p:periods)for(uint32_t phase:{0u,7u}){
     if(phase>=d)continue;
     toPlayer();const int before=*b.counter,recals=recalCount;
@@ -242,6 +244,49 @@ static void touchRegression(){
   g_settings.screenTimeout=0;ui_tick(clockNow+=1000);
   std::cout<<"PASS CY-62 wake swallow unchanged under the real classifier\n";
 }
+int classic_volumeSaveArms();uint32_t classic_volumeSaveAt();int classic_target(int,int);uint32_t classic_seekPreviewMs();
+static void nowPlayingRegression(){
+  namespace L=cydclassic::layout;
+  for(unsigned rotation:{0u,1u,3u}){
+    tft.setRotation(rotation);toPlayer();
+    const int w=tft.width(),h=tft.height();
+    const Rect track=L::playerVolumeTrack<Rect>(w,h),hit=L::playerVolume<Rect>(w,h),seek=L::seek<Rect>(w,h),bar=L::progress<Rect>(w,h);
+    check(hit.h>=40&&seek.h==40&&bar.h==8,"40 px seek and volume targets, 8 px track");
+    check(L::favourite<Rect>(w).w>=40&&L::favourite<Rect>(w).h>=40,"favourite target at least 40 px");
+    for(Rect r:{hit,seek,bar,L::output<Rect>(w,h),L::transport<Rect>(w,h,0),L::transport<Rect>(w,h,1),L::transport<Rect>(w,h,2)})check(r.x>=0&&r.y>=0&&r.x+r.w<=w&&r.y+r.h<=h,"Player rectangles fit each orientation");
+    if(w==320){const Rect prev=L::transport<Rect>(w,h,0),play=L::transport<Rect>(w,h,1),next=L::transport<Rect>(w,h,2),chip=L::outputFace<Rect>(w,h);
+      check(prev.x==56&&prev.y==148&&prev.w==70&&prev.h==48&&play.x==130&&play.y==146&&play.w==80&&play.h==52&&next.x==214,"transport matches proposal A SVG");
+      check(track.x==44&&track.y==216&&track.w==150&&chip.x==238&&chip.y==205&&chip.w==76&&chip.h==30,"bottom row matches proposal A SVG");
+      check(bar.x==14&&bar.y==118&&bar.w==292,"seek track matches proposal A SVG");
+    }
+    check(classic_target(hit.x,hit.y)==-25&&classic_target(hit.x+hit.w-1,hit.y+hit.h-1)==-25,"volume hit target includes outer edges");
+    check(classic_target(-1,hit.cy())==-1&&classic_target(w,hit.cy())==-1&&classic_target(track.x,h)==-1,"outside screen never hits volume");
+    check(classic_target(seek.x,seek.y)==-28&&classic_target(seek.x+seek.w-1,seek.y+seek.h-1)==-28,"seek hit zone includes outer edges");
+    check(classic_target(seek.x-1,seek.cy())==-1&&classic_target(seek.x+seek.w,seek.cy())==-1,"outside seek hit zone stays inactive");
+    const int arms=classic_volumeSaveArms(),saves=settingsSaves,callsBefore=volumeCalls;
+    tx=track.x;ty=track.cy();down=true;ui_tick(clockNow+=130);
+    check(volume==0&&volumeCalls==callsBefore+1,"volume sets minimum in one touch-down event");
+    int last=volume;for(int x=track.x+1;x<=track.x+track.w;++x){tx=x;ui_tick(clockNow+=10);check(volume>=last,"volume drag monotonic");last=volume;}
+    check(volume==100&&classic_volumeSaveArms()==arms&&settingsSaves==saves,"live drag reaches max with no save arm or write per step");
+    down=false;ui_touch(TOUCH_TAP,tx,ty);check(classic_volumeSaveArms()==arms+1,"volume save arms once at drag end");SCREEN_CLASSIC.tick(classic_volumeSaveAt()-1);check(settingsSaves==saves,"save remains deferred before deadline");SCREEN_CLASSIC.tick(classic_volumeSaveAt());check(settingsSaves==saves+1,"one deferred settings save after release");pump();
+    audio_setVolume(65);tft.labels.clear();ui_tick(clockNow+=260);check(label("65"),"AVRCP shared audio volume repaints slider and numeric value");
+    tap(track.x+track.w,track.cy());check(volume==100,"slider can raise shared AVRCP volume");
+    int seeks=seekCalls;tx=bar.x;ty=bar.cy();down=true;ui_tick(clockNow+=130);check(classic_seekPreviewMs()==0&&seekCalls==seeks,"seek down previews zero without committing");
+    uint32_t lastTime=0;for(int x=bar.x+1;x<=bar.x+bar.w;++x){tx=x;ui_tick(clockNow+=10);check(classic_seekPreviewMs()>=lastTime,"seek drag monotonic");lastTime=classic_seekPreviewMs();}
+    check(lastTime==239999&&label("3:59"),"seek end clamp and preview time update while dragging");
+    down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(seekCalls==seeks+1&&lastSeek==239999,"seek commits once through existing seek path");
+    // The final up may arrive without a move; near slop accepts 7 px, 9 px rejects.
+    for(int slop:{7,9}){seeks=seekCalls;SCREEN_CLASSIC.press(PRESS_DOWN,bar.x,bar.cy());SCREEN_CLASSIC.press(PRESS_UP,bar.x,seek.y+seek.h-1+slop);check(seekCalls==seeks+(slop==7),"seek tolerant release boundary");}
+    const Rect f=L::favourite<Rect>(w);bool favourite=playlist_isFavourite(current);tap(f.cx(),18);check(playlist_isFavourite(current)!=favourite,"favourite star toggles");tap(f.cx(),18);
+    const Rect sh=L::playerToggle<Rect>(w,h,false),rep=L::playerToggle<Rect>(w,h,true);bool wasShuffle=shuffle;tap(sh.cx(),sh.cy());check(shuffle!=wasShuffle,"shuffle toggle");const int repeat=repeatMode;tap(rep.cx(),rep.cy());check(repeatMode==(repeat+1)%REPEAT_MODE_COUNT,"repeat toggle");
+    const Rect play=L::transport<Rect>(w,h,1);const int toggles=toggleCalls;tx=play.cx();ty=play.cy();down=true;ui_tick(clockNow+=130);check(toggleCalls==toggles+1,"transport fires once on down");down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(toggleCalls==toggles+1,"transport release does nothing");
+    const Rect output=L::output<Rect>(w,h);tap(output.cx(),output.cy());check(label("Audio Output"),"output chip opens Output page");
+    tap(20,20);const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
+    ui_redraw();pump();snapshot(rotation==0?"cy61-player-portrait.svg":rotation==1?"cy61-player-landscape.svg":"cy61-player-landscape3.svg");
+  }
+  tft.setRotation(0);home();
+  std::cout<<"CY61_NOWPLAYING_OK: rotations 0/1/3, SVG geometry, slider/seek edges and monotonic drag, live shared volume, one deferred save, down-only transport, favourite, shuffle, repeat, Output and Options\n";
+}
 std::string classic_geometry();std::string classic_dialog_geometry();
 static void geometryGolden(){
   const auto dialog=classic_dialog_geometry();if(std::getenv("CYDPOD_REGENERATE_LAYOUT"))std::ofstream("../golden/classic_dialog.txt")<<dialog;
@@ -249,8 +294,8 @@ static void geometryGolden(){
   const auto actual=classic_geometry();std::ofstream("classic_layout.actual.txt")<<actual;
   if(std::getenv("CYDPOD_REGENERATE_LAYOUT")){std::ofstream("../golden/classic_layout.txt")<<actual;}
   std::ifstream f("../golden/classic_layout.txt");std::string expected((std::istreambuf_iterator<char>(f)),{});
-  check(actual==expected,"Classic geometry differs from before-refactor golden table");
-  std::cout<<"CLASSIC_GEOMETRY_IDENTICAL: 17 modes x 4 variants x rotations 0/1/3, 240x320 and 320x240\n";
+  check(actual==expected,"Classic geometry differs from approved golden table");
+  std::cout<<"CLASSIC_GEOMETRY_GOLDEN: 17 modes x 4 variants x rotations 0/1/3, 240x320 and 320x240\n";
 }
 int main(){try{
   geometryGolden();
@@ -269,9 +314,9 @@ int main(){try{
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");
   int before=calls;tx=80;ty=180;down=true;ui_tick(clockNow+=130);ty=60;ui_tick(clockNow+=5000);
   check(ui_pressClaimed(),"long drag claims recalibration hold");down=false;ui_touch(TOUCH_RECALIBRATE,80,198);pump();check(calls==before,"drag does not play");
-  tap(80,66);check(label("Now Playing")&&playing,"select track");
+  tap(80,66);check(label("Song 02")&&playing,"select track");
   tap(120,246);check(!playing,"pause transport hit target");tap(120,246);check(playing,"play transport hit target");
-  int was=current;tap(200,246);check(current!=was,"next transport hit target");tap(40,246);check(playing,"previous transport hit target");snapshot("ui-player.svg");
+  int was=current;tap(182,246);check(current!=was,"next transport hit target");tap(40,246);check(playing,"previous transport hit target");snapshot("ui-player.svg");
   int seeks=seekCalls;tap(120,190);check(seekCalls==seeks+1&&lastSeek>119000&&lastSeek<121000,"progress tap seeks halfway");
   seeks=seekCalls;tx=20;ty=190;down=true;ui_tick(clockNow+=130);tx=200;ui_tick(clockNow+=130);
   check(ui_pressClaimed()&&seekCalls==seeks,"seek drag claims hold and defers commit");
@@ -281,14 +326,14 @@ int main(){try{
   seeks=seekCalls;tx=50;ty=190;down=true;ui_tick(clockNow+=130);++serial;down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(seekCalls==seeks,"track change cancels drag");
   seekAllowed=false;tap(120,190);check(seekCalls==seeks,"unknown duration disables seek");tap(120,190);seekAllowed=true;
   // Transport acts once on touch-down; holding is not a jog and never repeats the command.
-  seeks=seekCalls;was=current;tx=200;ty=246;down=true;ui_tick(clockNow+=130);check(current!=was&&seekCalls==seeks,"Next acts on touch-down");
+  seeks=seekCalls;was=current;tx=182;ty=246;down=true;ui_tick(clockNow+=130);check(current!=was&&seekCalls==seeks,"Next acts on touch-down");
   was=current;std::this_thread::sleep_for(std::chrono::milliseconds(620));ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();
   check(current==was&&relativeSeek==0&&seekCalls==seeks,"holding Next does not jog or advance again");
   tft.setRotation(1);ui_redraw();pump();tap(160,110);check(lastSeek>119000&&lastSeek<121000,"landscape progress geometry");
-  tap(12,110);check(lastSeek==0,"progress start clamp");tap(308,110);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
+  tap(12,110);check(lastSeek==0,"progress start clamp");tap(306,110);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
   std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, Next on touch-down and recalibration claim\n";
-  tap(30,300);check(label("Volume"),"footer volume action");tap(180,212);check(volume==37,"volume step");snapshot("ui-volume.svg");
-  tap(20,20);check(label("Now Playing"),"back from volume");tap(20,20);check(label("Song 02"),"restore scrolled browse position");
+  tap(70,300);check(volume>30&&volume<40,"Player volume slider action");snapshot("ui-player-volume.svg");
+  tap(20,20);check(label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");
   tap(30,300);tap(80,198);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
@@ -321,7 +366,7 @@ int main(){try{
   check(btCalls==0,"off Bluetooth page Pair new, rows, ticks and presses never call bt_*");
   tft.setRotation(0);ui_go(SCR_BLUETOOTH);pump();
   check(label("Bluetooth is off (output: Headphones)"),"off status is complete in portrait too");
-  tft.setRotation(0);tap(20,20);pump();tap(120,246);tap(200,246);tap(40,246);pump();
+  tft.setRotation(0);tap(20,20);pump();tap(120,246);tap(182,246);tap(40,246);pump();
   check(btCalls==0,"Headphones header, connected state, transport and sleep have zero bt_* calls");
   // Legacy screens are still reachable through saved skins/advanced settings.
   SCREEN_SETUP.enter();SCREEN_SETUP.tick(clockNow+=2500);
@@ -365,7 +410,7 @@ int main(){try{
   tap(200,300);check(label("Song 03")&&storage_searchCount()==1,"filtered result list");snapshot("ui-search-results.svg");
   tap(80,110);check(playing&&storage_trackLabel(current)=="Song 03"&&calls>before,"result commits playable queue");
   // Existing 52 px transport and 44 px seek targets include the outer edges.
-  tap(120,222);check(!playing,"large play target upper edge");tap(120,270);check(playing,"large play target lower edge");
+  tap(120,226);check(!playing,"large play target upper edge");tap(120,276);check(playing,"large play target lower edge");
   tx=100;ty=246;down=true;ui_tick(clockNow+=130);tx=130;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(!playing,"sliding inside Play executes instead of silently cancelling");
   tap(20,20);tap(80,66);tap(120,300);tap(100,256);tap(200,256); // edit, Clear, Delete on empty, ABC
   tap(60,256);tap(60,256); // z,z
@@ -391,6 +436,7 @@ int main(){try{
   ui_tick(clockNow+=1500);check(!playing&&backlight==0&&volume==savedVolume&&fadeGain==100&&!sleep_remainingMinutes(clockNow),"timer pauses, restores user gain, turns screen off and disarms");
   sleep_tick(++clockNow,true);sleep_tick(++clockNow,false);sleep_tick(++clockNow,false);
   g_settings.screenTimeout=0;ui_tick(clockNow+=600000);check(backlight==100,"Off disables screen timeout");
+  nowPlayingRegression();
   touchRegression();
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";

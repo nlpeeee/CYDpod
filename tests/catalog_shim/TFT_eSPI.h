@@ -49,5 +49,6 @@ class TFT_eSPI {
   void drawString(const String& s,int x,int y,unsigned f=2){int width=textWidth(s,f),height=fontHeight(f);int left=x-(datum%3==1?width/2:datum%3==2?width:0),top=y-(datum/3==1?height/2:datum/3==2?height:0);
     fillRect(left,top,width,height,bg);labels.push_back(s.c_str());svg<<"<text x='"<<left<<"' y='"<<top+height-3<<"' font-family='Arial,sans-serif' font-size='"<<(f==1?9:16)<<"' fill='"<<color(fg)<<"'>"<<escape(s.c_str())<<"</text>";
   }
+  void classicText(const char* text,int x,int y,int height,uint16_t fg,uint16_t){labels.push_back(text);svg<<"<text x='"<<x<<"' y='"<<y+height/2-3<<"' font-family='Arial,sans-serif' font-size='"<<height<<"' fill='"<<color(fg)<<"'>"<<escape(text)<<"</text>";}
   void println(const char* s){drawString(String(s),cursorX,cursorY,font);cursorY+=fontHeight(font);}
 };

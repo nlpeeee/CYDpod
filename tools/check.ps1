@@ -115,7 +115,7 @@ try {
         # CY-71: the same player forced onto the wired I2S route at every boot (board.h CYD_DEFAULT_OUT_ROUTE, 2 = OUT_WIRED),
         # for testing before the Settings row exists. The saved route in NVS is not overwritten.
         $jobs += @{ Name = 'cydpod-player-wired'; Sketch = $jobs[0].Sketch; Flags = ($jobs[0].Flags + ' -DCYD_DEFAULT_OUT_ROUTE=2'); Library = $jobs[0].Library
-            ImageName = 'codec-pool-v11-wired-jc2432w328c' }
+            ImageName = 'codec-pool-v12-wired-jc2432w328c' }
         # CY-70: standalone I2S test tone (no TFT, SD, touch or Bluetooth). The second image is the
         # 32-bit-slot fallback (BCK = 64 x fS) in case the PCM5100A PLL does not lock at 32 x fS.
         $jobs += @{ Name = 'i2s-tone'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-tone-jc2432w328c' }
@@ -125,7 +125,7 @@ try {
     $results = @()
     foreach ($job in $jobs) {
         $imageName = $job.Name
-        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v11-jc2432w328c' }
+        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v12-jc2432w328c' }
         if ($job.ImageName) { $imageName = $job.ImageName }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.

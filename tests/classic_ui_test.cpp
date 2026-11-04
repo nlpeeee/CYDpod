@@ -286,7 +286,9 @@ static void nowPlayingRegression(){
     tap(20,20);const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
     ui_redraw();pump();snapshot(rotation==0?"cy61-player-portrait.svg":rotation==1?"cy61-player-landscape.svg":"cy61-player-landscape3.svg");
   }
-  tft.setRotation(0);home();
+  tft.setRotation(0);home();tap(80,198);tap(200,300); // Settings -> footer Playing
+  ui_redraw();pump();check(label("Settings"),"Player Back label names a Settings parent, not Home");
+  tap(20,18);check(label("Audio Output"),"Back returns to the named Settings parent");home();
   std::cout<<"CY61_NOWPLAYING_OK: rotations 0/1/3, SVG geometry, slider/seek edges and monotonic drag, live shared volume, one deferred save, down-only transport, favourite, shuffle, repeat, Output and Options\n";
 }
 std::string classic_geometry();std::string classic_dialog_geometry();

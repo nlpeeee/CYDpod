@@ -78,9 +78,9 @@ void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_s
 void freePreview(){free(preview);preview=nullptr;previewCount=0;}
 void text(const char* s,const Rect& r,uint16_t fg,uint16_t bg,TypeRole role=TYPE_BODY){ui_text(String(s),r.x+L::TextMargin,r.cy(),ML_DATUM,fg,bg,r.w-2*L::TextMargin,role);}
 void centred(const String& s,int y,uint16_t fg,uint16_t bg,int width=0){ui_text(s,tft.width()/2,y,MC_DATUM,fg,bg,width?width:tft.width()-2*L::TextMargin);}
-const char* title(){
-  if(page().title[0])return page().title;
-  switch(page().mode){
+const char* pageTitle(const Page& value){
+  if(value.title[0])return value.title;
+  switch(value.mode){
     case Mode::Home:return "CYDpod";case Mode::Music:return "Music";case Mode::Player:return "Now Playing";
     case Mode::Search:return "Search Results";case Mode::Keyboard:return "Search Songs";
     case Mode::Settings:return "Settings";case Mode::Playback:return "Playback";case Mode::Display:return "Display";
@@ -89,6 +89,7 @@ const char* title(){
     default:return "Music";
   }
 }
+const char* title(){return pageTitle(page());}
 // Pixel-height text reuses the pinned TFT font bitmap at 22/14/12 px.
 // Non-ASCII retains the existing UTF-8 strip path, with its native strip height.
 int playerGlyphWidth(unsigned char c,int height){
@@ -124,7 +125,7 @@ void playerHeader(){
   if(playerPressed==Back)tft.fillRect(0,0,L::PlayerBackW,L::PlayerHeaderH,p.pressed);
   ui_icon(ICON_BACK,L::PlayerBackX,L::PlayerHeaderY,L::PlayerHeaderIcon,p.text,p.band);
   const Page& parent=navigation.entries[navigation.depth>1?navigation.depth-2:0];
-  const char* name=parent.title[0]?parent.title:parent.mode==Mode::Music?"Music":parent.mode==Mode::Search?"Search":"Home";
+  const char* name=parent.mode==Mode::Home?"Home":pageTitle(parent);
   ui_text(String(name),L::PlayerParentX,L::PlayerHeaderY,ML_DATUM,p.text,p.band,L::PlayerBackW-L::PlayerParentX,TYPE_CAPTION);
   const int pos=audio_queuePos(audio_currentTrack());
   const String position=String(pos<0?0:pos+1)+" / "+String(audio_queueLen());const bool portrait=tft.height()>=L::PortraitMinH;
@@ -307,10 +308,11 @@ void playerBar(const Rect& r,int value,int maximum){
   tft.fillCircle(r.x+px,r.cy(),L::KnobR,p.bg);tft.fillCircle(r.x+px,r.cy(),L::KnobR-L::KnobBorder,p.bar);
 }
 void playerVolume(){
-  const Rect r=L::playerVolumeTrack<Rect>(tft.width(),tft.height());playerBar(r,audio_volume(),100);
+  const int level=audio_volume();
+  const Rect r=L::playerVolumeTrack<Rect>(tft.width(),tft.height());playerBar(r,level,100);
   tft.fillRect(r.x+r.w+L::PlayerNumberGap,r.cy()-L::PlayerArtistH/2,L::PlayerNumberW,L::PlayerArtistH,theme().bg);
-  playerText(String(audio_volume()).c_str(),r.x+r.w+L::PlayerNumberGap,r.cy(),L::PlayerAlbumH,L::PlayerNumberW,theme().dim,theme().bg,false);
-  shownVolume=audio_volume();
+  playerText(String(level).c_str(),r.x+r.w+L::PlayerNumberGap,r.cy(),L::PlayerAlbumH,L::PlayerNumberW,theme().dim,theme().bg,false);
+  shownVolume=level;
 }
 void playerOutput(){
   const Palette& p=theme();const Rect r=L::outputFace<Rect>(tft.width(),tft.height());

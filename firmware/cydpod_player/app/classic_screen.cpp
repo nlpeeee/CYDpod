@@ -100,6 +100,7 @@ int playerGlyphWidth(unsigned char c,int height){
 }
 void playerText(const char* value,int x,int y,int height,int width,uint16_t fg,uint16_t bg,bool centre=true){
   for(const unsigned char* c=(const unsigned char*)value;*c;++c)if(*c>L::FontLast){ui_text(String(value),x,y,centre?MC_DATUM:ML_DATUM,fg,bg,width);return;}
+  titles_release(); // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip.
   char label[128];cydlib::copyText(label,value);int used=0,n=0;
   for(;label[n];++n){if((unsigned char)label[n]<L::FontFirst)label[n]=' ';used+=playerGlyphWidth(label[n],height);}
   if(used>width){const int dots=3*playerGlyphWidth('.',height);while(n&&used+dots>width)used-=playerGlyphWidth(label[--n],height);memcpy(label+n,"...",4);used+=dots;}

@@ -4,6 +4,12 @@
 #include "settings.h"
 #include "theme.h"
 #include "ui.h"
+#if CYD_TOUCH_CAPACITIVE
+bool calibrate_run() {
+  Serial.println("calibrate: CST820 needs no calibration");
+  return true;
+}
+#else
 #include <math.h>
 
 static const int TARGET_INSET   = 25;
@@ -172,3 +178,5 @@ bool calibrate_run() {
   display_setRotation(g_settings.rotation);
   return accepted;
 }
+
+#endif // CYD_TOUCH_CAPACITIVE

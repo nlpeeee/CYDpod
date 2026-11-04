@@ -1,6 +1,7 @@
 #include "touch.h"
 #include "board.h"
 #include "display.h"
+#if !CYD_TOUCH_CAPACITIVE
 #include <Preferences.h>
 
 static Preferences prefs;
@@ -153,3 +154,5 @@ bool touch_hasStoredCalibration() {
   prefs.end();
   return ok;
 }
+
+#endif // !CYD_TOUCH_CAPACITIVE

@@ -307,6 +307,7 @@ static void compactChromeRegression(){
   namespace L=cydclassic::layout;
   for(unsigned rotation:{0u,1u,2u,3u}){
     tft.setRotation(rotation);const int w=tft.width(),h=tft.height();
+    check(L::RowTitleY-TITLE_STRIP_H/2>=0&&L::RowTitleY+TITLE_STRIP_H/2<=L::RowDetailY-TITLE_STRIP_H/2&&L::RowDetailY+TITLE_STRIP_H/2<L::RowH,"native UTF-8 title/detail strips fit without overlap or touching the row rule");
     check(L::HeaderH==36&&L::RowH==40&&L::rows(h)==(w==320?4:6),"compact header, four landscape / six portrait rows");
     const int right=w-L::HeaderTitleRight;
     check(L::HeaderParentX+(L::BackW-L::HeaderParentX)<=L::BackW&&right<=w-L::RouteInset-L::RouteSize/2,"parent, title and route have disjoint bounds");

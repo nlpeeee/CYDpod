@@ -8,7 +8,7 @@ constexpr int RouteInset=20,RouteSize=24;
 constexpr inline int rows(int h){return (h-HeaderH-FooterH)/RowH<MaxRows?(h-HeaderH-FooterH)/RowH:MaxRows;}
 constexpr inline int footerY(int h){return h-FooterH;}
 // Browse pages: row width reserves 8 px; the painted strip is only 7 px wide.
-constexpr int RowTitleY=12,RowDetailY=29,RowTextInset=34,RowIconInset=12,RowIconSize=12;
+constexpr int RowTitleY=12,RowDetailY=30,RowTextInset=34,RowIconInset=12,RowIconSize=12;
 constexpr int RowInset=8,StripW=7,ThumbMin=12,ThumbInset=2,ThumbW=3;
 template<class R> constexpr inline R row(int w,int i){return {0,HeaderH+i*RowH,w-RowInset,RowH};}
 template<class R> constexpr inline R strip(int w,int h){return {w-StripW,HeaderH,StripW,rows(h)*RowH};}

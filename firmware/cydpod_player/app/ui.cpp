@@ -739,3 +739,12 @@ void ui_touch(TouchEvent ev, int x, int y) {
 }
 
 #endif  // !CYD_UPLOADER
+
+#ifdef CYDPOD_CATALOG_HOST
+#include <sstream>
+std::string classic_dialog_geometry(){
+  std::ostringstream out;
+  for(unsigned rotation:{0u,1u,3u}){tft.setRotation(rotation);ui_confirm(T_RESTART,T_COUNT,T_COUNT,T_RESTART,nullptr);out<<"dialog rotation="<<rotation<<" cancel="<<cancelRect.x<<','<<cancelRect.y<<','<<cancelRect.w<<','<<cancelRect.h<<" ok="<<okRect.x<<','<<okRect.y<<','<<okRect.w<<','<<okRect.h<<'\n';}
+  overlay=OV_NONE;tft.setRotation(0);return out.str();
+}
+#endif

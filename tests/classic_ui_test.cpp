@@ -242,8 +242,10 @@ static void touchRegression(){
   g_settings.screenTimeout=0;ui_tick(clockNow+=1000);
   std::cout<<"PASS CY-62 wake swallow unchanged under the real classifier\n";
 }
-std::string classic_geometry();
+std::string classic_geometry();std::string classic_dialog_geometry();
 static void geometryGolden(){
+  const auto dialog=classic_dialog_geometry();if(std::getenv("CYDPOD_REGENERATE_LAYOUT"))std::ofstream("../golden/classic_dialog.txt")<<dialog;
+  std::ifstream d("../golden/classic_dialog.txt");check(dialog==std::string((std::istreambuf_iterator<char>(d)),{}),"Confirmation dialog geometry differs");
   const auto actual=classic_geometry();std::ofstream("classic_layout.actual.txt")<<actual;
   if(std::getenv("CYDPOD_REGENERATE_LAYOUT")){std::ofstream("../golden/classic_layout.txt")<<actual;}
   std::ifstream f("../golden/classic_layout.txt");std::string expected((std::istreambuf_iterator<char>(f)),{});

@@ -546,4 +546,38 @@ void classic_home(){flushSettings();freePreview();externalReturn=false;navigatio
 void classic_preparePlayer(){if(externalReturn){externalReturn=false;return;}if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}}
 void classic_prepareLibrary(){classic_home();Page p{};p.mode=Mode::Music;navigation.push(p);}
 const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};
+#ifdef CYDPOD_CATALOG_HOST
+// Exercise the original private geometry/hit test, without adding firmware state.
+#include <sstream>
+std::string classic_geometry(){
+  std::ostringstream out;
+  auto rect=[&](Rect r){out<<r.x<<','<<r.y<<','<<r.w<<','<<r.h<<';';};
+  for(unsigned rotation:{0u,1u,3u}){
+    tft.setRotation(rotation);out<<"rotation="<<rotation<<" size="<<tft.width()<<'x'<<tft.height()<<" rows="<<rows()<<" rects=";
+    for(int i=0;i<rows();++i)rect(rowRect(i));
+    for(int a:{Home,Up,Down,Now})rect(footerRect(a));
+    for(int a:{Prev,Play,Next})rect(transportRect(a));rect(sliderRect());
+    rect({8,tft.height()-148,tft.width()-16,44});rect({tft.width()-7,44,7,rows()*44});rect({8,190,96,52});rect({tft.width()-104,190,96,52});rect({0,44,tft.width(),32});out<<'\n';
+    for(int m=0;m<=int(Mode::Keyboard);++m){
+      out<<"mode="<<m;
+      for(int variant=0;variant<4;++variant){
+        navigation.home();navigation.depth=variant==0?1:2;page().mode=Mode(m);
+        count=variant==0?0:variant==1?1:7;page().top=variant==3?2:0;
+        digitKeys=variant==2;lettersSecond=variant==3;
+        out<<" v="<<variant;
+        if(page().mode==Mode::Keyboard){out<<" keys=";for(int i=0;keyLetters()[i];++i)rect(keyRect(i));rect(keyBackRect());rect(keyDigitsRect());}
+        // Lossless run-length table: each y band contains x-end:target runs.
+        std::string previous;int start=0;
+        for(int y=0;y<=tft.height();++y){
+          std::ostringstream line;
+          if(y<tft.height()){int target=targetAt(0,y);for(int x=1;x<=tft.width();++x){const int next=x==tft.width()?target-1:targetAt(x,y);if(next!=target){line<<x<<':'<<target<<',';target=next;}}}
+          const auto current=line.str();if(y&&current!=previous){out<<" ["<<start<<'-'<<y<<' '<<previous<<']';start=y;}previous=current;
+        }
+      }out<<'\n';
+    }
+  }
+  navigation.home();digitKeys=lettersSecond=false;count=0;tft.setRotation(0);return out.str();
+}
+#endif
+
 #endif

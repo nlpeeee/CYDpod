@@ -242,7 +242,16 @@ static void touchRegression(){
   g_settings.screenTimeout=0;ui_tick(clockNow+=1000);
   std::cout<<"PASS CY-62 wake swallow unchanged under the real classifier\n";
 }
+std::string classic_geometry();
+static void geometryGolden(){
+  const auto actual=classic_geometry();std::ofstream("classic_layout.actual.txt")<<actual;
+  if(std::getenv("CYDPOD_REGENERATE_LAYOUT")){std::ofstream("../golden/classic_layout.txt")<<actual;}
+  std::ifstream f("../golden/classic_layout.txt");std::string expected((std::istreambuf_iterator<char>(f)),{});
+  check(actual==expected,"Classic geometry differs from before-refactor golden table");
+  std::cout<<"CLASSIC_GEOMETRY_IDENTICAL: 17 modes x 4 variants x rotations 0/1/3, 240x320 and 320x240\n";
+}
 int main(){try{
+  geometryGolden();
   g_settings.screenTimeout=0;g_settings.theme=8;g_settings.style=7;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
   SD.root=std::filesystem::current_path()/("ui-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::create_directories(SD.root/"music/Example");

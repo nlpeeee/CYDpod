@@ -97,6 +97,7 @@ uint32_t touch_heldMs() { return tracker.heldMs(millis()); }
 uint32_t touch_lastSeenMs() { return tracker.lastSeenMs(); }
 void touch_position(int& x, int& y) { tracker.landing(x, y); }
 void touch_livePosition(int& x, int& y) { tracker.live(x, y); }
+bool touch_rawPosition(int& x, int& y) { tracker.raw(x, y); return tracker.down(); }
 void touch_nativePoint(long rx, long ry, int& px, int& py) { px = int(rx); py = int(ry); }
 void touch_screenPoint(long rx, long ry, int& sx, int& sy) {
   cst820::screenPoint(int(rx), int(ry), tft.getRotation(), sx, sy);

@@ -2,6 +2,7 @@
 #include "sleep_mode.h"
 #include "display.h"
 #include "classic_screen.h"
+#include "scroll_cmd.h"
 #include "settings.h"
 #include "catalog.h"
 #include "playlist.h"
@@ -116,6 +117,7 @@ bool touch_isDown(){return useTracker?tracker.down():down;}
 uint32_t touch_lastSeenMs(){return useTracker?tracker.lastSeenMs():clockNow;}
 void touch_position(int& x,int& y){if(useTracker)tracker.landing(x,y);else{x=tx;y=ty;}}
 void touch_livePosition(int& x,int& y){if(useTracker)tracker.live(x,y);else{x=tx;y=ty;}}
+bool touch_rawPosition(int& x,int& y){if(!useTracker||!tracker.down())return false;tracker.raw(x,y);return true;}
 bool titles_load(const String&){return false;}
 void titles_release(){}
 int titles_width(){return 0;}
@@ -1224,8 +1226,8 @@ static void flingRegression(){
   // Reverse an outward pull while still clamped: the inward release must leave the edge.
   toSongs();SCREEN_CLASSIC.press(PRESS_DOWN,60,140);
   SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,180);
-  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,170);
-  SCREEN_CLASSIC.press(PRESS_UP,60,170);SCREEN_CLASSIC.tick(clockNow);
+  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,160);  // CY-107: the turn-back must travel >= 12 px (was 10)
+  SCREEN_CLASSIC.press(PRESS_UP,60,160);SCREEN_CLASSIC.tick(clockNow);
   check(classic_flingActive(),"inward fling at exact boundary is not stopped");
   SCREEN_CLASSIC.tick(clockNow+=20);check(classic_offset()>0,"inward fling leaves boundary");
   toSongs();SCREEN_CLASSIC.press(PRESS_DOWN,60,140);
@@ -1233,7 +1235,7 @@ static void flingRegression(){
   SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,160);
   SCREEN_CLASSIC.press(PRESS_UP,60,160);SCREEN_CLASSIC.tick(clockNow+=100);
   check(classic_offset()==0&&!classic_flingActive(),"top edge clamps");
-  check(classic_scrollStats().flings>=initial.flings+7&&classic_scrollStats().frames>initial.frames,"scroll counters record flings and frames");
+  check(classic_scrollStats().flings>=initial.flings+5&&classic_scrollStats().frames>initial.frames,"scroll counters record flings and frames");  // CY-108: a release with no room (list end) starts no coast, so 5 not 7
   check(classic_scrollStats().claimToPaintMs<=41,"claim to first frame measured with fake clock");
   classic_logScrollStats();
   std::cout<<"PASS CY-99 fling: start/finish, tap-to-stop/drag, hard edges, fake-clock frame independence, cache-only fast frames, thumb timeout, stats/underruns\n";
@@ -1267,6 +1269,106 @@ static void lateReleaseRegression(){
   }
   std::cout<<"PASS CY-103 late release: 60/100 Hz, 60/90 ms grace, true rest suppresses fling\n";
 }
+// CY-108: raw vs filtered routing, coast start/stop, tap-to-stop, end clamp and the `scroll` knobs, through the real
+// PressTracker -> ui_touch/syncPress -> Classic path.
+extern const std::string& classic_scrollLine();
+extern const std::vector<std::string>& classic_scrollLog();
+extern float classic_coastPlannedRows();
+static void flickWireRegression(){
+  namespace L=cydclassic::layout;
+  g_settings.rotation=0;tft.setRotation(0);
+  const int maxOffset=(10-L::rows(tft.height()))*L::RowH;
+  uint32_t now=0;
+  auto sample=[&](bool valid,int y){SCREEN_CLASSIC.tick(clockNow=now);loopStep(now,valid,60,y);};
+  auto begin=[&](){toSongs();tracker=cydtouch::PressTracker{};useTracker=true;now=clockNow+500;};
+  auto finish=[&](){useTracker=false;clockNow=now;};
+  // A stroke of `n` samples, `step` px apart every `period` ms, then the lift (first poll without a finger 60 ms later).
+  auto stroke=[&](int y0,int step,int n,int period){
+    sample(true,y0);
+    for(int i=1;i<=n;++i){now+=period;sample(true,y0+i*step);}
+    const uint32_t lastSeen=now;now=lastSeen+60;sample(false,0);return lastSeen;
+  };
+  auto settle=[&](int ms){for(int i=0;i<ms/20;++i){now+=20;SCREEN_CLASSIC.tick(clockNow=now);}};
+  const int before=calls;
+  // 1. Raw routing: the claim and the travel stats use the raw sample, painting uses the filtered one.
+  begin();
+  sample(true,200);now+=10;sample(true,191);
+  check(ui_pressClaimed(),"raw 9 px claims a drag although the glide filter has moved the live point only 4 px");
+  check(classic_offset()==0,"no jump at the claim");
+  for(int y:{170,150,130,110}){now+=10;sample(true,y);}
+  const uint32_t lastSeen=now;now=lastSeen+60;sample(false,0);
+  auto st=classic_scrollStats();
+  check(st.rawDy==-90&&st.filtDy<0&&st.filtDy>st.rawDy,"raw travel is the panel's, filtered travel lags it (glide)");
+  check(classic_flingActive()&&st.vEst<-1000&&std::string(st.reject)=="none","fast raw stroke coasts, estimator velocity from raw");
+  check(st.n>=4&&st.pollGapMax==10&&st.changedGapMax==10&&st.resets==0&&st.stillMs<=10,"gap, sample and rest fields");
+  const int dragged=classic_offset();
+  SCREEN_CLASSIC.tick(clockNow=now);
+  check(classic_offset()==dragged,"coast starts at the release instant: no backdating jump");
+  settle(3000);
+  check(classic_offset()==maxOffset&&!classic_flingActive(),"coast clamps hard at the list end and stops");
+  check(classic_coastPlannedRows()<=float(maxOffset-dragged)/L::RowH+0.01f,"planned coast distance never exceeds the room left");
+  settle(100);
+  check(classic_scrollLine().find("stat: scroll id "+std::to_string(st.id)+" rawDy -90 ")==0&&classic_scrollLine().find("reject none")!=std::string::npos
+    &&classic_scrollLine().find("remRows 0.0 aborted 0")!=std::string::npos,"one stat: scroll line per release, after the coast");
+  finish();
+  // 2. Slow flick: coast animates forward, tap-to-stop freezes it and continues as a drag.
+  begin();stroke(250,-5,8,16);
+  const int released=classic_offset();
+  check(classic_flingActive()&&classic_scrollStats().coastRows>1.5f,"slow flick starts a coast");
+  SCREEN_CLASSIC.tick(clockNow=now);check(classic_offset()==released,"no jump at the release");
+  const uint32_t t0=now;now=t0+100;SCREEN_CLASSIC.tick(clockNow=now);
+  const int grabbed=classic_offset();check(grabbed>released,"coast advances from the release time");
+  const uint64_t io=searchIO();
+  tracker=cydtouch::PressTracker{};
+  sample(true,150);
+  check(!classic_flingActive()&&classic_offset()==grabbed&&classic_scrollStats().aborted&&classic_scrollStats().remRows>0.5f,"touch-down stops the coast where it is and records the remaining rows");
+  now+=16;sample(true,142);
+  check(classic_offset()>grabbed&&calls==before,"the stopping touch is a drag, never a tap");
+  check(searchIO()==io,"no SD reads while coasting, stopping and dragging (rows load after release)");
+  const uint32_t seen2=now;now=seen2+60;sample(false,0);
+  {const auto& log=classic_scrollLog();check(log.size()>=2&&log[log.size()-2].find("aborted 1")!=std::string::npos&&log[log.size()-2].find("remRows 0.0")==std::string::npos,"aborted coast line goes out at the next release, with its remaining rows");}
+  settle(60);
+  finish();
+  // 3. A release with no room flings nothing and says why.
+  begin();
+  stroke(150,10,6,10);  // finger moves down at the top of the list
+  check(classic_offset()==0&&!classic_flingActive()&&std::string(classic_scrollStats().reject)=="edge","no room at the list top: no coast, reject=edge");
+  settle(100);
+  check(classic_scrollLine().find("reject edge")!=std::string::npos,"line printed for a release without coast");
+  finish();
+  // 4. Rest and short strokes name their rejection.
+  begin();sample(true,200);for(int i=1;i<=6;++i){now+=16;sample(true,200-i*8);}for(int i=0;i<10;++i){now+=16;sample(true,152);}now+=60;sample(false,0);
+  check(!classic_flingActive()&&std::string(classic_scrollStats().reject)=="rest"&&classic_scrollStats().stillMs>100,"resting finger: reject=rest");
+  finish();
+  begin();stroke(200,-1,8,16);
+  check(!classic_flingActive()&&std::string(classic_scrollStats().reject)!="none","8 px stroke does not coast");
+  finish();
+  // 5. Knobs: parsing, ranges, RAM-only effect on the next gesture.
+  char reply[160];cydscroll::ScrollCfg cfg;float gain=1;bool changed=false;
+  check(!cydscroll::scrollCommand("scrollx 1",cfg,gain,reply,sizeof(reply),&changed)&&!cydscroll::scrollCommand("play",cfg,gain,reply,sizeof(reply)),"other commands are not ours");
+  check(cydscroll::scrollCommand("scroll",cfg,gain,reply,sizeof(reply),&changed)&&!changed&&std::string(reply)=="scroll: gap 100 gain 1.00 tau 320 tauf 4000 cap 120 minv 80 mintravel 12","bare scroll prints the values");
+  struct Case{const char* line;const char* expect;bool changed;};
+  const Case cases[]={{"scroll gap 150","gap 150",true},{"scroll gain 1.5","gain 1.50",true},{"scroll tau 250","tau 250",true},{"scroll tauf 12000","tauf 12000",true},
+    {"scroll cap 90","cap 90",true},{"scroll minv 120","minv 120",true},{"scroll mintravel 20","mintravel 20",true},{"  scroll   cap   60  ","cap 60",true},
+    {"scroll gap 5","needs a number",false},{"scroll cap abc","needs a number",false},{"scroll cap 60x","needs a number",false},{"scroll bogus 1","unknown knob",false},{"scroll tau","gap 150",false}};
+  for(const Case& c:cases){
+    changed=true;check(cydscroll::scrollCommand(c.line,cfg,gain,reply,sizeof(reply),&changed)&&changed==c.changed&&std::string(reply).find(c.expect)!=std::string::npos,c.line);
+  }
+  check(cfg.gapMs==150&&fabsf(cfg.tauSlow-0.25f)<1e-6f&&fabsf(cfg.tauFast-12.0f)<1e-4f&&cfg.capRowsPerSec==60&&cfg.minVelPxS==120&&cfg.minTravelPx==20&&gain==1.5f,"knob values stored in their units");
+  // Through the screen: gain scales the coast, minv/mintravel gate it, bare command reports the live (default tauf 18 s) values.
+  check(classic_command("scroll")&&classic_scrollLine().find("tauf 18000")!=std::string::npos,"screen defaults: tauf 18000");
+  begin();stroke(250,-5,8,16);const float base=classic_scrollStats().coastRows;check(classic_flingActive()&&base>1.5f,"baseline slow flick coasts");settle(1500);finish();
+  check(classic_command("scroll gain 0.5"),"gain");
+  begin();stroke(250,-5,8,16);check(classic_flingActive()&&classic_scrollStats().coastRows<base*0.6f,"gain 0.5 shortens the coast");settle(1500);finish();
+  check(classic_command("scroll gain 1")&&classic_command("scroll minv 600"),"minv");
+  begin();stroke(250,-5,8,16);check(!classic_flingActive()&&std::string(classic_scrollStats().reject)=="slow","minv 600 refuses a 300 px/s release");finish();
+  check(classic_command("scroll minv 80")&&classic_command("scroll mintravel 100"),"mintravel");
+  begin();stroke(250,-5,8,16);check(!classic_flingActive()&&std::string(classic_scrollStats().reject)=="travel","mintravel 100 refuses a 40 px stroke");finish();
+  check(classic_command("scroll mintravel 12"),"restore");
+  begin();stroke(250,-5,8,16);check(classic_flingActive(),"defaults coast again");settle(1500);finish();
+  check(calls==before,"flicks never select");
+  std::cout<<"PASS CY-108 flick wiring: raw vs filtered routing, coast start/stop/no backdating, tap-to-stop, end clamp, per-release line, knob parsing\n";
+}
 int main(){try{
   if(std::getenv("CYDPOD_REGENERATE_CLASSIC")){std::ofstream("../golden/classic_layout.txt")<<classic_geometry();return 0;}
 
@@ -1287,7 +1389,7 @@ int main(){try{
   for(int i=0;i<10;++i){auto bytes=original;char name[32];snprintf(name,sizeof(name),"Song %02d",i);memset(bytes.data()+pos,0,tag.size());memcpy(bytes.data()+pos,name,strlen(name));
     std::ofstream out(SD.root/(std::string("music/Example/")+name+".m4a"),std::ios::binary);out.write(bytes.data(),bytes.size());}
   check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
-  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){lateReleaseRegression();viewportRegression();dragRegression();flingRegression();miniPlayerRegression();return 0;}
+  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){lateReleaseRegression();viewportRegression();dragRegression();flingRegression();flickWireRegression();miniPlayerRegression();return 0;}
   tapTile(1);check(label("Fixture Artist")&&classic_depth()==2,"artist view straight from the tile");snapshot("ui-artists.svg");
   tap(80,66);check(label("All Songs")&&label("Fixture Album"),"artist album view");snapshot("ui-albums.svg");
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");

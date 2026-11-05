@@ -110,6 +110,7 @@ uint32_t touch_heldMs() { return tracker.heldMs(millis()); }
 uint32_t touch_lastSeenMs() { return tracker.lastSeenMs(); }
 void     touch_position(int& x, int& y) { tracker.landing(x, y); }
 void     touch_livePosition(int& x, int& y) { tracker.live(x, y); }
+bool     touch_rawPosition(int& x, int& y) { tracker.raw(x, y); return tracker.down(); }
 
 TouchEvent touch_poll(int* x, int* y) {
   const uint32_t now = millis();

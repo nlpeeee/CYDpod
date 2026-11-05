@@ -50,6 +50,7 @@ class PressTracker {
 
     if (valid) {
       lastSeen_ = now;
+      rawX_ = sx; rawY_ = sy;               // the sample as the panel reported it (before the glide filter below)
       if (!down_) {
         if (now - lastUpAt_ < TOUCH_DEBOUNCE_MS) {
           if (!rearmCounted_) { rearmCounted_ = true; ++st.rearm; }
@@ -89,11 +90,12 @@ class PressTracker {
   uint32_t heldMs(uint32_t now) const { return down_ ? now - downAt_ : 0; }
   void     landing(int& x, int& y) const { x = landX_; y = landY_; }
   void     live(int& x, int& y) const { x = liveX_; y = liveY_; }
+  void     raw(int& x, int& y) const { x = rawX_; y = rawY_; }  // newest valid sample, unfiltered (CY-108 flick estimator)
 
  private:
   bool     down_ = false, dropout_ = false, polled_ = false, rearmCounted_ = false;
   uint32_t downAt_ = 0, lastSeen_ = 0, lastUpAt_ = 0, lastPoll_ = 0;
-  int      landX_ = 0, landY_ = 0, liveX_ = 0, liveY_ = 0;
+  int      landX_ = 0, landY_ = 0, liveX_ = 0, liveY_ = 0, rawX_ = 0, rawY_ = 0;
 };
 
 }  // namespace cydtouch

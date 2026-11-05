@@ -40,6 +40,8 @@ void       touch_position(int& x, int& y);
 // Where the finger is NOW, smoothed, valid while down -- for drags. Tracking it
 // does not change how a press is classified or where its event lands.
 void       touch_livePosition(int& x, int& y);
+// The newest valid sample, unsmoothed (screen coordinates), stamped by touch_lastSeenMs(). Flick velocity uses this one.
+bool       touch_rawPosition(int& x, int& y);   // false when no press is down
 
 bool touch_readRaw(int& rx, int& ry, int& z);
 int  touch_measureNoiseFloor();

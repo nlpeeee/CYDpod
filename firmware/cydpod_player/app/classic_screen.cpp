@@ -2,6 +2,7 @@
 #include "classic_screen.h"
 #include "classic_navigation.h"
 #include "scroll_core.h"
+#include "scroll_cmd.h"
 #include "classic_layout.h"
 #include "ui.h"
 #include "display.h"
@@ -41,15 +42,88 @@ struct Row {
 };
 cydclassic::Navigation<Page> navigation;
 cydclassic::Gesture gesture;
-cydscroll::Tracker listTracker;
-cydscroll::Fling listFling;
+// CY-108 flick: raw-position estimator + Coast. Knobs (`scroll ...` debug command) live in RAM only; a change reaches the
+// tracker and coast between gestures (applyScrollCfg). tauFast 18 s: a cap-speed flick (4800 px/s) coasts ~1,540 rows.
+cydscroll::ScrollCfg scrollCfg=[]{cydscroll::ScrollCfg c;c.rowPx=float(L::RowH);c.tauFast=18.0f;return c;}();
+float scrollGain=1.0f;bool scrollCfgDirty=false;
+cydscroll::Tracker listTracker(scrollCfg);
+cydscroll::Coast listCoast(scrollCfg);
 ClassicScrollStats scrollStats{};
-bool flingActive=false,claimPending=false;
+bool flingActive=false,claimPending=false,scrollLinePending=false;
 uint32_t claimAt=0,flingUnderruns=0,thumbUntil=0;
-void finishFling(uint32_t now){
+int32_t coastStartPx=0,coastLastPx=0;float coastPlannedRows=0;
+#ifdef CYDPOD_CATALOG_HOST
+std::string hostScrollLine;
+std::vector<std::string> hostScrollLog;  // every release line printed (host tests)
+#endif
+// Per-gesture diagnostics (CY-105 section 4): sample clocks, gaps and the rest reference, mirrored from the estimator.
+struct ScrollDiag{
+  uint16_t id=0,resets=0,pollGapMax=0,changedGapMax=0;
+  uint32_t lastPoll=0,lastChange=0,runStart=0,restMs=0;
+  int downRaw=0,lastRaw=0,runRaw=0,restRef=0,downFilt=0,lastFilt=0,ext=0;int8_t dir=0;  // runRaw: where the current run started; ext: its furthest point
+} diag;
+void applyScrollCfg(){listTracker=cydscroll::Tracker(scrollCfg);listCoast=cydscroll::Coast(scrollCfg);scrollCfgDirty=false;}
+// One line per release, printed once the coast has ended (or at once when there is no coast), never while a finger is down.
+void printScrollLine(){
+  if(!scrollLinePending)return;
+  scrollLinePending=false;
+  const ClassicScrollStats& s=scrollStats;char line[480];
+  snprintf(line,sizeof(line),"stat: scroll id %u rawDy %d filtDy %d pollGapMax %u changedGapMax %u resets %u n %u spanMs %u vEst %.0f reject %s stillMs %u coastRows %.1f remRows %.1f aborted %u "
+    "frames %lu lastMs %lu maxMs %lu claimToPaintMs %lu flings %lu underruns %lu releaseV %.1f releaseGapMs %lu releasePauseMs %lu releaseSamples %lu",
+    s.id,s.rawDy,s.filtDy,s.pollGapMax,s.changedGapMax,s.resets,s.n,s.spanMs,double(s.vEst),s.reject,s.stillMs,double(s.coastRows),double(s.remRows),unsigned(s.aborted),
+    (unsigned long)s.frames,(unsigned long)s.lastFrameMs,(unsigned long)s.maxFrameMs,(unsigned long)s.claimToPaintMs,(unsigned long)s.flings,(unsigned long)s.underruns,
+    double(s.releaseVelocity),(unsigned long)s.releaseGapMs,(unsigned long)s.releasePauseMs,(unsigned long)s.releaseSamples);
+  Serial.println(line);
+#ifdef CYDPOD_CATALOG_HOST
+  hostScrollLine=line;hostScrollLog.push_back(line);
+#endif
+}
+// The coast ended (finished, stopped by a touch-down, or the screen changed): complete the release record.
+void finishFling(uint32_t now,bool byDown=false){
   if(!flingActive)return;
   flingActive=false;scrollStats.underruns=audio_underruns()-flingUnderruns;
+  const float rows=fabsf(float(coastLastPx-coastStartPx))/float(L::RowH);
+  scrollStats.remRows=byDown&&coastPlannedRows>rows?coastPlannedRows-rows:0;scrollStats.aborted=byDown;
+  scrollLinePending=true;
   thumbUntil=now+L::ThumbHoldMs;
+}
+// A list touch landed: start the per-gesture diagnostics.
+void diagDown(uint32_t ms,int y){
+  const uint16_t id=uint16_t(diag.id+1);diag=ScrollDiag{};diag.id=id;
+  diag.lastPoll=diag.lastChange=diag.runStart=diag.restMs=ms;
+  diag.downRaw=diag.lastRaw=diag.runRaw=diag.restRef=diag.downFilt=diag.lastFilt=diag.ext=y;
+}
+// One touch sample for the list: raw y (claim and velocity) and filtered y (painting). Returns true once the touch is a drag.
+bool listSample(uint32_t ms,int y,int raw){
+  ScrollDiag& d=diag;
+  if(ms!=d.lastPoll){const uint32_t gap=ms-d.lastPoll;if(gap>d.pollGapMax)d.pollGapMax=uint16_t(gap<65535u?gap:65535u);d.lastPoll=ms;}
+  d.lastFilt=y;
+  const bool changed=raw!=d.lastRaw;const uint32_t before=listTracker.samples().lastMs();
+  listTracker.move(ms,float(y),float(raw));
+  if(changed){
+    const uint32_t gap=ms-d.lastChange;if(gap>d.changedGapMax)d.changedGapMax=uint16_t(gap<65535u?gap:65535u);
+    d.lastChange=ms;d.lastRaw=raw;
+    const cydscroll::FlickEstimator& e=listTracker.samples();
+    if(e.windowCount()==1&&e.lastMs()==ms&&before!=ms){++d.resets;d.runStart=ms;d.runRaw=d.ext=raw;d.dir=0;d.restRef=raw;d.restMs=ms;}  // gap restart
+    else{
+      if(fabsf(float(raw-d.restRef))>scrollCfg.restMovePx){d.restRef=raw;d.restMs=ms;}
+      // Reversal mirror (approximate: the estimator judges aggregated segments): a pull back of reverseMinPx starts a new run.
+      if(!d.dir){if(fabsf(float(raw-d.runRaw))>=scrollCfg.reverseMinPx){d.dir=raw>d.runRaw?1:-1;d.ext=raw;}}
+      else if((raw-d.ext)*d.dir>0)d.ext=raw;
+      else if(fabsf(float(raw-d.ext))>=scrollCfg.reverseMinPx){d.runRaw=d.ext;d.dir=int8_t(-d.dir);d.ext=raw;++d.resets;}
+    }
+  }
+  return listTracker.claimed();
+}
+// Why the estimator refused the release (mirrors FlickEstimator::release in order; travel is measured from the last restart or reversal).
+const char* rejectReason(uint32_t releasedAt,uint32_t restNow){
+  const cydscroll::FlickEstimator& e=listTracker.samples();
+  if(e.windowCount()<2)return "few";
+  if(restNow-diag.restMs>scrollCfg.restMs)return "rest";
+  if(releasedAt-e.lastMs()>scrollCfg.gapMs)return "stale";
+  if(fabsf(float(diag.lastRaw-diag.runRaw))<scrollCfg.minTravelPx)return "travel";
+  if(fabsf(e.smoothed())<scrollCfg.minVelPxS)return "slow";
+  return "edge";
 }
 bool listDragging=false,listPress=false,thumbDrag=false,viewportPending=false,thumbVisible=false;
 int32_t dragOffset=0;int thumbGrab=0;
@@ -321,16 +395,13 @@ void paintViewport(int32_t offsetPx){
   ++scrollStats.frames;scrollStats.lastFrameMs=millis()-start;
   scrollStats.maxFrameMs=max(scrollStats.maxFrameMs,scrollStats.lastFrameMs);
 }
-// Evaluate once at wall-clock time. Hard edge clamp: zero velocity before the core's overfling.
+// Evaluate once at wall-clock time. The coast clamps at the list ends by itself and finishes there.
 void advanceFling(uint32_t now){
   if(!flingActive)return;
-  const int32_t limit=cydclassic::clampOffset(INT32_MAX,count,rows());
-  const float pos=listFling.position(now);
-  const int32_t offset=cydclassic::clampOffset(int32_t(lroundf(pos)),count,rows());
+  const int32_t offset=cydclassic::clampOffset(int32_t(lroundf(listCoast.position(now))),count,rows());
   if(offset!=page().offsetPx){page().offsetPx=offset;viewportPending=true;}
-  const float velocity=listFling.velocity(now);
-  if(pos<0||pos>limit||(pos==0&&velocity<=0)||(pos==limit&&velocity>=0)){listFling.start(float(offset),0,0,float(limit),now);finishFling(now);viewportPending=true;}
-  else if(listFling.finished(now)){finishFling(now);viewportPending=true;}
+  coastLastPx=offset;
+  if(listCoast.finished(now)){finishFling(now);viewportPending=true;}
 }
 void paintThumb(){
   const Rect rail=L::strip<Rect>(tft.width(),tft.height());
@@ -602,7 +673,7 @@ void enter(){
   else {invalidate();if(!count){centred(storage_readOnly()?"SD card is read-only":storage_catalogStale()?"Library unavailable":"No entries",100,theme().dim,theme().bg);}}
 }
 void leave(){
-  finishFling(inputNow());claimPending=false;
+  finishFling(inputNow());claimPending=false;printScrollLine();
   seekPreview=false;armVolumeSave();flushSettings();dirty=0;titles_release();
   // ui_go calls leave after a navigation push/pop: current() is the destination.
   // Keep a newly built destination preview, otherwise rebuild lazily on Back.
@@ -611,8 +682,16 @@ void leave(){
     if(searchSession.state==SearchState::Active){storage_searchCancel();searchSession.state=SearchState::Cancelled;}
   }
 }
+// Every pass while a list finger is down: the newest sample (raw and filtered) goes to the estimator even when the
+// filtered y did not move, so no changed raw position is lost between PRESS_MOVE calls.
+void feedListSample(){
+  int rx=0,ry=0,lx=0,ly=0;
+  if(!listPress||!touch_rawPosition(rx,ry))return;
+  touch_livePosition(lx,ly);listSample(touch_lastSeenMs(),ly,ry);
+}
 void tick(uint32_t now){
   screenNow=now;
+  feedListSample();
   advanceFling(now);
   const bool painted=viewportPending;
   if(viewportPending){viewportPending=false;paintViewport(page().offsetPx);paintThumb();}
@@ -621,11 +700,13 @@ void tick(uint32_t now){
   if(flingActive){
     // Fast motion is cache-only. At <200 px/s fill at most one missing row on
     // a pass with no viewport paint; preserve the existing ring-low protection.
-    if(!painted&&fabsf(listFling.velocity(now))<200&&dirty&&(!audio_bufferLow()||now-lastPaint>=120)){
+    if(!painted&&fabsf(listCoast.velocity(now))<200&&dirty&&(!audio_bufferLow()||now-lastPaint>=120)){
       for(int i=0;i<visibleRows();++i)if(dirty&(1u<<i)){dirty&=~(1u<<i);loadRow(i);lastPaint=now;break;}
     }
     return;
   }
+  if(scrollCfgDirty)applyScrollCfg();
+  printScrollLine();
   if(painted)return;
   if(thumbVisible&&int32_t(now-thumbUntil)>=0){thumbVisible=false;paintThumb();}
   if(savePending&&!(touch_isDown()&&gesture.target==Slider)&&int32_t(now-saveAt)>=0)flushSettings();
@@ -826,14 +907,16 @@ bool press(PressPhase phase,int x,int y){
     listPress=browse()&&page().mode!=Mode::Home&&hit>=0&&hit<KeyBase&&count>rows();
     listDragging=false;thumbDrag=hit==Thumb;dragOffset=page().offsetPx;
     if(listPress){
-      listTracker.down(touch_lastSeenMs(),y,stopping?&listFling:nullptr);
+      if(scrollCfgDirty&&!stopping)applyScrollCfg();
+      listTracker.down(touch_lastSeenMs(),float(y),stopping?&listCoast:nullptr);
+      diagDown(touch_lastSeenMs(),y);
       if(stopping){
-        finishFling(inputNow());listTracker.move(touch_lastSeenMs(),y);listDragging=true;
+        finishFling(inputNow(),true);listTracker.move(touch_lastSeenMs(),float(y));listDragging=true;
         gesture.claimed=true;gesture.vlead=true;thumbVisible=true;
         claimAt=inputNow();claimPending=true;viewportPending=true;return true;
       }
     }
-    if(stopping){listFling.start(float(page().offsetPx),0,0,float(cydclassic::clampOffset(INT32_MAX,count,rows())),inputNow());finishFling(inputNow());}
+    if(stopping)finishFling(inputNow(),true);
     if(thumbDrag){
       const Rect r=L::thumb<Rect>(tft.width(),tft.height(),count,page().offsetPx);
       thumbGrab=y>=r.y&&y<r.y+r.h?y-r.y:r.h/2;
@@ -862,7 +945,9 @@ bool press(PressPhase phase,int x,int y){
       if(!seekCancelled)seekPreviewAt(x);return true;
     }
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next){if(browse()&&!within(x,y,cydclassic::Gesture::SlopNear)&&playerPressed!=-1){playerPressed=-1;miniPlayer();}return true;}
-    const bool tracked=listPress&&listTracker.move(touch_lastSeenMs(),y);
+    int rx=0,ry=y;
+    if(listPress&&!touch_rawPosition(rx,ry))ry=y;  // no panel sample behind this call (host harness): raw = filtered
+    const bool tracked=listPress&&listSample(touch_lastSeenMs(),y,ry);
     if(thumbDrag||(tracked&&(listDragging||abs(y-gesture.y)>=abs(x-gesture.x)))){
       if(!gesture.claimed){claimAt=inputNow();claimPending=true;}
       listDragging=!thumbDrag;
@@ -885,16 +970,31 @@ bool press(PressPhase phase,int x,int y){
     if(listPress||thumbDrag){
       const bool dragged=thumbDrag||listDragging;
       if(listPress){
-        // Release grace delays PRESS_UP, not the finger's actual sample clock.
-        const uint32_t releasedAt=touch_lastSeenMs();
-        scrollStats.releaseGapMs=inputNow()-releasedAt;
-        scrollStats.releasePauseMs=releasedAt-listTracker.samples().lastMs();
-        scrollStats.releaseSamples=listTracker.samples().windowCount();
+        // Release grace delays PRESS_UP, not the finger's actual sample clock. The rest clock is the poll that noticed the
+        // lift minus the grace (sparse polls see a long rest for only a poll or two).
+        const uint32_t releasedAt=touch_lastSeenMs(),now=inputNow();
+        const uint32_t late=int32_t(now-releasedAt)>0?now-releasedAt:0;
+        const uint32_t restNow=releasedAt+(late>cydtouch::PressTracker::ReleaseGraceMs?late-cydtouch::PressTracker::ReleaseGraceMs:0);
+        printScrollLine();  // the previous release's line goes out before its fields are overwritten
+        const cydscroll::FlickEstimator& est=listTracker.samples();
+        scrollStats.releaseGapMs=late;
+        scrollStats.releasePauseMs=releasedAt-est.lastMs();
+        scrollStats.releaseSamples=est.windowCount();
         scrollStats.releaseVelocity=0;
         if(listDragging){
-          if(listTracker.up(releasedAt,listFling,float(page().offsetPx),0,float(cydclassic::clampOffset(INT32_MAX,count,rows())))){
-            flingActive=true;++scrollStats.flings;flingUnderruns=audio_underruns();
-          }
+          const int32_t offset=page().offsetPx,limit=cydclassic::clampOffset(INT32_MAX,count,rows());
+          ClassicScrollStats& s=scrollStats;
+          s.id=diag.id;s.rawDy=int16_t(diag.lastRaw-diag.downRaw);s.filtDy=int16_t(diag.lastFilt-diag.downFilt);
+          s.pollGapMax=diag.pollGapMax;s.changedGapMax=diag.changedGapMax;s.resets=diag.resets;
+          s.n=uint16_t(est.windowCount());s.spanMs=uint16_t(est.lastMs()-diag.runStart);s.vEst=est.smoothed();
+          s.stillMs=uint16_t(restNow-diag.restMs);s.coastRows=s.remRows=0;s.aborted=false;
+          if(listTracker.up(releasedAt,listCoast,float(offset),0,float(limit),-scrollGain,restNow)){
+            // The estimator judged the release at the last sample time; the content animates forward from now (no backdating).
+            listCoast.start(float(offset),-scrollGain*listTracker.releaseVelocity(),0,float(limit),now);
+            flingActive=true;++s.flings;flingUnderruns=audio_underruns();
+            coastStartPx=coastLastPx=offset;coastPlannedRows=fabsf(listCoast.finalY()-float(offset))/float(L::RowH);
+            s.coastRows=coastPlannedRows;s.reject="none";
+          }else{s.reject=rejectReason(releasedAt,restNow);scrollLinePending=true;}
           scrollStats.releaseVelocity=listTracker.releaseVelocity();
         }
       }
@@ -952,12 +1052,18 @@ void touch(TouchEvent ev,int,int){
 void classic_home(){searchSession.resumePx=-1;miniReturnDepth=0;flushSettings();freePreview();externalReturn=false;navigation.home();}
 // Back from a page outside Classic (the Bluetooth page): the page it was opened from when Settings opened it, otherwise Now Playing.
 ClassicScrollStats classic_scrollStats(){return scrollStats;}
-void classic_logScrollStats(){
-  const ClassicScrollStats s=classic_scrollStats();
-  Serial.printf("stat: scroll frames %lu lastMs %lu maxMs %lu claimToPaintMs %lu flings %lu underruns %lu releaseV %.1f releaseGapMs %lu releasePauseMs %lu releaseSamples %lu\n",
-    (unsigned long)s.frames,(unsigned long)s.lastFrameMs,(unsigned long)s.maxFrameMs,
-    (unsigned long)s.claimToPaintMs,(unsigned long)s.flings,(unsigned long)s.underruns,
-    double(s.releaseVelocity),(unsigned long)s.releaseGapMs,(unsigned long)s.releasePauseMs,(unsigned long)s.releaseSamples);
+// Print the newest release line now (normally it goes out by itself when the list is idle).
+void classic_logScrollStats(){if(scrollStats.id)scrollLinePending=true;printScrollLine();}
+// Serial debug line. Returns true when it was a `scroll` command; values change in RAM only.
+bool classic_command(const char* line){
+  char out[128];bool changed=false;
+  if(!cydscroll::scrollCommand(line,scrollCfg,scrollGain,out,sizeof(out),&changed))return false;
+  if(changed){scrollCfgDirty=true;if(!listPress&&!flingActive)applyScrollCfg();}
+  Serial.println(out);
+#ifdef CYDPOD_CATALOG_HOST
+  hostScrollLine=out;
+#endif
+  return true;
 }
 void classic_return(){if(externalReturn)externalReturn=false;else if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}ui_go(SCR_CLASSIC);}
 const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};
@@ -980,7 +1086,10 @@ const char* classic_modeName(unsigned m){
 int classic_top(){return topRow();}
 int classic_offset(){return page().offsetPx;}
 bool classic_flingActive(){return flingActive;}
-float classic_flingVelocity(){return flingActive?listFling.velocity(screenNow):0;}
+float classic_flingVelocity(){return flingActive?listCoast.velocity(screenNow):0;}
+const std::string& classic_scrollLine(){return hostScrollLine;}
+const std::vector<std::string>& classic_scrollLog(){return hostScrollLog;}
+float classic_coastPlannedRows(){return coastPlannedRows;}
 bool classic_thumbVisible(){return thumbVisible;}
 void classic_paintViewport(int offset){paintViewport(offset);}
 void classic_invalidateViewport(){invalidate();}

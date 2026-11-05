@@ -272,8 +272,22 @@ static void persistResume(uint32_t now) {
                           (bt_connected() ? "bt" : "no-bt"))
 #endif
 
+// Debug command line (CY-108): `scroll ...` knobs. One short line at a time, never blocks; an overlong line is dropped.
+static void serialCommands() {
+  static char line[48];
+  static uint8_t n = 0;
+  static bool over = false;
+  while (Serial.available()) {
+    const int c = Serial.read();
+    if (c == '\n' || c == '\r') { if (n && !over) { line[n] = 0; classic_command(line); } n = 0; over = false; }
+    else if (n < sizeof(line) - 1) line[n++] = (char)c;
+    else over = true;
+  }
+}
+
 void loop() {
   const uint32_t now = millis();
+  serialCommands();
 
   if (bluetoothPlanned && !bluetoothStarted && audio_startupComplete()) { bt_begin(); bluetoothStarted = true; }
   if (bluetoothStarted) bt_tick();
@@ -322,7 +336,6 @@ void loop() {
     cydtouch::Stats& ts = cydtouch::stats();
     Serial.printf("stat: touch pollGapMax %u ms  refused slop %u claim %u rearm %u wake %u  bridged %u\n",
                   (unsigned)ts.maxGapMs, (unsigned)ts.slop, (unsigned)ts.claim, (unsigned)ts.rearm, (unsigned)ts.wake, (unsigned)ts.bridged);
-    classic_logScrollStats();
     ts.maxGapMs = 0;
     lastStat = now;
   }

@@ -27,8 +27,8 @@ struct Page {
   Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;uint16_t top=0;
   SourceKind sourceKind=SRC_M3U;char title[64]={};
 };
-// Brightness -/+ and Orientation, then Calibrate touch on the resistive board only.
-constexpr int DisplayRows=CYD_TOUCH_CAPACITIVE?3:4;
+// Brightness -/+, Orientation and Theme, then Calibrate touch on the resistive board only.
+constexpr int DisplayRows=CYD_TOUCH_CAPACITIVE?4:5;
 // Landscape -> landscape flipped -> portrait -> portrait flipped, so every rotation can be reached
 // and left again (rotation 1 is the W328C's upright landscape, board.h).
 const char* const RotationName[4]={"Portrait","Landscape","Portrait flipped","Landscape flipped"};
@@ -156,7 +156,7 @@ void playerHeader(){
   queuePosition(pos<0?0:pos+1,audio_queueLen(),portrait?L::PlayerPortraitCountX:L::PlayerCountX,L::PlayerHeaderY,portrait?L::PlayerPortraitCountW:L::PlayerCountW,p.dim,p.band);
   Rect f=L::favourite<Rect>(tft.width());f.h=L::PlayerHeaderH;ui_iconToggle(f,ICON_STAR,storage_trackCount()&&playlist_isFavourite(audio_currentTrack()),p.band,playerPressed==Favourite);
   Rect o=L::options<Rect>(tft.width());if(playerPressed==Options)tft.fillRect(o.x,o.y,o.w,L::PlayerHeaderH,p.pressed);
-  for(int i=-1;i<=1;++i)tft.fillCircle(o.cx()+i*L::PlayerDotsGap,L::PlayerHeaderY,L::PlayerDotR,p.text);
+  for(int i=-1;i<=1;++i)tft.fillCircle(o.cx()+i*L::PlayerDotsGap,L::PlayerHeaderY,L::PlayerDotR,playerPressed==Options?p.onPressed:p.text);
 }
 void header(){
   if(page().mode==Mode::Player){playerHeader();return;}
@@ -182,17 +182,17 @@ void miniProgress(){
   const Rect r=L::miniProgress<Rect>(tft.width(),tft.height());
   const uint32_t duration=audio_durationMs();
   const int px=audio_queueLen()&&duration?min<int>(r.w,uint64_t(audio_positionMs())*r.w/duration):0;
-  tft.fillRect(r.x,r.y,r.w,r.h,theme().outline);
-  if(px)tft.fillRect(r.x,r.y,px,r.h,theme().accent);
+  tft.fillRect(r.x,r.y,r.w,r.h,theme().miniTrack);
+  if(px)tft.fillRect(r.x,r.y,px,r.h,theme().miniFill);
 }
 void miniPlayer(){
   const Palette& p=theme();const int w=tft.width(),h=tft.height();
   tft.fillRect(0,L::miniY(h),w,L::FooterH,p.band);
   miniQueued=audio_queueLen()>0;shownSerial=audio_trackSerial();shownPlaying=audio_isPlaying();
   if(!miniQueued){text("Shuffle all",{0,L::miniY(h),w,L::FooterH},storage_trackCount()?p.text:p.disabled,p.band);return;}
-  for(int cell:{0,2}){const Rect r=L::mini<Rect>(w,h,cell);const uint16_t bg=playerPressed==(cell?Next:Play)?p.pressed:p.band;
+  for(int cell:{0,2}){const Rect r=L::mini<Rect>(w,h,cell);const bool lit=playerPressed==(cell?Next:Play);const uint16_t bg=lit?p.pressed:p.band;
     tft.fillRect(r.x,r.y+L::MiniProgressH,r.w,r.h-L::MiniProgressH,bg);
-    ui_icon(cell?ICON_NEXT:shownPlaying?ICON_PAUSE:ICON_PLAY,r.cx(),r.cy(),L::MiniIconSize,p.text,bg);}
+    ui_icon(cell?ICON_NEXT:shownPlaying?ICON_PAUSE:ICON_PLAY,r.cx(),r.cy(),L::MiniIconSize,lit?p.onPressed:p.text,bg);}
   const Rect r=L::mini<Rect>(w,h,1);
   // Reuse the existing Player record: one bounded metadata read only on state/track changes.
   if(!storage_trackInfo(audio_currentTrack(),playingInfo)){cydlib::copyText(playingInfo.title,"Track unavailable");playingInfo.artist[0]=0;}
@@ -232,8 +232,9 @@ void paintTile(int i,bool pressed){
   const char* names[]={"Songs","Artists","Albums","Playlists","Search","Settings"};
   const Palette& p=theme();const Rect r=L::tile<Rect>(tft.width(),tft.height(),i);const uint16_t face=pressed?p.pressed:p.band;
   tft.fillRoundRect(r.x,r.y,r.w,r.h,L::TileRadius,face);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::TileRadius,p.outline);
-  tileGlyph(i,r.cx(),r.y+L::TileIconY,p.text,face);
-  ui_text(String(names[i]),r.cx(),r.y+r.h-L::TileLabelBottom,MC_DATUM,p.text,face,r.w-2*L::TileTextInset);
+  const uint16_t ink=pressed?p.onPressed:p.text;
+  tileGlyph(i,r.cx(),r.y+L::TileIconY,ink,face);
+  ui_text(String(names[i]),r.cx(),r.y+r.h-L::TileLabelBottom,MC_DATUM,ink,face,r.w-2*L::TileTextInset);
 }
 void paintTiles(){for(int i=0;i<L::TileCount;++i)paintTile(i,false);}
 void paintRow(int i,bool pressed){
@@ -303,8 +304,8 @@ void loadRow(int i){
     case Mode::Playback:
       if(at<2)setRow(r,at==0?"Shuffle":"Repeat",at==0?String(audio_shuffle()?"On":"Off"):String(audio_repeat()==REPEAT_ONE?"One":audio_repeat()==REPEAT_ALL?"All":"Off"));
       else setRow(r,at==2?"Screen timeout":"Sleep timer",at==2?String(sleep_timeoutLabel(g_settings.screenTimeout)):String(sleep_timerLabel(g_settings.sleepTimer)));break;
-    case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Orientation","Calibrate touch"};
-      setRow(r,names[at],at<2?String(g_settings.brightness)+"%":at==2?String(RotationName[g_settings.rotation&3]):String(),at==3);break;}
+    case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Orientation","Theme","Calibrate touch"};
+      setRow(r,names[at],at<2?String(g_settings.brightness)+"%":at==2?String(RotationName[g_settings.rotation&3]):at==3?String(themeName(g_settings.colorTheme)):String(),at==4);break;}
     case Mode::Output:{if(at==OUT_SELECTABLE_COUNT){setRow(r,"Switch back to Bluetooth if there is no sound",String(),false,true);break;}const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
     case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):String(),at==3);break;}
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
@@ -406,12 +407,12 @@ void playerVolume(){
 }
 void playerOutput(){
   const Palette& p=theme();const Rect r=L::outputFace<Rect>(tft.width(),tft.height());
-  const uint16_t bg=playerPressed==Output?p.pressed:p.band;
+  const bool lit=playerPressed==Output;const uint16_t bg=lit?p.pressed:p.band;
   tft.fillRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,bg);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,p.outline);
   const bool wired=g_settings.outRoute==OUT_WIRED;
   // No icon: the chip's width goes to the text, which names the route (peer name or Headphones).
   const String name=wired?String("Headphones"):bt_speakerName();
-  playerText(name.isEmpty()?"Bluetooth":name.c_str(),r.x+L::PlayerChipTextInset,r.cy(),Face::Label,r.w-L::PlayerChipTextInset-L::PlayerChipTextPad,p.text,bg,cydtext::HAlignLeft);
+  playerText(name.isEmpty()?"Bluetooth":name.c_str(),r.x+L::PlayerChipTextInset,r.cy(),Face::Label,r.w-L::PlayerChipTextInset-L::PlayerChipTextPad,lit?p.onPressed:p.text,bg,cydtext::HAlignLeft);
 }
 void playerBottom(){
   const Palette& p=theme();const Rect r=L::playerVolume<Rect>(tft.width(),tft.height());
@@ -621,6 +622,8 @@ void activate(int at){
     case Mode::Display:
       if(at<2){g_settings.brightness=constrain(int(g_settings.brightness)+(at?10:-10),10,100);display_setBacklight(g_settings.brightness);settings_save();invalidate();}
       else if(at==2){g_settings.rotation=nextRotation(g_settings.rotation);display_setRotation(g_settings.rotation);settings_save();enter();}
+      // One full repaint on release: enter() clears the screen in the new bg and redraws header, footer/mini-player and every row (cache invalidated).
+      else if(at==3){g_settings.colorTheme=themeNext(g_settings.colorTheme);settings_save();enter();}
       else{calibrate_run();enter();}break;
     case Mode::Output:
       if(at<OUT_SELECTABLE_COUNT){const uint8_t next=outRouteSelectable(at);

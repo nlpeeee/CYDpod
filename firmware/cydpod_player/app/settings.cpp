@@ -20,6 +20,7 @@ void settings_begin() {
   s.rotation   = prefs.getUChar ("rot",    s.rotation) & 3;
   s.brightness = constrain(prefs.getUChar("bright", s.brightness), 10, 100);
   s.lang       = prefs.getUChar ("lang",   s.lang) % LANG_COUNT;
+  s.colorTheme = themeSanitize(prefs.getUChar("colorTheme", THEME_LIGHT));
   s.screenTimeout = min<uint8_t>(prefs.getUChar("screenTime",s.screenTimeout),3);
   s.sleepTimer = min<uint8_t>(prefs.getUChar("sleepTime",s.sleepTimer),4);
   s.volume     = min<uint8_t>(prefs.getUChar("vol", s.volume), 100);
@@ -112,6 +113,7 @@ bool settings_save() {
   ok = (prefs.putUChar("rot",      s.rotation) == 1) && ok;
   ok = (prefs.putUChar("bright",   s.brightness) == 1) && ok;
   ok = (prefs.putUChar("lang",     s.lang) == 1) && ok;
+  ok = (prefs.putUChar("colorTheme", themeSanitize(s.colorTheme)) == 1) && ok;
   ok = (prefs.putUChar("screenTime",s.screenTimeout) == 1) && ok;
   ok = (prefs.putUChar("sleepTime",s.sleepTimer) == 1) && ok;
   ok = (prefs.putUChar("vol",      s.volume) == 1) && ok;

@@ -758,7 +758,9 @@ static void settingsRegression(){
 #if CYD_TOUCH_CAPACITIVE
   check(!label("Calibrate touch"),"no touch calibration row on the capacitive board");
 #else
+  tapRect(L::pageStrip<Rect>(tft.width(),tft.height(),true));  // CY-91: Theme took the fourth landscape row; Calibrate is on page 2
   check(label("Calibrate touch"),"touch calibration row on the resistive board");
+  tapRect(L::pageStrip<Rect>(tft.width(),tft.height(),false));
 #endif
   const uint8_t expectedOrder[]={3,0,2,1};std::vector<uint8_t> seen;
   for(uint8_t want:expectedOrder){
@@ -781,6 +783,108 @@ static void settingsRegression(){
   tapRow(0);check(label("Rebuild and restart"),"Refresh Library opens its confirmation from Library & System");
   tft.setRotation(0);g_settings.rotation=0;g_settings.lang=LANG_EN;
   std::cout<<"PASS CY-81 Settings: live rows kept, retired rows absent in all rotations, Orientation visits all four rotations, brightness, Library & System rows (refresh, upload, passcode reset, language)\n";
+}
+// CY-91: the Theme row and the colour palettes, focused. Light stays v24 byte for byte; Black and High
+// Contrast keep the production role pairs legible; one release cycles the theme once, a cancelled press
+// does nothing, and the change repaints the whole page with none of the old palette left behind.
+static double themeContrast(uint16_t a,uint16_t b){
+  auto lin=[](int v){const double c=v/255.0;return c<=0.03928?c/12.92:std::pow((c+0.055)/1.055,2.4);};
+  auto lum=[&](uint16_t c){int r=(c>>11)&31,g=(c>>5)&63,bl=c&31;r=r<<3|r>>2;g=g<<2|g>>4;bl=bl<<3|bl>>2;return .2126*lin(r)+.7152*lin(g)+.0722*lin(bl);};
+  const double x=lum(a),y=lum(b);return (std::max(x,y)+.05)/(std::min(x,y)+.05);
+}
+static int themePixels(int x0,int y0,int w,int h,uint16_t c){int n=0;for(int y=y0;y<y0+h;++y)for(int x=x0;x<x0+w;++x)n+=tft.pixel(x,y)==c;return n;}
+static Palette themeOf(uint8_t id){const uint8_t was=g_settings.colorTheme;g_settings.colorTheme=id;const Palette p=theme();g_settings.colorTheme=was;return p;}
+static void themeRegression(){
+  namespace L=cydclassic::layout;
+  static_assert(sizeof(Palette)%sizeof(uint16_t)==0,"Palette is uint16_t fields only");
+  const unsigned fields=sizeof(Palette)/sizeof(uint16_t);
+  // Light is the v24 palette exactly (the three CY-91 roles repeat what those screens used before).
+  const uint16_t v24[]={0xFFFF,0xD6BA,0xF79E,0x1082,0x5ACB,0x9CD3,0x8C71,0xE71C,0xE71C,0x1082,0x1B59,0xFFFF,0x3C5C,0x1B59,0xFFFF,0xD6DB,0x3C5B,0x0480,0xBA80,0xC000,0x1082,0x8C71,0x1B59};
+  static_assert(sizeof(v24)==sizeof(Palette),"v24 table covers every role");
+  const Palette light=themeOf(THEME_LIGHT);
+  check(!memcmp(&light,v24,sizeof(v24)),"Light palette is v24 byte for byte");
+  g_settings.colorTheme=200;{const Palette invalid=theme();check(!memcmp(&invalid,v24,sizeof(v24)),"an invalid theme id draws Light");}
+  check(themeSanitize(3)==THEME_LIGHT&&themeSanitize(255)==THEME_LIGHT&&themeNext(2)==THEME_LIGHT&&themeNext(0)==THEME_BLACK,"theme id is bounded to three values");
+  g_settings.colorTheme=THEME_LIGHT;
+  // Production role pairs for the two new palettes (Light is the approved legacy table).
+  struct Pair{const char* name;uint16_t Palette::*a;uint16_t Palette::*b;double floor;};
+  const Pair pairs[]={
+    {"text/bg",&Palette::text,&Palette::bg,4.5},{"dim/bg",&Palette::dim,&Palette::bg,4.5},{"disabled/bg",&Palette::disabled,&Palette::bg,3},
+    {"text/band",&Palette::text,&Palette::band,4.5},{"dim/band",&Palette::dim,&Palette::band,4.5},{"disabled/band",&Palette::disabled,&Palette::band,3},
+    {"text/raised",&Palette::text,&Palette::surfaceRaised,4.5},{"dim/raised",&Palette::dim,&Palette::surfaceRaised,4.5},
+    {"btnText/raised",&Palette::btnText,&Palette::surfaceRaised,4.5},{"btnText/btn",&Palette::btnText,&Palette::btn,4.5},{"dim/btn",&Palette::dim,&Palette::btn,4.5},
+    {"onControlActive/btnActive",&Palette::onControlActive,&Palette::btnActive,4.5},{"onControlActive/pressed",&Palette::onControlActive,&Palette::pressed,4.5},
+    {"onPressed/pressed",&Palette::onPressed,&Palette::pressed,4.5},{"onAccent/accent",&Palette::onAccent,&Palette::accent,4.5},
+    {"accent/bg",&Palette::accent,&Palette::bg,4.5},{"bar/barBg",&Palette::bar,&Palette::barBg,3},{"bar/bg",&Palette::bar,&Palette::bg,3},
+    {"miniFill/miniTrack",&Palette::miniFill,&Palette::miniTrack,3},{"miniTrack/band",&Palette::miniTrack,&Palette::band,2},
+    {"outline/bg",&Palette::outline,&Palette::bg,3},{"outline/band",&Palette::outline,&Palette::band,3},
+    {"good/bg",&Palette::good,&Palette::bg,4.5},{"warn/bg",&Palette::warn,&Palette::bg,4.5},{"bad/bg",&Palette::bad,&Palette::bg,4.5},
+    {"pressed/band",&Palette::pressed,&Palette::band,1.3},{"pressed/bg",&Palette::pressed,&Palette::bg,1.3}};
+  double worst[THEME_COUNT]={0,99,99};
+  for(uint8_t id:{THEME_BLACK,THEME_HIGH_CONTRAST}){
+    const Palette p=themeOf(id);
+    for(const Pair& pair:pairs){const double c=themeContrast(p.*pair.a,p.*pair.b);worst[id]=std::min(worst[id],c/pair.floor);
+      check(c>=pair.floor,(std::string(themeName(id))+" "+pair.name+" contrast "+std::to_string(c)).c_str());}
+    check(p.bg==0,"Black and High Contrast backgrounds are pure black");
+  }
+  // The row, in every rotation: label, cycle once on release, nothing on cancel, full repaint.
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);g_settings.rotation=uint8_t(rotation);g_settings.outRoute=OUT_BT;g_settings.colorTheme=THEME_LIGHT;
+    home();tapTile(5);tapSettingsRow(3);
+    check(label("Brightness -")&&label("Orientation")&&label("Theme")&&label("Light"),"Display shows the Theme row and its value");
+    const int w=tft.width(),h=tft.height();const Rect row=L::row<Rect>(w,3);
+    for(int step=0;step<4;++step){
+      const uint8_t was=g_settings.colorTheme,want=themeNext(was);const Palette old=themeOf(was),next=themeOf(want);
+      int saves=settingsSaves;
+      SCREEN_CLASSIC.press(PRESS_DOWN,row.cx(),row.cy());SCREEN_CLASSIC.press(PRESS_UP,row.cx(),row.cy()+60);pump();
+      check(g_settings.colorTheme==was&&settingsSaves==saves&&label(themeName(was)),"a press that leaves the row does not change the theme");
+      saves=settingsSaves;SCREEN_CLASSIC.press(PRESS_DOWN,row.cx(),row.cy());check(g_settings.colorTheme==was,"Theme waits for release");
+      SCREEN_CLASSIC.press(PRESS_UP,row.cx(),row.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,row.cx(),row.cy());pump();
+      check(g_settings.colorTheme==want&&settingsSaves==saves+1,"one release cycles the theme once and saves once");
+      check(label("Theme")&&label(themeName(want))&&!label(themeName(was))&&label("Orientation"),"the row cache is rebuilt with the new value");
+      {const uint16_t got[4]={tft.pixel(row.x+row.w-3,row.cy()),tft.pixel(w-3,2),tft.pixel(w-L::StripW+2,L::HeaderH+1),tft.pixel(2,h-3)};
+       const uint16_t exp[4]={next.bg,next.band,next.band,next.band};
+       for(int k=0;k<4;++k)check(got[k]==exp[k],("page/header/strip/footer sample "+std::to_string(k)+" took the new palette: r"+std::to_string(rotation)+" "+std::to_string(got[k])+" vs "+std::to_string(exp[k])).c_str());}
+      check(!queueLength||tft.pixel(w/2,L::footerY(h))==next.miniTrack||tft.pixel(w/2,L::footerY(h))==next.miniFill,"mini-player progress line takes the new palette");
+      const uint16_t* a=reinterpret_cast<const uint16_t*>(&old);const uint16_t* b=reinterpret_cast<const uint16_t*>(&next);
+      for(unsigned f=0;f<fields;++f){
+        bool kept=false;for(unsigned g=0;g<fields;++g)kept=kept||a[f]==b[g];
+        if(!kept){const int left=themePixels(0,0,w,h,a[f]);check(left<100,("no old-palette rectangle or strip survives the repaint (a few anti-aliasing blends may coincide): role "+std::to_string(f)+" "+std::to_string(left)+" px, theme "+themeName(was)+" -> "+themeName(want)+" r"+std::to_string(rotation)).c_str());}
+      }
+    }
+    check(g_settings.colorTheme==THEME_BLACK,"four releases step Light, Black, High Contrast, Light, Black");
+    g_settings.colorTheme=THEME_LIGHT;
+  }
+  // Selected/pressed spot check: a pressed Home tile shows its ink on the pressed face in every theme.
+  for(uint8_t id:{THEME_LIGHT,THEME_BLACK,THEME_HIGH_CONTRAST}){
+    tft.setRotation(1);g_settings.rotation=1;g_settings.colorTheme=id;const Palette p=theme();
+    home();const Rect t=L::tile<Rect>(tft.width(),tft.height(),0);
+    SCREEN_CLASSIC.press(PRESS_DOWN,t.cx(),t.cy());
+    check(themePixels(t.x+2,t.y+2,t.w-4,t.h-4,p.pressed)>t.w*t.h/3&&themePixels(t.x,t.y,t.w,t.h,p.onPressed)>30,"pressed tile shows its ink on the pressed face");
+    SCREEN_CLASSIC.press(PRESS_UP,t.cx(),t.cy()+80);pump();
+  }
+  g_settings.colorTheme=THEME_LIGHT;tft.setRotation(1);g_settings.rotation=1;
+  std::cout<<"PASS CY-91 themes: Light is v24, Black/HC role contrast (smallest margin Black "<<worst[THEME_BLACK]<<"x, HC "<<worst[THEME_HIGH_CONTRAST]<<"x of floor), Theme row cycles once on release in all rotations, cancel does nothing, full repaint leaves no old-palette strip, pressed ink\n";
+}
+// CY-91 previews: production renders of the real screens, written only when CYDPOD_THEME_PREVIEW names a directory.
+static void themePreviews(){
+  const char* dir=std::getenv("CYDPOD_THEME_PREVIEW");if(!dir)return;
+  namespace L=cydclassic::layout;
+  std::filesystem::create_directories(dir);
+  const char* names[]={"light","black","hc"};
+  auto save=[&](const std::string& name){check(tft.savePng((std::string(dir)+"/"+name+".png").c_str(),1),"theme preview PNG");};
+  for(uint8_t id:{THEME_LIGHT,THEME_BLACK,THEME_HIGH_CONTRAST}){
+    g_settings.colorTheme=id;tft.setRotation(1);g_settings.rotation=1;
+    toPlayer();ui_redraw();pump();save(std::string("player-")+names[id]+"-r1");
+    home();tapTile(5);tapSettingsRow(3);save(std::string("display-")+names[id]+"-r1");
+    home();const Rect t=L::tile<Rect>(tft.width(),tft.height(),0);SCREEN_CLASSIC.press(PRESS_DOWN,t.cx(),t.cy());save(std::string("pressed-tile-")+names[id]+"-r1");
+    SCREEN_CLASSIC.press(PRESS_UP,t.cx(),t.cy()+80);pump();
+    toSongs();{const Rect r=L::row<Rect>(tft.width(),1);SCREEN_CLASSIC.press(PRESS_DOWN,r.cx(),r.cy());save(std::string("pressed-row-")+names[id]+"-r1");SCREEN_CLASSIC.press(PRESS_UP,r.cx(),r.cy()+80);pump();}
+    tft.setRotation(0);g_settings.rotation=0;
+    toPlayer();ui_redraw();pump();save(std::string("player-")+names[id]+"-r0");
+    home();tapTile(5);tapSettingsRow(3);save(std::string("display-")+names[id]+"-r0");
+  }
+  g_settings.colorTheme=THEME_LIGHT;tft.setRotation(1);g_settings.rotation=1;
 }
 // CY-81: the Bluetooth page used to return with ui_go(SCR_PLAYER), which redirected into Classic.
 // It now calls classic_return(); every way out must land where it did before: Settings when
@@ -1098,6 +1202,8 @@ int main(){try{
   miniPlayerRegression();
   homeTilesRegression();
   settingsRegression();
+  themeRegression();
+  themePreviews();
   bluetoothReturns();
   renderInventory();
   SD.root=uiCardRoot;check(storage_begin(nullptr),"navigation card catalogue");playlist_begin();

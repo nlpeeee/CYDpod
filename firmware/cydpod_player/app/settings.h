@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include "board.h"
+#include "theme.h"
 
 enum Language : uint8_t { LANG_EN = 0, LANG_ZH = 1, LANG_COUNT };
 
@@ -34,6 +35,9 @@ struct Settings {
   bool     invert     = CYD_TFT_INVERT;
   uint8_t  rotation   = CYD_ROTATION;       // 0/2 portrait, 1/3 landscape
   uint8_t  brightness = 100;                // backlight %, 10-100
+  // Colour theme (theme.h ColorTheme). Its own NVS key "colorTheme": the retired legacy "theme" key
+  // is never read, written or erased. Absent or out-of-range values select Light.
+  uint8_t  colorTheme = THEME_LIGHT;
 
   // Language of the fixed strings on the Bluetooth, calibration and uploader pages.
   uint8_t  lang       = LANG_EN;

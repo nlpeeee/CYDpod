@@ -159,6 +159,44 @@ int main() {
     CHECK(Preferences::peek("uiRev") == 1, "the migration is recorded");
     printf("settings_route: previous-release blob and retired keys OK\n");
   }
+  // CY-91: the colour theme has its own key, "colorTheme". Absent or invalid selects Light, a valid id
+  // round-trips, and the retired legacy "theme" key is never read, rewritten or erased.
+  {
+    Preferences::erase();
+    reboot();
+    CHECK(g_settings.colorTheme == THEME_LIGHT, "fresh NVS selects Light");
+    for (uint8_t id : {THEME_BLACK, THEME_HIGH_CONTRAST, THEME_LIGHT}) {
+      g_settings.colorTheme = id;
+      g_settings.volume = 21;
+      g_settings.brightness = 70;
+      CHECK(settings_save(), "theme save succeeds");
+      CHECK(Preferences::peek("colorTheme") == id, "theme %d stored under colorTheme", id);
+      reboot();
+      CHECK(g_settings.colorTheme == id && g_settings.volume == 21 && g_settings.brightness == 70, "theme %d and unrelated settings round-trip", id);
+    }
+    for (uint8_t bad : {3, 4, 9, 200, 255}) {
+      Preferences::poke("colorTheme", bad);
+      reboot();
+      CHECK(g_settings.colorTheme == THEME_LIGHT, "stored theme id %d selects Light", bad);
+      CHECK(Preferences::peek("colorTheme") == bad, "reading an invalid id does not rewrite it");
+    }
+    Preferences::store()["colorTheme"] = std::vector<uint8_t>{1, 0};   // wrong size: ignored
+    reboot();
+    CHECK(g_settings.colorTheme == THEME_LIGHT, "a colorTheme entry of another size selects Light");
+    // The legacy key (old builds stored a palette index 0-8 there) is neither interpreted nor touched.
+    Preferences::erase();
+    Preferences::poke("uiRev", 1);
+    Preferences::poke("theme", 2);
+    reboot();
+    CHECK(g_settings.colorTheme == THEME_LIGHT, "legacy theme=2 is not reinterpreted as a colour theme");
+    g_settings.colorTheme = THEME_BLACK;
+    settings_save();
+    CHECK(Preferences::peek("theme") == 2 && Preferences::peek("colorTheme") == THEME_BLACK, "saving keeps the legacy theme key beside colorTheme");
+    Preferences::poke("theme", 8);
+    reboot();
+    CHECK(g_settings.colorTheme == THEME_BLACK && Preferences::peek("theme") == 8, "legacy theme=8 changes nothing");
+    printf("settings_route: colorTheme key OK\n");
+  }
   if (failures) {
     printf("SETTINGS_ROUTE_FAILED %d\n", failures);
     return 1;

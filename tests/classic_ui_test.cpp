@@ -529,6 +529,113 @@ static void geometryGolden(){
   check(actual==expected,"Classic geometry differs from approved golden table");
   std::cout<<"CLASSIC_GEOMETRY_GOLDEN: 17 modes x 4 variants x rotations 0/1/2/3, 240x320 and 320x240\n";
 }
+
+// ---------------------------------------------------------------------------
+// INT-1: labelled render inventory. Every reachable Classic page, in all four rotations,
+// recorded through the same host drawing recorder; layout evidence only (host Arial, not the
+// device bitmap font). Files land in render/ next to the test binary with an inventory.tsv.
+// ---------------------------------------------------------------------------
+struct RenderEntry{std::string file,page,state,labels;unsigned rotation;int w,h;};
+static std::vector<RenderEntry> renderLog;
+static void shot(const char* page,const char* state,const char* expect,bool fresh=true){
+  if(fresh){ui_redraw();pump();}  // a full repaint, so the SVG and the label list describe exactly this page
+  const std::string tag=std::string(page)+"/"+state+" r"+std::to_string(tft.getRotation());
+  if(expect&&!label(expect)){std::string seen;for(const auto& l:tft.labels)seen+="["+l+"]";check(false,("render inventory marker '"+std::string(expect)+"' missing in "+tag+"; labels: "+seen).c_str());}
+  const std::string file=std::string("render/")+page+"-"+state+"-r"+std::to_string(tft.getRotation())+".svg";
+  tft.save(file.c_str());
+  std::string labels;int n=0;for(const auto& l:tft.labels){if(n++)labels+="|";labels+=l;if(n>=16)break;}
+  renderLog.push_back({file,page,state,labels,tft.getRotation(),tft.width(),tft.height()});
+}
+static void tapRow(int i){const Rect r=cydclassic::layout::row<Rect>(tft.width(),i);tap(r.cx(),r.cy());}
+static void tapRect(const Rect& r){tap(r.cx(),r.cy());}
+// Settings has 7 rows: past the visible ones, page down first and use the real scroll position.
+static void tapSettingsRow(int idx){
+  namespace L=cydclassic::layout;
+  if(idx>=L::rows(tft.height()))tapRect(L::pageStrip<Rect>(tft.width(),tft.height(),true));
+  tapRow(idx-classic_top());
+}
+static void tapBackButton(){tap(cydclassic::layout::HeaderBackX,cydclassic::layout::HeaderTextY);}
+// Keys are found through the real hit map; 1000 is the key target base in classic_screen.cpp.
+static bool findKey(char c,int& x,int& y){
+  for(int yy=cydclassic::layout::KeyY;yy<tft.height();yy+=4)for(int xx=0;xx<tft.width();xx+=4)if(classic_target(xx,yy)==1000+c){x=xx;y=yy;return true;}
+  return false;
+}
+static void typeQuery(const char* s){
+  namespace L=cydclassic::layout;
+  for(;*s;++s){int x=0,y=0;
+    for(int attempt=0;attempt<2&&!findKey(*s,x,y)&&tft.height()<L::PortraitMinH;++attempt)tapRect(L::keyPage<Rect>());
+    check(findKey(*s,x,y),(std::string("search key reachable through the hit map: ")+*s+" r"+std::to_string(tft.getRotation())).c_str());tap(x,y);
+  }
+  pump();
+}
+static void tapDialogCancel(){
+  const int W=tft.width(),H=tft.height(),w=std::min(W-SP_L*2,296),h=150,rx=(W-w)/2,ry=(H-h)/2,bh=44,by=ry+h-SP_M-bh,bw=(w-SP_M*3)/2;
+  tap(rx+SP_M+bw/2,by+bh/2);
+}
+static void renderInventory(){
+  namespace L=cydclassic::layout;
+  std::filesystem::create_directories("render");
+  // A second card with an accented title so Search can show the CY-64 folding end to end.
+  std::ifstream input("metadata-real.m4a",std::ios::binary);std::vector<char> original((std::istreambuf_iterator<char>(input)),{});
+  const std::string tagText="Actual tagged fixture";auto found=std::search(original.begin(),original.end(),tagText.begin(),tagText.end());
+  check(found!=original.end(),"locate fixture title");const size_t pos=size_t(found-original.begin());
+  SD.root=std::filesystem::current_path()/("render-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(SD.root/"music/Example");
+  const char* titles[]={"Beyonc\xC3\xA9","Song 00","Song 01","Song 02","Song 03"};
+  for(int i=0;i<5;++i){auto bytes=original;memset(bytes.data()+pos,0,tagText.size());memcpy(bytes.data()+pos,titles[i],strlen(titles[i]));
+    char name[32];snprintf(name,sizeof(name),"Track %02d.m4a",i);std::ofstream out(SD.root/"music/Example"/name,std::ios::binary);out.write(bytes.data(),bytes.size());}
+  check(storage_begin(nullptr)&&storage_trackCount()==5,"render card catalogue");playlist_begin();
+  g_settings.screenTimeout=0;g_settings.outRoute=OUT_BT;btConnected=true;routeAllowed=true;
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);queueLength=0;queueData=nullptr;playing=false;
+    home();shot("home","idle-no-queue","Songs");
+    tapTile(0);shot("songs","populated","Song 00");
+    home();tapTile(1);shot("artists","populated","Fixture Artist");
+    home();tapTile(2);shot("albums","populated","Fixture Album");
+    home();tapTile(3);shot("playlists","menu","Favourites");
+    tapRow(0);shot("favourites","empty-list-notice","Unable to read list or allocate memory. Try again.");
+    tapBackButton();tapRow(1);shot("folders","populated","Example");
+    tapRow(0);shot("folder-songs","populated","Song 00");
+    // Search: empty keyboard, a typed query, an accented match, a miss, and the digit page.
+    home();tapTile(4);tapRect(L::action<Rect>(0,tft.height(),1));
+    {int x=0,y=0;if(!findKey('a',x,y)&&tft.height()<L::PortraitMinH)tapRect(L::keyPage<Rect>());}  // first letter page
+    shot("search-keyboard","letters-empty","Search Songs");
+    typeQuery("beyonce");shot("search-keyboard","typed-beyonce","Search Songs");
+    tapRect(L::action<Rect>(0,tft.height(),2,true));pump();
+    shot("search-results","beyonce-accented-match",nullptr);
+    check(storage_searchCount()==1,"beyonce finds the accented title");
+    tapRow(0);tapRect(L::action<Rect>(0,tft.height(),1));typeQuery("zzz");tapRect(L::action<Rect>(0,tft.height(),2,true));pump();
+    shot("search-results","no-matches","No matches");
+    tapRow(0);tapRect(L::keyDigits<Rect>(tft.height()));shot("search-keyboard","digits","9");tapRect(L::keyDigits<Rect>(tft.height()));
+    // Settings tree.
+    home();tapTile(5);shot("settings","menu","Audio Output");
+    ui_confirm(T_FORGET_Q,T_FORGET_HINT,T_COUNT,T_FORGET,nullptr);shot("dialog","confirm-forget-device",nullptr,false);tapDialogCancel();
+    ui_confirm(T_PIN_RESET_Q,T_PIN_RESET_1,T_PIN_RESET_2,T_RESET,nullptr);shot("dialog","confirm-reset-pin",nullptr,false);tapDialogCancel();
+    home();tapTile(5);tapRow(0);shot("output","bluetooth-selected","Audio Output");
+#if CYD_WIRED_OUTPUT
+    g_settings.outRoute=OUT_WIRED;ui_redraw();pump();shot("output","headphones-selected","Headphones");
+    ui_go(SCR_BLUETOOTH);pump();shot("bluetooth","off-headphones-route","Use Bluetooth");g_settings.outRoute=OUT_BT;
+    home();tapTile(5);tapRow(0);routeAllowed=false;tapRow(1);shot("message","output-change-failed","Unable to change output. Try again.");routeAllowed=true;
+#endif
+    home();tapTile(5);tapRow(1);shot("bluetooth","bluetooth-route","Pair new");
+    home();tapTile(5);tapRow(2);shot("playback","menu","Screen timeout");
+    home();tapTile(5);tapRow(3);shot("display","menu","Brightness -");
+    home();tapTile(5);tapSettingsRow(4);shot("refresh-library","confirm","Rebuild and restart");
+    home();tapTile(5);tapSettingsRow(5);shot("setup-legacy","advanced-bridge",nullptr);
+    home();tapTile(5);tapSettingsRow(6);shot("about","menu",nullptr);
+    // Playing: Now Playing (volume slider and output chip), Options, mini-player on Home and in lists.
+    home();tapTile(0);tapRow(1);check(playing&&ui_current()==SCR_CLASSIC,"a song row starts playback");
+    shot("nowplaying","playing","Fixture Artist");
+    tapRect(L::options<Rect>(tft.width()));shot("options","menu","Favourite");
+    tapRow(3);shot("output","from-options-bluetooth-selected","Audio Output");
+    home();shot("home","playing-mini-player","Songs");
+    tapTile(0);shot("songs","with-mini-player","Song 00");
+  }
+  tft.setRotation(0);home();
+  std::ofstream tsv("render/inventory.tsv");tsv<<"file\trotation\tsize\tpage\tstate\tfirst_labels\n";
+  for(const auto& e:renderLog)tsv<<e.file<<'\t'<<e.rotation<<'\t'<<e.w<<'x'<<e.h<<'\t'<<e.page<<'\t'<<e.state<<'\t'<<e.labels<<'\n';
+  std::cout<<"RENDER_INVENTORY_OK: "<<renderLog.size()<<" SVG renders, rotations 0/1/2/3, see render/inventory.tsv\n";
+}
 int main(){try{
   geometryGolden();
   g_settings.screenTimeout=0;g_settings.theme=8;g_settings.style=7;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
@@ -672,6 +779,7 @@ int main(){try{
   touchRegression();
   miniPlayerRegression();
   homeTilesRegression();
+  renderInventory();
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;

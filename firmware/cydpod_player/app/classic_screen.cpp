@@ -368,18 +368,26 @@ void volumeAt(int x){
   const int value=L::sliderValue(x,s.x,s.w,100);
   if(value!=audio_volume()){audio_setVolume(value);g_settings.volume=audio_volume();volumeChanged=true;}
 }
-// ui_button normally insets its face. Clip an expanded cell so the painted
-// Player face, as well as its hit target, matches the proposal's rectangle.
+// Preserve the old expand-by-3 nominal GLYPH field, while composing the new
+// face inside the ORIGINAL cell. Passing an expanded rectangle would resize
+// the C pill and clip its 2 px inset; passing no override would shrink icons.
 void playerButton(const Rect& r,Icon icon,bool active,bool pressed){
-  const int inset=STYLE_INSET;tft.setViewport(r.x,r.y,r.w,r.h);
-  ui_button({-inset,-inset,r.w+2*inset,r.h+2*inset},icon,active,pressed);tft.resetViewport();
+  ui_button(r,icon,active,pressed,min(r.w+2*STYLE_INSET,r.h+2*STYLE_INSET)*3/5);
 }
-void playerTransport(){
-  playerButton(transportRect(Prev),ICON_PREV,false,playerPressed==Prev);
-  playerButton(transportRect(Play),audio_isPlaying()?ICON_PAUSE:ICON_PLAY,audio_isPlaying(),playerPressed==Play);
-  playerButton(transportRect(Next),ICON_NEXT,false,playerPressed==Next);
-  playerButton(L::playerToggle<Rect>(tft.width(),tft.height(),false),ICON_SHUFFLE,audio_shuffle(),playerPressed==Shuffle);
-  playerButton(L::playerToggle<Rect>(tft.width(),tft.height(),true),audio_repeat()==REPEAT_ONE?ICON_REPEAT_ONE:ICON_REPEAT,audio_repeat()!=REPEAT_OFF,playerPressed==Repeat);
+void playerTransport(bool force=false){
+  // Only changed cells repaint. Full page entry forces all five, including
+  // after rotation/theme/page clears. This is state, not pixel scratch storage.
+  static uint8_t shown[5]={255,255,255,255,255};
+  auto cell=[&](unsigned i,const Rect& r,Icon icon,bool active,int target){
+    const bool pressed=playerPressed==target;
+    const uint8_t state=uint8_t(icon)|(active?32:0)|(pressed?64:0);
+    if(force||shown[i]!=state){playerButton(r,icon,active,pressed);shown[i]=state;}
+  };
+  cell(0,transportRect(Prev),ICON_PREV,false,Prev);
+  cell(1,transportRect(Play),audio_isPlaying()?ICON_PAUSE:ICON_PLAY,audio_isPlaying(),Play);
+  cell(2,transportRect(Next),ICON_NEXT,false,Next);
+  cell(3,L::playerToggle<Rect>(tft.width(),tft.height(),false),ICON_SHUFFLE,audio_shuffle(),Shuffle);
+  cell(4,L::playerToggle<Rect>(tft.width(),tft.height(),true),audio_repeat()==REPEAT_ONE?ICON_REPEAT_ONE:ICON_REPEAT,audio_repeat()!=REPEAT_OFF,Repeat);
   shownPlaying=audio_isPlaying();
 }
 void playerBar(const Rect& r,int value,int maximum){
@@ -486,7 +494,7 @@ void enter(){
   count=rowCount();shownSerial=UINT32_MAX;tft.fillScreen(theme().bg);header();footer();
   shownVolume=shownConnection=-1;
   if(page().mode==Mode::Keyboard){keyboardPaint();searchShownCount=searchShownProgress=-1;}
-  else if(page().mode==Mode::Player){playerTrack();playerTransport();playerBottom();lastPlayer=0;playerTick(millis());}
+  else if(page().mode==Mode::Player){playerTrack();playerTransport(true);playerBottom();lastPlayer=0;playerTick(millis());}
   else if(page().mode==Mode::Home)paintTiles();
   else if(page().mode==Mode::Message){
     // Bounded, word-wrapped ASCII status text; music labels use cached UTF-8 strips.

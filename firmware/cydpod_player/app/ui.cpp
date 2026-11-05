@@ -4,159 +4,74 @@
 #include "titles.h"
 #include "sleep_mode.h"
 
-// ---------------------------------------------------------------------------
-// Icons
-// ---------------------------------------------------------------------------
-static void speaker(int cx, int cy, int s, uint16_t fg) {
-  // Box plus cone, left of centre so a +/- fits on the right.
-  const int bx = cx - s / 2, bh = s / 3;
-  tft.fillRect(bx, cy - bh / 2, s / 5, bh, fg);
-  tft.fillTriangle(bx + s / 5 - 1, cy - bh / 2, bx + s / 2, cy - s / 2,
-                   bx + s / 5 - 1, cy + bh / 2, fg);
-  tft.fillTriangle(bx + s / 5 - 1, cy + bh / 2, bx + s / 2, cy - s / 2,
-                   bx + s / 2, cy + s / 2, fg);
+// Selected CY-87 C assets are memory-mapped flash on ESP32. No mutable asset cache.
+#include "ui_icons.h"
+
+namespace {
+// Largest installed icon-control cell is the Player's 80 x 52 play target.
+constexpr int IconRowPixels = 80;
+// checkViewport clips in the driver's logical coordinate system, including a
+// translated or screen-clipped viewport. setAddrWindow itself DOES NOT clip or
+// add that origin, so do both explicitly before opening the single window.
+bool iconClip(Rect& r){
+  if(r.w<=0||r.h<=0||!tft.checkViewport(r.x,r.y,r.w,r.h))return false;
+  while(!tft.checkViewport(r.x,r.y,1,r.h)){++r.x;--r.w;}
+  while(!tft.checkViewport(r.x+r.w-1,r.y,1,r.h))--r.w;
+  while(!tft.checkViewport(r.x,r.y,r.w,1)){++r.y;--r.h;}
+  while(!tft.checkViewport(r.x,r.y+r.h-1,r.w,1))--r.h;
+  return true;
+}
+// Integer RGB565 interpolation, rounded per channel; equal to CY-87 blend565.
+uint16_t iconBlend(uint16_t fg,uint16_t bg,unsigned a){
+  const unsigned b=15-a;
+  return uint16_t((((((fg>>11)&31)*a+((bg>>11)&31)*b+7)/15)<<11)
+    | (((((fg>>5)&63)*a+((bg>>5)&63)*b+7)/15)<<5)
+    | (((fg&31)*a+(bg&31)*b+7)/15));
+}
+// All paint is resolved before a row goes to SPI. A standalone glyph uses its
+// tight crop; a control streams its WHOLE original cell, including cleared
+// corners, border, face, glyph and underline. No SPI primitive calls in the loop.
+void iconStream(Rect cell,const cydicons::Mask& mask,int gx,int gy,uint16_t fg,
+                uint16_t paper,uint16_t face,uint16_t edge,
+                const cydicons::Face* shape,bool underline){
+  Rect clip=cell;
+  if(cell.w>IconRowPixels||!iconClip(clip))return;
+  uint16_t row[IconRowPixels], blend[16]; // 160 + 32 bytes; bounded UI stack only
+  for(unsigned a=0;a<16;++a)blend[a]=iconBlend(fg,face,a);
+  tft.startWrite();
+  tft.setAddrWindow(clip.x+tft.getOriginX(),clip.y+tft.getOriginY(),clip.w,clip.h);
+  for(int y=clip.y;y<clip.y+clip.h;++y){
+    const uint8_t* span=shape?cydicons::spans+shape->offset+4*(y-cell.y):nullptr;
+    for(int col=0;col<clip.w;++col){
+      const int x=clip.x+col,local=x-cell.x;
+      uint16_t c=paper;
+      if(span){
+        if(local>=span[0]&&local<span[1])c=edge;
+        if(local>=span[2]&&local<span[3])c=face;
+      }
+      const unsigned a=cydicons::alpha(mask,x-gx,y-gy);
+      // Optical padding guarantees the glyph falls inside the flat face.
+      if(a)c=blend[a];
+      if(underline&&y==cell.y+cell.h-6&&x>=cell.cx()-3&&x<cell.cx()+3)c=fg;
+      row[col]=c;
+    }
+    tft.pushColors(row,clip.w,true);
+  }
+  tft.endWrite();
+}
 }
 
-void ui_icon(Icon icon, int cx, int cy, int s, uint16_t fg, uint16_t bg) {
-  const int h = s / 2;
-  switch (icon) {
-    case ICON_PLAY:
-      tft.fillTriangle(cx - h * 2 / 3, cy - h, cx - h * 2 / 3, cy + h, cx + h, cy, fg);
-      break;
-    case ICON_PAUSE:
-      tft.fillRect(cx - h * 3 / 4, cy - h, h / 2 + 1, s, fg);
-      tft.fillRect(cx + h / 4, cy - h, h / 2 + 1, s, fg);
-      break;
-    case ICON_NEXT:
-      // A separated stop bar and one filled triangle; exact mirror of Previous.
-      tft.fillTriangle(cx-h,cy-h,cx-h,cy+h,cx+h/2,cy,fg);
-      tft.fillRect(cx+h-2,cy-h,max(3,s/7),s,fg);
-      break;
-    case ICON_PREV:
-      tft.fillTriangle(cx+h,cy-h,cx+h,cy+h,cx-h/2,cy,fg);
-      tft.fillRect(cx-h-max(3,s/7)+3,cy-h,max(3,s/7),s,fg);
-      break;
-    case ICON_GEAR: {
-      const int r = h * 3 / 4;
-      for (int i = 0; i < 8; i++) {
-        const float a = i * PI / 4;
-        const int tx = cx + cos(a) * r, ty = cy + sin(a) * r;
-        tft.fillCircle(tx, ty, max(2, s / 9), fg);
-      }
-      tft.fillCircle(cx, cy, r, fg);
-      tft.fillCircle(cx, cy, r / 2, bg);
-      break;
-    }
-    case ICON_SPEAKER: {
-      // The cone the volume buttons use, with two strokes of sound instead of
-      // a +/-: this one says where the audio goes, not louder or quieter.
-      speaker(cx - s / 6, cy, s, fg);
-      const int wx = cx + s / 4;
-      tft.drawLine(wx, cy - s / 6, wx, cy + s / 6, fg);
-      tft.drawLine(wx + 3, cy - s / 3, wx + 3, cy + s / 3, fg);
-      break;
-    }
-    case ICON_HEADPHONES: {
-      // Band over the top, a cup at each end.
-      const int rr = h * 3 / 4 + 1, ay = cy + h / 6;
-      int px = cx - rr, py = ay;
-      for (int i = 1; i <= 12; ++i) {
-        const float a = PI + i * PI / 12;
-        const int x = cx + (int)(cos(a) * rr), y = ay + (int)(sin(a) * rr);
-        tft.drawLine(px, py, x, y, fg);
-        tft.drawLine(px, py + 1, x, y + 1, fg);
-        px = x; py = y;
-      }
-      const int cw = max(4, s / 5), ch = max(5, h * 2 / 3);
-      tft.fillRoundRect(cx - rr - cw / 2, ay - 1, cw, ch, 2, fg);
-      tft.fillRoundRect(cx + rr - cw / 2, ay - 1, cw, ch, 2, fg);
-      break;
-    }
-    case ICON_BLUETOOTH: {
-      // The rune: a vertical stroke with two chevrons on the right.
-      const int t = cy - h, b = cy + h, x0 = cx - h / 2, x1 = cx + h / 2;
-      tft.drawLine(cx, t, cx, b, fg);
-      tft.drawLine(cx, t, x1, cy - h / 2, fg);
-      tft.drawLine(x1, cy - h / 2, x0, cy + h / 2, fg);
-      tft.drawLine(cx, b, x1, cy + h / 2, fg);
-      tft.drawLine(x1, cy + h / 2, x0, cy - h / 2, fg);
-      break;
-    }
-    case ICON_BACK:
-      tft.fillTriangle(cx - h, cy, cx, cy - h, cx, cy + h, fg);
-      tft.fillRect(cx, cy - h / 3, h, h * 2 / 3, fg);
-      break;
-    case ICON_NOTE:
-      tft.fillCircle(cx - h / 2, cy + h * 2 / 3, h / 3, fg);
-      tft.fillCircle(cx + h * 2 / 3, cy + h / 2, h / 3, fg);
-      tft.fillRect(cx - h / 2 + h / 3 - 2, cy - h, 3, h * 5 / 3, fg);
-      tft.fillRect(cx + h * 2 / 3 + h / 3 - 2, cy - h * 7 / 6, 3, h * 5 / 3, fg);
-      tft.fillTriangle(cx - h / 2 + h / 3 - 2, cy - h, cx + h, cy - h * 7 / 6 - 1,
-                       cx + h, cy - h * 2 / 3, fg);
-      tft.fillTriangle(cx - h / 2 + h / 3 - 2, cy - h, cx - h / 2 + h / 3 - 2, cy - h / 2,
-                       cx + h, cy - h * 2 / 3, fg);
-      break;
-    case ICON_SHUFFLE: {
-      // Two crossing paths, arrowheads on the right.
-      const int l = cx - h, r = cx + h - 3, t = cy - h / 2, b = cy + h / 2;
-      tft.drawLine(l, t, r, b, fg);   tft.drawLine(l, t + 1, r, b + 1, fg);
-      tft.drawLine(l, b, r, t, fg);   tft.drawLine(l, b + 1, r, t + 1, fg);
-      tft.fillTriangle(r + 3, t, r - 2, t - 4, r - 2, t + 5, fg);
-      tft.fillTriangle(r + 3, b + 1, r - 2, b - 4, r - 2, b + 5, fg);
-      break;
-    }
-    case ICON_REPEAT:
-    case ICON_REPEAT_ONE: {
-      const int w = s, hh = s * 2 / 3;
-      tft.drawRoundRect(cx - w / 2, cy - hh / 2, w, hh, hh / 3, fg);
-      tft.drawRoundRect(cx - w / 2 + 1, cy - hh / 2 + 1, w - 2, hh - 2, hh / 3, fg);
-      // Break the top edge with an arrowhead pointing right.
-      tft.fillRect(cx - 2, cy - hh / 2 - 1, 5, 4, bg);
-      tft.fillTriangle(cx + 4, cy - hh / 2 + 1, cx - 2, cy - hh / 2 - 4, cx - 2, cy - hh / 2 + 6, fg);
-      if (icon == ICON_REPEAT_ONE) {
-        tft.setTextColor(fg, bg);
-        tft.setTextDatum(MC_DATUM);
-        tft.drawString("1", cx, cy + 1, 1);
-      }
-      break;
-    }
-    case ICON_UP:
-      tft.fillTriangle(cx, cy - h / 2, cx - h, cy + h / 2, cx + h, cy + h / 2, fg);
-      break;
-    case ICON_DOWN:
-      tft.fillTriangle(cx, cy + h / 2, cx - h, cy - h / 2, cx + h, cy - h / 2, fg);
-      break;
-    case ICON_CHEVRON:
-      // A thin arrowhead: "this row opens something".
-      tft.fillTriangle(cx - h / 3, cy - h, cx + h / 2, cy, cx - h / 3, cy + h, fg);
-      tft.fillTriangle(cx - h / 3 - 3, cy - h, cx + h / 2 - 3, cy, cx - h / 3 - 3, cy + h, bg);
-      break;
-    case ICON_STAR: {
-      // Five tips and the pentagon between them, a triangle each.
-      int ox[5], oy[5], ix[5], iy[5];
-      for (int i = 0; i < 5; i++) {
-        const float a = -PI / 2 + i * 2 * PI / 5, b = a + PI / 5;
-        ox[i] = cx + lroundf(cosf(a) * h);
-        oy[i] = cy + lroundf(sinf(a) * h) + h / 8;
-        ix[i] = cx + lroundf(cosf(b) * h * 0.42f);
-        iy[i] = cy + lroundf(sinf(b) * h * 0.42f) + h / 8;
-      }
-      for (int i = 0; i < 5; i++) {
-        const int j = (i + 4) % 5;              // the inner point before this tip
-        tft.fillTriangle(ox[i], oy[i], ix[i], iy[i], ix[j], iy[j], fg);
-        tft.fillTriangle(cx, cy + h / 8, ix[i], iy[i], ix[j], iy[j], fg);
-      }
-      break;
-    }
-    default:
-      break;
-  }
+void ui_icon(Icon icon,int cx,int cy,int size,uint16_t fg,uint16_t bg){
+  const cydicons::Mask* mask=cydicons::find(icon,size);
+  if(!mask)return;
+  const int x=cx-size/2+mask->ox,y=cy-size/2+mask->oy;
+  iconStream({x,y,mask->w,mask->h},*mask,x,y,fg,bg,bg,bg,nullptr,false);
 }
 
 // ---------------------------------------------------------------------------
 // Faces
 // ---------------------------------------------------------------------------
-// The one control shape (style.h): a raised pill with a hairline outline and a
+// Text buttons/dialogs retain their style.h raised face with a hairline outline and a
 // 1 px highlight along its top edge. Every draw clears the touch rectangle to
 // the surface colour first, so a control redrawn leaves nothing of the old
 // shape behind.
@@ -186,9 +101,16 @@ static uint16_t ui_face(const Rect& r, bool active, bool pressed, uint16_t surfa
   return face;
 }
 
-void ui_button(const Rect& r, Icon icon, bool active, bool pressed) {
-  const uint16_t face = ui_face(r, active, pressed, theme().bg);
-  ui_icon(icon, r.cx(), r.cy(), min(r.w, r.h) * 3 / 5, faceInk(active, pressed), face);
+void ui_button(const Rect& r,Icon icon,bool active,bool pressed,int glyphSize){
+  const Palette& p=theme();
+  const cydicons::Mask* mask=cydicons::find(icon,glyphSize?glyphSize:min(r.w,r.h)*3/5);
+  const cydicons::Face* shape=cydicons::face(r.w,r.h);
+  if(!mask||!shape)return;
+  const int size=glyphSize?glyphSize:min(r.w,r.h)*3/5;
+  const uint16_t face=pressed?p.pressed:p.bg;
+  const uint16_t ink=pressed?p.onControlActive:active?p.accent:p.text;
+  iconStream(r,*mask,r.cx()-size/2+mask->ox,r.cy()-size/2+mask->oy,
+             ink,p.bg,face,(active&&!pressed)?p.accent:p.outline,shape,active&&!pressed);
 }
 
 void ui_textButton(const Rect& r, Txt label, bool primary, bool pressed, int32_t surface) {
@@ -196,16 +118,16 @@ void ui_textButton(const Rect& r, Txt label, bool primary, bool pressed, int32_t
   ui_label(label, r.cx(), r.cy(), MC_DATUM, faceInk(primary, pressed), face, r.w - SP_XL);
 }
 
-// A toggle that lives on a header band rather than on the screen: off, it is
-// nothing but its icon; on, the face appears under it.
-void ui_iconToggle(const Rect& r, Icon icon, bool on, uint16_t surface, bool pressed) {
-  const Palette& p = theme();
-  tft.fillRect(r.x, r.y, r.w, r.h, surface);
-  const uint16_t face = pressed ? p.pressed : on ? p.btnActive : surface;
-  tft.fillRoundRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6, STYLE_RADIUS, face);
-  if (on)
-    tft.drawRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6, p.outline);
-  ui_icon(icon, r.cx(), r.cy(), ICON_MD, (on || pressed) ? p.onControlActive : p.dim, face);
+// Favourite follows selected C: hollow off / solid on, filled active/pressed
+// capsule on the header band. The whole 40 x 36 cell is one transfer.
+void ui_iconToggle(const Rect& r,Icon icon,bool on,uint16_t surface,bool pressed){
+  const Palette& p=theme();
+  const cydicons::Mask* mask=cydicons::find(icon,ICON_MD,!on);
+  if(!mask)return;
+  const uint16_t face=pressed?p.pressed:on?p.btnActive:surface;
+  iconStream(r,*mask,r.cx()-ICON_MD/2+mask->ox,r.cy()-ICON_MD/2+mask->oy,
+             (on||pressed)?p.onControlActive:p.dim,surface,face,face,
+             (on||pressed)?cydicons::face(r.w,r.h):nullptr,false);
 }
 
 

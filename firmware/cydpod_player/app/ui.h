@@ -1,9 +1,8 @@
 // ===========================================================================
 // ui.h -- drawing helpers shared by every screen, and the screen switcher
 // ===========================================================================
-// Icons are drawn from primitives (triangles, rects, circles) rather than
-// bitmaps: they scale to any button size, take the theme's colours for free,
-// and cost no flash for a second set when stage 4 adds larger layouts.
+// Selected CY-87 C icons use flash-only 4-bit coverage masks at installed sizes.
+// Each glyph/control is composed into a bounded stack row and streamed once.
 #pragma once
 
 #include <Arduino.h>
@@ -29,9 +28,10 @@ enum TypeRole : uint8_t { TYPE_BODY, TYPE_CAPTION };
 // `size` is the icon's nominal height in px.
 void ui_icon(Icon icon, int cx, int cy, int size, uint16_t fg, uint16_t bg);
 
-// A button, icon centred (style.h). `active` is a control that is on (playing,
+// Quiet outline icon cell, with optional nominal glyph field override. `active` is a control that is on (playing,
 // selected); `pressed` is one with a finger on it right now.
-void ui_button(const Rect& r, Icon icon, bool active = false, bool pressed = false);
+void ui_button(const Rect& r, Icon icon, bool active = false, bool pressed = false,
+               int glyphSize = 0);
 
 // A word in a button face instead of an icon.
 // `surface` is what the button sits on: the screen, or a dialog's panel.

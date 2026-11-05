@@ -960,6 +960,7 @@ static void navigationGraph(){
 }
 unsigned classic_mode();
 #include "text_quality_test.h"
+#include "quiet_outline_test.h"
 int main(){try{
   geometryGolden();
   g_settings.screenTimeout=0;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
@@ -1092,6 +1093,7 @@ int main(){try{
   compactChromeRegression();
   nowPlayingRegression();
   textq::run();
+  iconq::run();
   touchRegression();
   miniPlayerRegression();
   homeTilesRegression();

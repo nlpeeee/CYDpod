@@ -25,7 +25,7 @@
 #define BR_DATUM 8
 class TFT_eSPI {
   std::ostringstream svg;int w=240,h=320,datum=0,font=2,cursorX=0,cursorY=0;
-  uint16_t fg=0,bg=0xffff;bool viewport=false;int clip=0;unsigned rotation=0;
+  uint16_t fg=0,bg=0xffff;bool viewport=false,viewportDatum=false;int clip=0;unsigned rotation=0;
   std::vector<uint16_t> fb=std::vector<uint16_t>(320*320,0xffff);int ox=0,oy=0,cx0=0,cy0=0,cx1=320,cy1=320;
   static std::string color(uint16_t c){char b[16];snprintf(b,sizeof(b),"#%02x%02x%02x",((c>>11)&31)*255/31,((c>>5)&63)*255/63,(c&31)*255/31);return b;}
   static std::string escape(const char* p){std::string s;for(;*p;++p){if(*p=='&')s+="&amp;";else if(*p=='<')s+="&lt;";else if(*p=='>')s+="&gt;";else s+=*p;}return s;}
@@ -34,14 +34,37 @@ class TFT_eSPI {
   std::vector<std::string> labels;std::vector<Ink> inks;int inkAt=-1;long largestFill=0;
   int fillCalls=0,rowFillCalls=0;size_t labelsAtReset=0;
   void resetDrawCounts(){fillCalls=rowFillCalls=0;largestFill=0;labelsAtReset=labels.size();}
-  int width()const{return w;}int height()const{return h;}
+  int width()const{return viewportDatum?viewW:w;}int height()const{return viewportDatum?viewH:h;}
+  int viewW=0,viewH=0;
+  struct Window {int x,y,w,h;unsigned pixels=0,bursts=0;};
+  std::vector<Window> windows;unsigned streamStarts=0,streamEnds=0,pixelCalls=0;
+  void resetStreamCounts(){windows.clear();streamStarts=streamEnds=pixelCalls=0;}
+  int getOriginX()const{return ox;}int getOriginY()const{return oy;}
+  bool checkViewport(int x,int y,int width,int height)const{
+    x+=ox;y+=oy;return width>0&&height>0&&std::max(x,cx0)<std::min(x+width,cx1)&&std::max(y,cy0)<std::min(y+height,cy1);
+  }
+  // Match installed driver's raw API: absolute panel coordinates, NO origin or
+  // viewport clipping. A faulty caller cannot be rescued by the host recorder.
+  void setAddrWindow(int x,int y,int width,int height){
+    if(x<0||y<0||width<=0||height<=0||x+width>w||y+height>h)throw std::runtime_error("unclipped raw address window");
+    windows.push_back({x,y,width,height});
+  }
+  void pushColors(uint16_t* colors,uint32_t n,bool swap=true){
+    if(windows.empty()||!swap)throw std::runtime_error("invalid raw burst");
+    Window& v=windows.back();if(v.pixels+n>unsigned(v.w*v.h))throw std::runtime_error("window overflow");
+    ++v.bursts;
+    for(unsigned i=0;i<n;++i){unsigned at=v.pixels++;int x=v.x+at%v.w,y=v.y+at/v.w;fb[size_t(y)*320+x]=colors[i];}
+    // SVG is secondary geometry evidence; PNG above is the exact RGB565 stream.
+    int start=0;while(start<int(n)){int end=start+1;while(end<int(n)&&colors[end]==colors[start])++end;
+      unsigned at=v.pixels-n+start;svg<<"<rect x='"<<v.x+int(at%v.w)-ox<<"' y='"<<v.y+int(at/v.w)-oy<<"' width='"<<end-start<<"' height='1' fill='"<<color(colors[start])<<"'/>";start=end;}
+  }
   void invertDisplay(bool){}
   unsigned getRotation()const{return rotation;}
-  void setRotation(unsigned r){rotation=r;w=(r&1)?320:240;h=(r&1)?240:320;}
+  void setRotation(unsigned r){rotation=r;w=(r&1)?320:240;h=(r&1)?240:320;resetViewport();}
   void save(const char* file){std::ofstream f(file);f<<"<svg xmlns='http://www.w3.org/2000/svg' width='"<<w<<"' height='"<<h<<"' viewBox='0 0 "<<w<<" "<<h<<"'>"<<svg.str()<<"</svg>";}
-  void fillScreen(uint16_t c){inks.clear();inkAt=-1;ox=oy=0;cx0=cy0=0;cx1=cy1=320;svg.str("");svg.clear();labels.clear();viewport=false;fillRect(0,0,w,h,c);}
+  void fillScreen(uint16_t c){inks.clear();inkAt=-1;ox=oy=0;cx0=cy0=0;cx1=w;cy1=h;svg.str("");svg.clear();labels.clear();viewport=viewportDatum=false;fillRect(0,0,w,h,c);}
   void fbRect(int x,int y,int width,int height,uint16_t c){x+=ox;y+=oy;int x1=std::min({x+width,cx1,w}),y1=std::min({y+height,cy1,h});for(int j=std::max({y,cy0,0});j<y1;++j)for(int i=std::max({x,cx0,0});i<x1;++i)fb[size_t(j)*320+i]=c;}
-  void drawPixel(int x,int y,uint16_t c){fbRect(x,y,1,1,c);}
+  void drawPixel(int x,int y,uint16_t c){++pixelCalls;fbRect(x,y,1,1,c);}
   void fillRect(int x,int y,int width,int height,uint16_t c){inkAt=-1;largestFill=std::max(largestFill,long(width)*height);++fillCalls;fbRect(x,y,width,height,c);if(y>=36&&height==40)++rowFillCalls;if(width>0&&height>0)svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width<<"' height='"<<height<<"' fill='"<<color(c)<<"'/>";}
   void drawRect(int x,int y,int width,int height,uint16_t c){fillRect(x,y,width,1,c);fillRect(x,y+height-1,width,1,c);fillRect(x,y,1,height,c);fillRect(x+width-1,y,1,height,c);}
   void fbRound(int x,int y,int width,int height,int r,uint16_t c,bool ring){for(int j=0;j<height;++j)for(int i=0;i<width;++i){auto in=[&](int a,int b,int rr,int wd,int ht){int dx=a<rr?rr-a:a>=wd-rr?a-(wd-rr-1):0,dy=b<rr?rr-b:b>=ht-rr?b-(ht-rr-1):0;return dx*dx+dy*dy<=rr*rr+rr/2;};bool inside=in(i,j,r,width,height);if(ring&&inside&&width>2&&height>2&&i>0&&j>0&&i<width-1&&j<height-1&&in(i-1,j-1,std::max(0,r-1),width-2,height-2))inside=false;if(inside)fbRect(x+i,y+j,1,1,c);}}
@@ -63,11 +86,15 @@ class TFT_eSPI {
   void setTextFont(unsigned f){font=f;}
   void setTextWrap(bool){}
   void noteLabel(const char* text){labels.push_back(text);inks.push_back({text,9999,9999,-1,-1,false});inkAt=int(inks.size())-1;}
-  void startWrite(){}
-  void endWrite(){inkAt=-1;}
+  void startWrite(){++streamStarts;}
+  void endWrite(){++streamEnds;inkAt=-1;}
   void setCursor(int x,int y){cursorX=x;cursorY=y;}
-  void setViewport(int x,int y,int width,int height){resetViewport();ox=x;oy=y;cx0=x;cy0=y;cx1=x+width;cy1=y+height;++clip;svg<<"<defs><clipPath id='clip"<<clip<<"'><rect width='"<<width<<"' height='"<<height<<"'/></clipPath></defs><g transform='translate("<<x<<","<<y<<")' clip-path='url(#clip"<<clip<<")'>";viewport=true;}
-  void resetViewport(){ox=oy=0;cx0=cy0=0;cx1=cy1=320;if(viewport){svg<<"</g>";viewport=false;}}
+  void setViewport(int x,int y,int width,int height,bool vpDatum=true){
+    resetViewport();ox=vpDatum?x:0;oy=vpDatum?y:0;viewW=width;viewH=height;viewportDatum=vpDatum;
+    cx0=std::max(0,x);cy0=std::max(0,y);cx1=std::min(w,x+width);cy1=std::min(h,y+height);
+    ++clip;svg<<"<defs><clipPath id='clip"<<clip<<"'><rect width='"<<width<<"' height='"<<height<<"'/></clipPath></defs><g transform='translate("<<ox<<","<<oy<<")' clip-path='url(#clip"<<clip<<")'>";viewport=true;
+  }
+  void resetViewport(){ox=oy=0;cx0=cy0=0;cx1=w;cy1=h;viewportDatum=false;if(viewport){svg<<"</g>";viewport=false;}}
   void drawString(const String& s,int x,int y,unsigned f=2){int width=textWidth(s,f),height=fontHeight(f);int left=x-(datum%3==1?width/2:datum%3==2?width:0),top=y-(datum/3==1?height/2:datum/3==2?height:0);
     fillRect(left,top,width,height,bg);glyphs(s,left,top,f);labels.push_back(s.c_str());inks.push_back({s.c_str(),left+ox,top+oy,left+ox+width,top+oy+height,true});svg<<"<text x='"<<left<<"' y='"<<top+height-3<<"' font-family='Arial,sans-serif' font-size='"<<(f==1?9:16)<<"' fill='"<<color(fg)<<"'>"<<escape(s.c_str())<<"</text>";
   }

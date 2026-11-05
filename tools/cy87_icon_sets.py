@@ -1363,11 +1363,180 @@ def validate_png(path, expected=None):
     return dims
 
 
+def export_c(root):
+    """CY-90 production export of the selected C shapes. No changes to vec/rasterise.
+    High nibble first; each row has its own ceil(width/2) stride. Face spans use
+    the existing TFT_eSPI primitive ports above, never a runtime rasteriser.
+    """
+    names = ['prev', 'play', 'pause', 'next', 'gear', 'bluetooth', 'back', 'note',
+             'shuffle', 'repeat', 'repeat1', 'up', 'down', 'chevron', 'speaker', 'star', 'headphones', 'star_off']
+    data, records, hashes = [], [], []
+    for name in names:
+        for size in SIZES:
+            b = rasterise(name, size, 'C')
+            stride = (b['w'] + 1) // 2
+            records.append((len(data), b['w'], b['h'], stride, b['ox'], b['oy']))
+            h = 2166136261
+            for row in b['a4']:
+                for a in row:
+                    h = ((h ^ a) * 16777619) & 0xffffffff
+                for x in range(0, b['w'], 2):
+                    data.append((row[x] << 4) | (row[x+1] if x+1 < b['w'] else 0))
+            hashes.append(h)
+    def array(values, count=20):
+        return '\n'.join('  ' + ','.join(str(v) for v in values[i:i+count]) + ',' for i in range(0, len(values), count))
+    faces, face_records = [], []
+    for w, h, inset, border in [(36,48,2,1),(52,48,2,1),(70,48,2,1),(80,52,2,1),(40,36,3,0)]:
+        cv = Canvas(w,h)
+        radius = min(w-2*inset,h-2*inset)//2
+        cv.fill_round_rect(inset,inset,w-2*inset,h-2*inset,radius,1)
+        if border:
+            cv.draw_round_rect(inset,inset,w-2*inset,h-2*inset,radius,2)
+        face_records.append((len(faces),w,h))
+        for y in range(h):
+            row=cv.px[y*w:(y+1)*w]
+            outer=[x for x,c in enumerate(row) if c]
+            inner=[x for x,c in enumerate(row) if c==1]
+            span=[min(outer),max(outer)+1] if outer else [0,0]
+            span += [min(inner),max(inner)+1] if inner else [0,0]
+            # Verify every pixel can be represented by two nested spans.
+            assert all(row[x] == (1 if span[2]<=x<span[3] else 2 if span[0]<=x<span[1] else 0) for x in range(w))
+            faces.extend(span)
+    app=root/'firmware/cydpod_player/app'
+    header = """// Generated from CY-87 option C by tools/cy87_icon_sets.py --export-c.
+// Original icon shapes; TFT_eSPI face-span provenance retained in the generator.
+#pragma once
+#include <Arduino.h>
+namespace cydicons {
+struct Mask { uint32_t offset; uint8_t w,h,stride; int8_t ox,oy; uint8_t reserved[3]; };
+struct Face { uint16_t offset; uint8_t w,h; };
+static_assert(sizeof(Mask)==12, "flash mask metadata size");
+extern const uint8_t coverage[];
+extern const Mask masks[162];
+extern const uint8_t spans[];
+extern const Face faces[5];
+const Mask* find(unsigned icon, int size, bool starOff=false);
+const Face* face(int w,int h);
+uint8_t alpha(const Mask& mask,int x,int y);
+}
+"""
+    cpp = """// Generated; reproduce with python -I tools/cy87_icon_sets.py --export-c.
+#include "ui_icons.h"
+#ifndef PROGMEM
+#define PROGMEM
+#endif
+namespace cydicons {
+const uint8_t coverage[] PROGMEM = {
+""" + array(data) + '\n};\nconst Mask masks[162] PROGMEM = {\n'
+    cpp += '\n'.join('  {%d,%d,%d,%d,%d,%d,{0,0,0}},' % r for r in records)
+    cpp += '\n};\nconst uint8_t spans[] PROGMEM = {\n'+array(faces)+'\n};\nconst Face faces[5] PROGMEM = {\n'
+    cpp += '\n'.join('  {%d,%d,%d},' % r for r in face_records)
+    cpp += """
+};
+const Mask* find(unsigned icon,int size,bool starOff){
+  if(icon<1 || icon>17)return nullptr;
+  const int sizes[]={12,14,16,18,24,25,28,32,34};
+  for(unsigned i=0;i<9;++i)if(size==sizes[i])return &masks[((starOff&&icon==16)?17:icon-1)*9+i];
+  return nullptr;
+}
+const Face* face(int w,int h){for(const Face& f:faces)if(f.w==w&&f.h==h)return &f;return nullptr;}
+uint8_t alpha(const Mask& m,int x,int y){
+  if(x<0||y<0||x>=m.w||y>=m.h)return 0;
+  const uint8_t v=coverage[m.offset+y*m.stride+x/2];
+  return (x&1)?(v&15):(v>>4);
+}
+}
+"""
+    (app/'ui_icons.h').write_text(header)
+    (app/'ui_icons.cpp').write_text(cpp)
+    golden=root/'tests/golden/quiet_outline_masks.txt'
+    golden.write_text(''.join(f'{n} {z} {h:08x}\n' for (n,z),h in zip(((n,z) for n in names for z in SIZES),hashes)))
+    print(f'CY90_EXPORT_OK: {len(records)} masks, {len(data)} coverage bytes, {len(records)*12} metadata bytes, {len(faces)} span bytes, {len(face_records)*4} face metadata bytes')
+
+
+def verify_production(directory):
+    """Independent selected-C pixel oracle: compare production PNG streams with
+    CY-87 source shapes/primitive ports, not with the exported packed arrays.
+    Also losslessly recompresses host PNGs (no raster changes).
+    """
+    def read(path):
+        validate_png(path)
+        raw=path.read_bytes(); at=8; z=b''
+        while at<len(raw):
+            n=struct.unpack('>I',raw[at:at+4])[0];kind=raw[at+4:at+8];data=raw[at+8:at+8+n];at+=12+n
+            if kind==b'IHDR': w,h=struct.unpack('>II',data[:8])
+            if kind==b'IDAT': z+=data
+        scan=zlib.decompress(z);assert len(scan)==h*(w*3+1)
+        pixels=[]
+        for y in range(h):
+            row=scan[y*(w*3+1):(y+1)*(w*3+1)];assert row[0]==0
+            pixels += [c565(*row[i:i+3]) for i in range(1,len(row),3)]
+        # Re-encode only the PNG compression; retain every exact RGB byte.
+        def chunk(k,d):return struct.pack('>I',len(d))+k+d+struct.pack('>I',zlib.crc32(k+d)&0xffffffff)
+        hdr=struct.pack('>IIBBBBB',w,h,8,2,0,0,0)
+        path.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',hdr)+chunk(b'IDAT',zlib.compress(scan,9))+chunk(b'IEND',b''))
+        return w,h,pixels
+    names = ['prev','play','pause','next','gear','bluetooth','back','note','shuffle','repeat','repeat1','up','down','chevron','speaker','star','headphones']
+    checked=0
+    def compare(path,cv,rect=None):
+        nonlocal checked
+        w,h,pixels=read(directory/path);assert (w,h)==(cv.w,cv.h),path
+        x0,y0,ww,hh=rect or (0,0,w,h)
+        errors=[(x,y) for y in range(y0,y0+hh) for x in range(x0,x0+ww) if pixels[y*w+x]!=cv.px[y*w+x]]
+        assert not errors,(path,len(errors),errors[:4])
+        checked+=ww*hh
+    for size in SIZES:
+        cv=Canvas(320,240,LIGHT.bg)
+        for i,name in enumerate(names): C_icon(cv,name,26+i%6*52,28+i//6*56,size,LIGHT.text,LIGHT.bg)
+        C_icon(cv,'star_off',286,140,18,LIGHT.dim,LIGHT.bg)
+        compare(Path(f'catalogue-{size}.png'),cv)
+    for st,state in enumerate(('normal','pressed','active','repeat1')):
+        cv=Canvas(320,240,LIGHT.bg);transport(cv,'C',LIGHT,y=146,state=state)
+        compare(Path(f'transport-{st}.png'),cv)
+    cv=Canvas(320,240,LIGHT.band)
+    for st in range(4): favourite(cv,'C',LIGHT,20+st*70,20,bool(st&1),st>=2)
+    compare(Path('favourite-states.png'),cv)
+    for rotation in (0,1,3):
+        w,h=(240,320) if rotation==0 else (320,240)
+        cells=[(0,h-92,52 if w==320 else 36,48),(56 if w==320 else 40,h-92,70 if w==320 else 36,48),
+               (130 if w==320 else 80,h-94,80,52),(214 if w==320 else 164,h-92,70 if w==320 else 36,48),(w-36,h-92,36,48)]
+        for st in range(4):
+            cv=Canvas(w,h,LIGHT.bg)
+            for i,(r,name) in enumerate(zip(cells,['shuffle','prev','play','next','repeat'])):
+                state='normal'
+                if st==1 and i==2: name,state='pause','pressed'
+                if st==2 and i in (0,2,4): state='active';name='pause' if i==2 else name
+                if st==3 and i==4: name,state='repeat1','active'
+                control(cv,'C',LIGHT,r,name,state)
+                compare(Path(f'player-r{rotation}-s{st}.png'),cv,r)
+    # A deliberately retained old expanded wrapper gives a visibly different
+    # face and field. The independent oracle must reject that implementation.
+    correct=Canvas(320,240,LIGHT.bg);wrong=Canvas(320,240,LIGHT.bg)
+    control(correct,'C',LIGHT,(130,146,80,52),'play')
+    control(wrong,'C',LIGHT,(127,143,86,58),'play')
+    negative=sum(a!=b for a,b in zip(correct.px,wrong.px));assert negative>100
+    for path in directory.glob('*.png'):
+        w,h,px=read(path)
+        if path.stem.endswith('-x4'):
+            nw,nh,native=read(path.with_name(path.name.replace('-x4','')))
+            assert (w,h)==(nw*4,nh*4)
+            assert all(px[y*w+x]==native[(y//4)*nw+x//4] for y in range(h) for x in range(w)),path
+    print(f'CY90_PIXELS_OK: {checked} independently expected production pixels; expanded-wrapper negative control differs at {negative} pixels; all native/x4 PNG CRCs and exact replications verified')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--verify-production', type=Path, help='verify actual host-rendered PNGs against selected C source and recompress losslessly')
+    parser.add_argument('--export-c', action='store_true', help='export selected C flash assets and independent mask fingerprints only')
     parser.add_argument('--fonts')
     parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parents[1] / 'docs/research/cy87-icon-options')
     args = parser.parse_args()
+    if args.verify_production:
+        verify_production(args.verify_production)
+        return
+    if args.export_c:
+        export_c(Path(__file__).resolve().parents[1])
+        return
     fonts = find_font_dir(args.fonts)
     for face, stem in [('label', 'FreeSans9pt7b'), ('compact', 'FreeSansBold9pt7b'), ('title', 'FreeSansBold12pt7b')]:
         FONTS[face] = GfxFont(fonts / (stem + '.h'), stem)

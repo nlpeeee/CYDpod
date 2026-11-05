@@ -31,14 +31,17 @@ constexpr int PlayerTextH=70,PlayerTextTop=40,PlayerTextInset=14;
 constexpr int PlayerTimeBottom=105,PlayerTimeClearBottom=112,PlayerTimeClearH=18;
 constexpr int ProgressInset=14,ProgressBottom=124,ProgressH=8,KnobR=8,KnobBorder=2;
 constexpr int SeekInset=6,SeekBottom=140,SeekH=40,TransportBottom=92,ControlH=52;
-// Output chip: 9 pt text needs 108 px (84 portrait) to show a Bluetooth peer name; the volume track takes the rest.
-constexpr int PlayerBottomH=40,PlayerChipWideW=108,PlayerChipNarrowW=84,PlayerChipInset=6,PlayerChipGap=4,PlayerChipH=30,PlayerChipRadius=6;
-constexpr int PlayerVolumeX=44,PlayerVolumeBottom=24;
+// Output chip: no icon, so the 9 pt text gets the width: "Headphones" is 102 px and "AirPods Pro 2" 111 px.
+// The volume track takes the rest.
+constexpr int PlayerBottomH=40,PlayerChipWideW=124,PlayerChipNarrowW=114,PlayerChipInset=6,PlayerChipGap=4,PlayerChipH=30,PlayerChipRadius=6;
+constexpr int PlayerVolumeWideX=44,PlayerVolumeNarrowX=28,PlayerVolumeBottom=24,PlayerSpeakerWideX=20,PlayerSpeakerNarrowX=14;
 constexpr int WideMinW=300; // the 320 px landscapes
 constexpr inline int chipW(int w){return w>=WideMinW?PlayerChipWideW:PlayerChipNarrowW;}
 constexpr inline int outputHitW(int w){return chipW(w)+2*PlayerChipInset;}
-constexpr int PlayerSpeakerX=20,PlayerSpeakerSize=16,PlayerNumberGap=10,PlayerNumberW=30,PlayerNumberClearH=20;
-constexpr int PlayerDotsGap=6,PlayerDotR=2,PlayerChipTextInset=28,PlayerChipIconInset=14,PlayerChipPlainTextInset=8;
+constexpr inline int playerVolumeX(int w){return w>=WideMinW?PlayerVolumeWideX:PlayerVolumeNarrowX;}
+constexpr inline int playerSpeakerX(int w){return w>=WideMinW?PlayerSpeakerWideX:PlayerSpeakerNarrowX;}
+constexpr int PlayerSpeakerSize=16,PlayerNumberGap=10,PlayerNumberW=30,PlayerNumberClearH=20;
+constexpr int PlayerDotsGap=6,PlayerDotR=2,PlayerChipTextInset=6,PlayerChipTextPad=3;
 constexpr inline int playerTextOffset(int h){return (h-240)/2;}
 template<class R> constexpr inline R playerBack(){return {0,0,PlayerBackW,PlayerHeaderHitH};}
 template<class R> constexpr inline R favourite(int w){return {w-PlayerFavouriteInset,0,40,PlayerHeaderHitH};}
@@ -52,7 +55,7 @@ template<class R> constexpr inline R playerToggle(int w,int h,bool repeat){retur
 template<class R> constexpr inline R seek(int w,int h){return {SeekInset,h-SeekBottom,w-2*SeekInset,SeekH};}
 template<class R> constexpr inline R progress(int w,int h){return {ProgressInset,h-ProgressBottom,w-2*ProgressInset,ProgressH};}
 template<class R> constexpr inline R playerVolume(int w,int h){return {0,h-PlayerBottomH,w-outputHitW(w),PlayerBottomH};}
-template<class R> constexpr inline R playerVolumeTrack(int w,int h){return {PlayerVolumeX,h-PlayerVolumeBottom,w-PlayerChipInset-chipW(w)-PlayerChipGap-PlayerNumberW-PlayerNumberGap-PlayerVolumeX,ProgressH};}
+template<class R> constexpr inline R playerVolumeTrack(int w,int h){return {playerVolumeX(w),h-PlayerVolumeBottom,w-PlayerChipInset-chipW(w)-PlayerChipGap-PlayerNumberW-PlayerNumberGap-playerVolumeX(w),ProgressH};}
 template<class R> constexpr inline R output(int w,int h){return {w-outputHitW(w),h-PlayerBottomH,outputHitW(w),PlayerBottomH};}
 template<class R> constexpr inline R outputFace(int w,int h){return {w-PlayerChipInset-chipW(w),h-PlayerBottomH+(PlayerBottomH-PlayerChipH)/2,chipW(w),PlayerChipH};}
 // Shared endpoint math: paint and input use the same inclusive endpoints.

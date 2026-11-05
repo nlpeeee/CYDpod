@@ -30,23 +30,26 @@ class TFT_eSPI {
   static std::string color(uint16_t c){char b[16];snprintf(b,sizeof(b),"#%02x%02x%02x",((c>>11)&31)*255/31,((c>>5)&63)*255/63,(c&31)*255/31);return b;}
   static std::string escape(const char* p){std::string s;for(;*p;++p){if(*p=='&')s+="&amp;";else if(*p=='<')s+="&lt;";else if(*p=='>')s+="&gt;";else s+=*p;}return s;}
  public:
-  std::vector<std::string> labels;
+  struct Ink{std::string text;int x0,y0,x1,y1;bool cell;}; // x1/y1 exclusive; absolute panel pixels
+  std::vector<std::string> labels;std::vector<Ink> inks;int inkAt=-1;long largestFill=0;
   int fillCalls=0,rowFillCalls=0;size_t labelsAtReset=0;
-  void resetDrawCounts(){fillCalls=rowFillCalls=0;labelsAtReset=labels.size();}
+  void resetDrawCounts(){fillCalls=rowFillCalls=0;largestFill=0;labelsAtReset=labels.size();}
   int width()const{return w;}int height()const{return h;}
   void invertDisplay(bool){}
   unsigned getRotation()const{return rotation;}
   void setRotation(unsigned r){rotation=r;w=(r&1)?320:240;h=(r&1)?240:320;}
   void save(const char* file){std::ofstream f(file);f<<"<svg xmlns='http://www.w3.org/2000/svg' width='"<<w<<"' height='"<<h<<"' viewBox='0 0 "<<w<<" "<<h<<"'>"<<svg.str()<<"</svg>";}
-  void fillScreen(uint16_t c){ox=oy=0;cx0=cy0=0;cx1=cy1=320;svg.str("");svg.clear();labels.clear();viewport=false;fillRect(0,0,w,h,c);}
+  void fillScreen(uint16_t c){inks.clear();inkAt=-1;ox=oy=0;cx0=cy0=0;cx1=cy1=320;svg.str("");svg.clear();labels.clear();viewport=false;fillRect(0,0,w,h,c);}
   void fbRect(int x,int y,int width,int height,uint16_t c){x+=ox;y+=oy;int x1=std::min({x+width,cx1,w}),y1=std::min({y+height,cy1,h});for(int j=std::max({y,cy0,0});j<y1;++j)for(int i=std::max({x,cx0,0});i<x1;++i)fb[size_t(j)*320+i]=c;}
   void drawPixel(int x,int y,uint16_t c){fbRect(x,y,1,1,c);}
-  void fillRect(int x,int y,int width,int height,uint16_t c){++fillCalls;fbRect(x,y,width,height,c);if(y>=36&&height==40)++rowFillCalls;if(width>0&&height>0)svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width<<"' height='"<<height<<"' fill='"<<color(c)<<"'/>";}
+  void fillRect(int x,int y,int width,int height,uint16_t c){inkAt=-1;largestFill=std::max(largestFill,long(width)*height);++fillCalls;fbRect(x,y,width,height,c);if(y>=36&&height==40)++rowFillCalls;if(width>0&&height>0)svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width<<"' height='"<<height<<"' fill='"<<color(c)<<"'/>";}
   void drawRect(int x,int y,int width,int height,uint16_t c){fillRect(x,y,width,1,c);fillRect(x,y+height-1,width,1,c);fillRect(x,y,1,height,c);fillRect(x+width-1,y,1,height,c);}
   void fbRound(int x,int y,int width,int height,int r,uint16_t c,bool ring){for(int j=0;j<height;++j)for(int i=0;i<width;++i){auto in=[&](int a,int b,int rr,int wd,int ht){int dx=a<rr?rr-a:a>=wd-rr?a-(wd-rr-1):0,dy=b<rr?rr-b:b>=ht-rr?b-(ht-rr-1):0;return dx*dx+dy*dy<=rr*rr+rr/2;};bool inside=in(i,j,r,width,height);if(ring&&inside&&width>2&&height>2&&i>0&&j>0&&i<width-1&&j<height-1&&in(i-1,j-1,std::max(0,r-1),width-2,height-2))inside=false;if(inside)fbRect(x+i,y+j,1,1,c);}}
   void fillRoundRect(int x,int y,int width,int height,int radius,uint16_t c){fbRound(x,y,width,height,radius,c,false);svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width<<"' height='"<<height<<"' rx='"<<radius<<"' fill='"<<color(c)<<"'/>";}
   void drawRoundRect(int x,int y,int width,int height,int radius,uint16_t c){fbRound(x,y,width,height,radius,c,true);svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width-1<<"' height='"<<height-1<<"' rx='"<<radius<<"' fill='none' stroke='"<<color(c)<<"'/>";}
-  void drawFastHLine(int x,int y,int n,uint16_t c){fillRect(x,y,n,1,c);}
+  // Glyph runs of the production text helper (between noteLabel and endWrite) are ink: they grow that
+  // label's bounding box and are not counted as fills.
+  void drawFastHLine(int x,int y,int n,uint16_t c){if(inkAt>=0&&n>0){Ink& k=inks[size_t(inkAt)];const int ax=x+ox,ay=y+oy;k.x0=std::min(k.x0,ax);k.y0=std::min(k.y0,ay);k.x1=std::max(k.x1,ax+n);k.y1=std::max(k.y1,ay+1);fbRect(x,y,n,1,c);svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<n<<"' height='1' fill='"<<color(c)<<"'/>";return;}fillRect(x,y,n,1,c);}
   void drawFastVLine(int x,int y,int n,uint16_t c){fillRect(x,y,1,n,c);}
   void drawLine(int x,int y,int a,int b,uint16_t c){{int dx=std::abs(a-x),dy=-std::abs(b-y),sx=x<a?1:-1,sy=y<b?1:-1,e=dx+dy;for(;;){fbRect(x,y,1,1,c);if(x==a&&y==b)break;int e2=2*e;if(e2>=dy){e+=dy;x+=sx;}if(e2<=dx){e+=dx;y+=sy;}}}svg<<"<path d='M"<<x<<","<<y<<" L"<<a<<","<<b<<"' stroke='"<<color(c)<<"'/>";}
   void fillCircle(int x,int y,int r,uint16_t c){for(int j=-r;j<=r;++j)for(int i=-r;i<=r;++i)if(i*i+j*j<=r*r+r/2)fbRect(x+i,y+j,1,1,c);svg<<"<circle cx='"<<x<<"' cy='"<<y<<"' r='"<<r<<"' fill='"<<color(c)<<"'/>";}
@@ -59,14 +62,14 @@ class TFT_eSPI {
   void setTextDatum(unsigned d){datum=d;}
   void setTextFont(unsigned f){font=f;}
   void setTextWrap(bool){}
-  void noteLabel(const char* text){labels.push_back(text);}
+  void noteLabel(const char* text){labels.push_back(text);inks.push_back({text,9999,9999,-1,-1,false});inkAt=int(inks.size())-1;}
   void startWrite(){}
-  void endWrite(){}
+  void endWrite(){inkAt=-1;}
   void setCursor(int x,int y){cursorX=x;cursorY=y;}
   void setViewport(int x,int y,int width,int height){resetViewport();ox=x;oy=y;cx0=x;cy0=y;cx1=x+width;cy1=y+height;++clip;svg<<"<defs><clipPath id='clip"<<clip<<"'><rect width='"<<width<<"' height='"<<height<<"'/></clipPath></defs><g transform='translate("<<x<<","<<y<<")' clip-path='url(#clip"<<clip<<")'>";viewport=true;}
   void resetViewport(){ox=oy=0;cx0=cy0=0;cx1=cy1=320;if(viewport){svg<<"</g>";viewport=false;}}
   void drawString(const String& s,int x,int y,unsigned f=2){int width=textWidth(s,f),height=fontHeight(f);int left=x-(datum%3==1?width/2:datum%3==2?width:0),top=y-(datum/3==1?height/2:datum/3==2?height:0);
-    fillRect(left,top,width,height,bg);glyphs(s,left,top,f);labels.push_back(s.c_str());svg<<"<text x='"<<left<<"' y='"<<top+height-3<<"' font-family='Arial,sans-serif' font-size='"<<(f==1?9:16)<<"' fill='"<<color(fg)<<"'>"<<escape(s.c_str())<<"</text>";
+    fillRect(left,top,width,height,bg);glyphs(s,left,top,f);labels.push_back(s.c_str());inks.push_back({s.c_str(),left+ox,top+oy,left+ox+width,top+oy+height,true});svg<<"<text x='"<<left<<"' y='"<<top+height-3<<"' font-family='Arial,sans-serif' font-size='"<<(f==1?9:16)<<"' fill='"<<color(fg)<<"'>"<<escape(s.c_str())<<"</text>";
   }
   // Pixel-exact built-in font output, the same table walk as TFT_eSPI::drawChar for fonts 1 and 2.
   void glyphs(const String& s,int x,int y,unsigned f){for(size_t n=0;n<s.length();++n){unsigned char c=(unsigned char)s[n];

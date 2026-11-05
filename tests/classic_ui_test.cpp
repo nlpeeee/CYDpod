@@ -67,7 +67,8 @@ bool bt_connecting(){++btCalls;return false;}
 static bool btPairingNow=false,btCancelOk=true;
 bool bt_pairing(){++btCalls;return btPairingNow;}
 bool bt_choosing(){++btCalls;return false;}
-String bt_speakerName(){++btCalls;return "Speaker";}
+static String btName="Speaker";
+String bt_speakerName(){++btCalls;return btName;}
 cyd::PairingSession::Phase bt_pairingPhase(){++btCalls;return cyd::PairingSession::Normal;}
 BtFailure bt_failure(){++btCalls;return BT_FAIL_NONE;}
 uint32_t bt_passkey(){++btCalls;return 0;}
@@ -263,7 +264,7 @@ static void nowPlayingRegression(){
     for(Rect r:{hit,seek,bar,L::output<Rect>(w,h),L::transport<Rect>(w,h,0),L::transport<Rect>(w,h,1),L::transport<Rect>(w,h,2)})check(r.x>=0&&r.y>=0&&r.x+r.w<=w&&r.y+r.h<=h,"Player rectangles fit each orientation");
     if(w==320){const Rect prev=L::transport<Rect>(w,h,0),play=L::transport<Rect>(w,h,1),next=L::transport<Rect>(w,h,2),chip=L::outputFace<Rect>(w,h);
       check(prev.x==56&&prev.y==148&&prev.w==70&&prev.h==48&&play.x==130&&play.y==146&&play.w==80&&play.h==52&&next.x==214,"transport matches proposal A SVG");
-      check(track.x==44&&track.y==216&&track.w==118&&chip.x==206&&chip.y==205&&chip.w==108&&chip.h==30,"bottom row: CY-85 widened the output chip to 108 px (was 76) for 9 pt peer names; the volume track is 118 px (was 150)");
+      check(track.x==44&&track.y==216&&track.w==102&&chip.x==190&&chip.y==205&&chip.w==124&&chip.h==30,"bottom row: CY-85 widened the output chip to 124 px (was 76) for 9 pt route names; the volume track is 102 px (was 150)");
       check(bar.x==14&&bar.y==116&&bar.w==292,"seek track matches proposal A SVG (CY-85 moved it up 2 px so the 9 pt time labels clear the knob)");
     }
     check(classic_target(hit.x,hit.y)==-25&&classic_target(hit.x+hit.w-1,hit.y+hit.h-1)==-25,"volume hit target includes outer edges");
@@ -957,6 +958,8 @@ static void navigationGraph(){
   for(const auto& want:expected)check(classes.count(want)>0,("page not reachable from Home: "+want).c_str());
   for(const auto& got:classes)check(expected.count(got)>0,("unexpected page reachable from Home: "+got).c_str());
 }
+unsigned classic_mode();
+#include "text_quality_test.h"
 int main(){try{
   geometryGolden();
   g_settings.screenTimeout=0;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
@@ -992,7 +995,7 @@ int main(){try{
   tft.setRotation(1);ui_redraw();pump();tap(160,110);check(lastSeek>119000&&lastSeek<121000,"landscape progress geometry");
   tap(12,110);check(lastSeek==0,"progress start clamp");tap(306,110);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
   std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, Next on touch-down and recalibration claim\n";
-  tap(66,300);check(volume>30&&volume<40,"Player volume slider action (portrait track is 62 px after CY-85: x=66 is 35 %)");snapshot("ui-player-volume.svg");
+  tap(45,300);check(volume>30&&volume<40,"Player volume slider action (portrait track is 48 px from x=28 after CY-85: x=45 is 35 %)");snapshot("ui-player-volume.svg");
   tap(20,20);check(classic_top()==2&&label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");
@@ -1088,6 +1091,7 @@ int main(){try{
   g_settings.screenTimeout=0;ui_tick(clockNow+=600000);check(backlight==100,"Off disables screen timeout");
   compactChromeRegression();
   nowPlayingRegression();
+  textq::run();
   touchRegression();
   miniPlayerRegression();
   homeTilesRegression();

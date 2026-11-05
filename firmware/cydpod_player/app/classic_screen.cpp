@@ -131,6 +131,8 @@ void playerText(const char* value,int x,int y,Face face,int width,uint16_t fg,ui
   titles_release(); // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip.
   char label[128],fitted[128];cydlib::copyText(label,value);
   for(char* c=label;*c;++c)if((unsigned char)*c<32)*c=' ';
+  // A title too wide for the large bold face steps down to the compact bold face before any ellipsis.
+  if(face==Face::Title&&cydtext::width(face,label)>width)face=Face::TitleCompact;
   cydtext::fit(face,label,fitted,sizeof(fitted),width);
   cydtext::draw(face,fitted,x,y,align,fg);
 }
@@ -399,16 +401,13 @@ void playerOutput(){
   const uint16_t bg=playerPressed==Output?p.pressed:p.band;
   tft.fillRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,bg);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,p.outline);
   const bool wired=g_settings.outRoute==OUT_WIRED;
-  if(wired){playerText("Headphones",r.cx(),r.cy(),Face::Label,r.w-2*L::PlayerChipInset,p.text,bg);return;}
-  // The 84 px portrait chip drops the icon (the name says what it is) to keep the peer name legible.
-  const bool icon=tft.width()>=L::WideMinW;const int inset=icon?L::PlayerChipTextInset:L::PlayerChipPlainTextInset;
-  if(icon)ui_icon(ICON_BLUETOOTH,r.x+L::PlayerChipIconInset,r.cy(),L::PlayerHeaderIcon,p.text,bg);
-  const String name=bt_speakerName();
-  playerText(name.isEmpty()?"Bluetooth":name.c_str(),r.x+inset,r.cy(),Face::Label,r.w-inset-L::PlayerChipInset,p.text,bg,cydtext::HAlignLeft);
+  // No icon: the chip's width goes to the text, which names the route (peer name or Headphones).
+  const String name=wired?String("Headphones"):bt_speakerName();
+  playerText(name.isEmpty()?"Bluetooth":name.c_str(),r.x+L::PlayerChipTextInset,r.cy(),Face::Label,r.w-L::PlayerChipTextInset-L::PlayerChipTextPad,p.text,bg,cydtext::HAlignLeft);
 }
 void playerBottom(){
   const Palette& p=theme();const Rect r=L::playerVolume<Rect>(tft.width(),tft.height());
-  tft.drawFastHLine(0,r.y,tft.width(),p.outline);ui_icon(ICON_SPEAKER,L::PlayerSpeakerX,r.cy(),L::PlayerSpeakerSize,p.text,p.bg);playerVolume();playerOutput();
+  tft.drawFastHLine(0,r.y,tft.width(),p.outline);ui_icon(ICON_SPEAKER,L::playerSpeakerX(tft.width()),r.cy(),L::PlayerSpeakerSize,p.text,p.bg);playerVolume();playerOutput();
 }
 void playerTrack(){
   const Palette& p=theme();memset(&playingInfo,0,sizeof(playingInfo));
@@ -436,7 +435,7 @@ void playerTick(uint32_t now){
     tft.fillRect(0,tft.height()-L::PlayerTimeClearBottom,tft.width(),L::PlayerTimeClearH,p.bg);
     const String elapsed=busy?String("Seeking..."):waiting?String("Waiting for BT"):ui_time(pos);
     playerText(elapsed.c_str(),L::ProgressInset,tft.height()-L::PlayerTimeBottom,Face::Label,tft.width()/2-L::ProgressInset,p.dim,p.bg,cydtext::HAlignLeft);
-    const String remain=String("-")+ui_time(duration>pos?duration-pos:0,duration>0);
+    const String remain=duration>0?String("-")+ui_time(duration>pos?duration-pos:0):String("--:--"); // unknown length: not "---:--"
     playerText(remain.c_str(),tft.width()-L::ProgressInset,tft.height()-L::PlayerTimeBottom,Face::Label,tft.width()/2-L::ProgressInset,p.dim,p.bg,cydtext::HAlignRight);
   }
 }

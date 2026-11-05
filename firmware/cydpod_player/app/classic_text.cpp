@@ -5,7 +5,7 @@
 
 namespace cydtext {
 namespace {
-const GFXfont& fontOf(Face face){return face==Face::Title?FreeSansBold12pt7b:FreeSans9pt7b;}
+const GFXfont& fontOf(Face face){return face==Face::Title?FreeSansBold12pt7b:face==Face::TitleCompact?FreeSansBold9pt7b:FreeSans9pt7b;}
 const GFXglyph& glyphOf(const GFXfont& font,unsigned char c){
   if(c<font.first||c>font.last)c=' ';
   return font.glyph[c-font.first];

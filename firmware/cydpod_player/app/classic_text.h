@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 namespace cydtext {
-enum class Face : uint8_t { Title, Label }; // FreeSansBold 12 pt, FreeSans 9 pt
+enum class Face : uint8_t { Title, TitleCompact, Label }; // FreeSansBold 12 pt, FreeSansBold 9 pt, FreeSans 9 pt
 constexpr int HAlignLeft=0,HAlignCentre=1,HAlignRight=2;
 bool ascii(const char* s);
 // Height of a capital: the vertical reference for centring, so text sits on its optical middle.

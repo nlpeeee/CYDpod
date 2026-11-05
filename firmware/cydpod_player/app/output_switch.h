@@ -12,12 +12,13 @@ bool output_switch(uint8_t next);
 // Ordering is deliberate: validate route -> freeze resume -> final fade/park ->
 // commit resume and route -> restart. Failure never publishes the new setting.
 template<class Ops> bool output_switch_run(uint8_t old, uint8_t next, Ops& ops) {
-  if (next != outRouteSanitize(next)) return false;
+  if (next != outRouteSanitize(next)) { ops.failed("validate"); return false; }
   if (old == next) return true;
-  if (!ops.route(next)) return false;
-  ops.capture();
-  if (!ops.park()) { ops.restore(old); return false; }
-  if (!ops.save(next)) { ops.restore(old); return false; }
+  // Capability validation above is pure. The destination belongs to the next
+  // boot: starting it here competes with the still-live Bluetooth/decoder heap.
+  if (!ops.capture()) { ops.restore(old); ops.failed("quiesce"); return false; }
+  if (!ops.park()) { ops.restore(old); ops.failed("park"); return false; }
+  if (!ops.save(next)) { ops.restore(old); ops.failed("save"); return false; }
   ops.restart(next);
   return true;
 }

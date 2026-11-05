@@ -32,6 +32,11 @@ bool    speaker_begin(uint8_t route);
 uint8_t speaker_route();
 constexpr uint8_t OUT_NONE = 0xFF;
 // OUT_NONE parks/deletes the writer with its final fade before a clean restart.
+// Restart transaction only: park/fade/drain but retain the old task and work
+// buffers until save succeeds. Rollback republishes the old consumer without
+// reserving its work/task again; a successful transaction immediately reboots.
+bool    speaker_parkForRestart();
+void    speaker_restoreAfterRestartPark(uint8_t route);
 bool    speaker_setRoute(uint8_t route);   // false preserves the route on allocation/park failure
 bool    speaker_active();                  // the DAC is running right now
 

@@ -33,3 +33,11 @@ g++ -O2 -std=c++17 -Wall -Wextra -Werror $INC -DCYD_BOARD_JC2432W328C tests/boot
 g++ -O2 -std=c++17 -Wall -Wextra -Werror $INC tests/boot_plan_test.cpp -o "$OUT/boot_plan_plain"
 "$OUT/boot_plan_wired"
 "$OUT/boot_plan_plain"
+
+# CY-84: exercise the production restart glue, not only template fake ops.
+for board in plain wired; do
+  FLAGS=""
+  if [ "$board" = wired ]; then FLAGS="-DCYD_BOARD_JC2432W328C"; fi
+  g++ -O2 -std=c++17 -Wall -Werror -Wno-misleading-indentation -Itests/output_switch_shim -Itests/settings_shim -Itests/speaker_shim -Ifirmware/cydpod_player/app $FLAGS tests/output_switch_test.cpp -o "$OUT/output_switch_$board"
+  "$OUT/output_switch_$board"
+done

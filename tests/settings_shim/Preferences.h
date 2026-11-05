@@ -15,10 +15,12 @@ class Preferences {
   static void poke(const char* k, uint8_t v) { store()[k] = std::vector<uint8_t>{v}; }
   inline static std::string failKey;
   inline static bool failOpen=false;
+  inline static int failKeyAttempt=1, keyAttempts=0;
+  static bool rejected(const char* k) { return failKey == k && ++keyAttempts >= failKeyAttempt; }
   bool begin(const char*, bool) { return !failOpen; }
   void end() {}
   bool isKey(const char* k) { return store().count(k) != 0; }
-  bool remove(const char* k) { return failKey != k && store().erase(k) != 0; }
+  bool remove(const char* k) { return !rejected(k) && store().erase(k) != 0; }
   template <class T> T get(const char* k, T d) {
     auto it = store().find(k);
     if (it == store().end() || it->second.size() != sizeof(T)) return d;
@@ -27,7 +29,7 @@ class Preferences {
     return v;
   }
   template <class T> size_t put(const char* k, T v) {
-    if (failKey == k) return 0;
+    if (rejected(k)) return 0;
     std::vector<uint8_t> b(sizeof(T));
     memcpy(b.data(), &v, sizeof(T));
     store()[k] = b;
@@ -48,7 +50,7 @@ class Preferences {
     s.s.assign(it->second.begin(), it->second.end());
     return s;
   }
-  size_t putString(const char* k, const String& v) { if(failKey == k)return 0; store()[k] = std::vector<uint8_t>(v.s.begin(), v.s.end()); return v.length(); }
+  size_t putString(const char* k, const String& v) { if(rejected(k))return 0; store()[k] = std::vector<uint8_t>(v.s.begin(), v.s.end()); return v.length(); }
   size_t getBytesLength(const char* k) {
     auto it = store().find(k);
     return it == store().end() ? 0 : it->second.size();
@@ -60,7 +62,9 @@ class Preferences {
     memcpy(buf, it->second.data(), n);
     return n;
   }
-  void putBytes(const char* k, const void* buf, size_t len) {
+  size_t putBytes(const char* k, const void* buf, size_t len) {
+    if (rejected(k)) return 0;
     store()[k] = std::vector<uint8_t>((const uint8_t*)buf, (const uint8_t*)buf + len);
+    return len;
   }
 };

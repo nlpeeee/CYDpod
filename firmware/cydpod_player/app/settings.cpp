@@ -93,44 +93,52 @@ void settings_begin() {
                   s.btKnown[i].addr[5]);
 }
 
-void settings_save() {
+// Empty putString returns zero on both success and failure. Removal is checked.
+static bool saveString(const char* key, const String& value) {
+  if (value.length()) return prefs.putString(key, value) == value.length();
+  return !prefs.isKey(key) || prefs.remove(key);
+}
+
+bool settings_save() {
   const Settings& s = g_settings;
-  prefs.begin(NVS_NS, false);
-  prefs.putUChar("uiRev", 1);
-  prefs.putUChar("catKind", s.catalogKind);
-  prefs.putUShort("catGroup", s.catalogGroup);
-  prefs.putULong("catCrc", s.catalogCrc);
-  prefs.putUShort("panel",    s.panel);
-  prefs.putBool  ("invert",   s.invert);
-  prefs.putUChar ("rot",      s.rotation);
-  prefs.putUChar ("bright",   s.brightness);
-  prefs.putUChar ("lang",     s.lang);
-  prefs.putUChar ("screenTime",s.screenTimeout);
-  prefs.putUChar ("sleepTime",s.sleepTimer);
-  prefs.putUChar ("vol",      s.volume);
+  if (!prefs.begin(NVS_NS, false)) return false;
+  bool ok = true;
+  ok = (prefs.putUChar("uiRev", 1) == 1) && ok;
+  ok = (prefs.putUChar("catKind", s.catalogKind) == 1) && ok;
+  ok = (prefs.putUShort("catGroup", s.catalogGroup) == 2) && ok;
+  ok = (prefs.putULong("catCrc", s.catalogCrc) == 4) && ok;
+  ok = (prefs.putUShort("panel",    s.panel) == 2) && ok;
+  ok = (prefs.putBool("invert",   s.invert) == 1) && ok;
+  ok = (prefs.putUChar("rot",      s.rotation) == 1) && ok;
+  ok = (prefs.putUChar("bright",   s.brightness) == 1) && ok;
+  ok = (prefs.putUChar("lang",     s.lang) == 1) && ok;
+  ok = (prefs.putUChar("screenTime",s.screenTimeout) == 1) && ok;
+  ok = (prefs.putUChar("sleepTime",s.sleepTimer) == 1) && ok;
+  ok = (prefs.putUChar("vol",      s.volume) == 1) && ok;
 #if CYD_DEFAULT_OUT_ROUTE >= 0
   // Writing the forced route would clobber the saved choice; only a route the user
   // picked in the UI (anything other than the forced one) is persisted.
   if (s.outRoute != outRouteSanitize(CYD_DEFAULT_OUT_ROUTE)) storedOutRoute = s.outRoute;
-  prefs.putUChar ("out",      storedOutRoute);
+  ok = (prefs.putUChar("out",      storedOutRoute) == 1) && ok;
 #else
-  prefs.putUChar ("out",      s.outRoute);
+  ok = (prefs.putUChar("out",      s.outRoute) == 1) && ok;
 #endif
-  prefs.putUShort("track",    s.lastTrack);
-  prefs.putULong ("pos",      s.lastPosMs);
-  prefs.putString("lastPath", s.lastPath);
-  prefs.putBool  ("shuffle",  s.shuffle);
-  prefs.putUChar ("repeat",   s.repeat);
-  prefs.putUChar ("srcKind",  s.srcKind);
-  prefs.putULong ("srcKey",   s.srcKey);
-  prefs.putString("btName",   s.btName);
-  prefs.putBytes ("btAddr",   s.btAddr, sizeof(s.btAddr));
-  prefs.putBytes ("known",    s.btKnown, sizeof(s.btKnown));
-  prefs.putUChar ("knownN",   s.btKnownCount);
-  prefs.putString("ssid",     s.wifiSsid);
-  prefs.putString("pass",     s.wifiPass);
-  prefs.putString("webPin",   s.webPin);
+  ok = (prefs.putUShort("track",    s.lastTrack) == 2) && ok;
+  ok = (prefs.putULong("pos",      s.lastPosMs) == 4) && ok;
+  ok = saveString("lastPath", s.lastPath) && ok;
+  ok = (prefs.putBool("shuffle",  s.shuffle) == 1) && ok;
+  ok = (prefs.putUChar("repeat",   s.repeat) == 1) && ok;
+  ok = (prefs.putUChar("srcKind",  s.srcKind) == 1) && ok;
+  ok = (prefs.putULong("srcKey",   s.srcKey) == 4) && ok;
+  ok = saveString("btName", s.btName) && ok;
+  ok = (prefs.putBytes("btAddr",   s.btAddr, sizeof(s.btAddr)) == sizeof(s.btAddr)) && ok;
+  ok = (prefs.putBytes("known",    s.btKnown, sizeof(s.btKnown)) == sizeof(s.btKnown)) && ok;
+  ok = (prefs.putUChar("knownN",   s.btKnownCount) == 1) && ok;
+  ok = saveString("ssid", s.wifiSsid) && ok;
+  ok = saveString("pass", s.wifiPass) && ok;
+  ok = saveString("webPin", s.webPin) && ok;
   prefs.end();
+  return ok;
 }
 
 void settings_saveResume() {
@@ -150,21 +158,25 @@ void settings_savePanel() {
 // Preferences put* commits synchronously (nvs_commit); end closes the handle.
 // The route is last so a partial resume write cannot select a new boot plan.
 bool settings_saveOutputResume(uint8_t next) {
-  if (!prefs.begin(NVS_NS, false)) return false;
+  if (next != outRouteSanitize(next)) return false;
+  if (!prefs.begin(NVS_NS, false)) { Serial.println("output-switch: failed nvs=open"); return false; }
   const Settings& s = g_settings;
-  bool ok = prefs.putUShort("track", s.lastTrack) == sizeof(s.lastTrack);
-  ok = ok && prefs.putULong("pos", s.lastPosMs) == sizeof(s.lastPosMs);
+  const char* failed = nullptr;
+  auto checked = [&](const char* key, bool ok) { if (!ok) failed = key; return ok; };
+  bool ok = checked("track", prefs.putUShort("track", s.lastTrack) == sizeof(s.lastTrack));
+  ok = ok && checked("pos", prefs.putULong("pos", s.lastPosMs) == sizeof(s.lastPosMs));
   // putString returns zero for BOTH an empty string and a failed commit.
   // Removing an old identity instead gives an unambiguous committed result.
-  if (s.lastPath.length()) ok = ok && prefs.putString("lastPath", s.lastPath) == s.lastPath.length();
-  else if (prefs.isKey("lastPath")) ok = ok && prefs.remove("lastPath");
-  ok = ok && prefs.putUChar("srcKind", s.srcKind) == sizeof(s.srcKind);
-  ok = ok && prefs.putULong("srcKey", s.srcKey) == sizeof(s.srcKey);
-  ok = ok && prefs.putUChar("catKind", s.catalogKind) == sizeof(s.catalogKind);
-  ok = ok && prefs.putUShort("catGroup", s.catalogGroup) == sizeof(s.catalogGroup);
-  ok = ok && prefs.putULong("catCrc", s.catalogCrc) == sizeof(s.catalogCrc);
-  ok = ok && prefs.putUChar("out", next) == sizeof(next);
+  if (s.lastPath.length()) ok = ok && checked("lastPath", prefs.putString("lastPath", s.lastPath) == s.lastPath.length());
+  else if (prefs.isKey("lastPath")) ok = ok && checked("lastPath", prefs.remove("lastPath"));
+  ok = ok && checked("srcKind", prefs.putUChar("srcKind", s.srcKind) == sizeof(s.srcKind));
+  ok = ok && checked("srcKey", prefs.putULong("srcKey", s.srcKey) == sizeof(s.srcKey));
+  ok = ok && checked("catKind", prefs.putUChar("catKind", s.catalogKind) == sizeof(s.catalogKind));
+  ok = ok && checked("catGroup", prefs.putUShort("catGroup", s.catalogGroup) == sizeof(s.catalogGroup));
+  ok = ok && checked("catCrc", prefs.putULong("catCrc", s.catalogCrc) == sizeof(s.catalogCrc));
+  ok = ok && checked("out", prefs.putUChar("out", next) == sizeof(next));
   prefs.end();
+  if (failed) Serial.printf("output-switch: failed nvs=%s\n", failed);
 #if CYD_DEFAULT_OUT_ROUTE >= 0
   if (ok) storedOutRoute = next;
 #endif

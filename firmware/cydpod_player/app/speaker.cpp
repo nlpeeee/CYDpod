@@ -163,6 +163,31 @@ static void writerTask(void*) {
 // ---------------------------------------------------------------------------
 bool speaker_begin(uint8_t startRoute) { return speaker_setRoute(startRoute); }
 
+bool speaker_parkForRestart() {
+  const uint8_t previous = route;
+  route = OUT_NONE;
+  const uint32_t at = millis();
+  while (((writerHandle && !parked)
+#if CYD_WIRED_OUTPUT
+          || !wired_parked()
+#endif
+         ) && millis() - at < 3000) delay(10);
+  if ((writerHandle && !parked)
+#if CYD_WIRED_OUTPUT
+      || !wired_parked()
+#endif
+     ) {
+    route = previous;
+    return false;
+  }
+  delay(50); // existing bound for an in-flight Bluetooth audio_pull
+  return true;
+}
+
+void speaker_restoreAfterRestartPark(uint8_t previous) {
+  route = previous; // task/work still belong to this route; no new consumer
+}
+
 bool speaker_setRoute(uint8_t r) {
   if (r != OUT_NONE && r >= OUT_ROUTE_COUNT) r = OUT_BT;
   if (r == route && r != OUT_NONE) return true;

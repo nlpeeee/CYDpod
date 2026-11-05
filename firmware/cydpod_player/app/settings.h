@@ -86,7 +86,7 @@ struct Settings {
 extern Settings g_settings;
 
 void settings_begin();
-void settings_save();
+bool settings_save();
 // Commit resume first and output last; false means no restart is allowed.
 bool settings_saveOutputResume(uint8_t next);
 

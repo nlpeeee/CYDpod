@@ -4,9 +4,9 @@
 #include <cstdio>
 struct Ops {
   std::string events;
-  bool routeOK=true, parkOK=true, saveOK=true;
-  bool route(uint8_t){events+='R';return routeOK;}
-  void capture(){events+='C';}
+  bool captureOK=true, parkOK=true, saveOK=true;
+  void failed(const char*){}
+  bool capture(){events+='C';return captureOK;}
   bool park(){events+='P';return parkOK;}
   bool save(uint8_t){events+='S';return saveOK;}
   void restore(uint8_t){events+='U';}
@@ -20,10 +20,10 @@ int main(){
 #if CYD_WIRED_OUTPUT
   for(auto old:{OUT_BT,OUT_WIRED}){
     const uint8_t next=old==OUT_BT?OUT_WIRED:OUT_BT;
-    Ops good;assert(output_switch_run(old,next,good)&&good.events=="RCPSX");
-    Ops route;route.routeOK=false;assert(!output_switch_run(old,next,route)&&route.events=="R");
-    Ops park;park.parkOK=false;assert(!output_switch_run(old,next,park)&&park.events=="RCPU");
-    Ops save;save.saveOK=false;assert(!output_switch_run(old,next,save)&&save.events=="RCPSU");
+    Ops good;assert(output_switch_run(old,next,good)&&good.events=="CPSX");
+    Ops capture;capture.captureOK=false;assert(!output_switch_run(old,next,capture)&&capture.events=="CU");
+    Ops park;park.parkOK=false;assert(!output_switch_run(old,next,park)&&park.events=="CPU");
+    Ops save;save.saveOK=false;assert(!output_switch_run(old,next,save)&&save.events=="CPSU");
     Ops same;assert(output_switch_run(old,old,same)&&same.events.empty());
     Ops invalid;assert(!output_switch_run(old,255,invalid)&&invalid.events.empty());
   }

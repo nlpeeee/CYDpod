@@ -9,31 +9,38 @@
 namespace {
 struct SwitchOps {
   bool wasPlaying = false;
-  bool route(uint8_t next) { return speaker_setRoute(next); }
+  uint8_t activeRoute = speaker_route();
+  bool parked = false;
+  void failed(const char* stage) { Serial.printf("output-switch: failed stage=%s\n", stage); }
   bool pending() {
     const AudioCommands c = audio_commands();
     return c.track >= 0 || c.seekMs >= 0 || c.opening || c.seeking || !audio_startupComplete();
   }
-  void capture() {
+  bool capture() {
     wasPlaying = audio_isPlaying();
     audio_setPlaying(false);
     // Pending track/seek commands must settle before claiming an exact resume point.
     const uint32_t at = millis();
     while (pending() && millis()-at < 5000) delay(10);
+    if (pending()) return false; // leave the previous resume identity untouched
     g_settings.lastTrack = audio_currentTrack();
     g_settings.lastPath = storage_trackPath(g_settings.lastTrack);
     g_settings.lastPosMs = audio_positionMs();
+    return true;
   }
   bool park() {
     if (pending()) return false;
-    return speaker_setRoute(OUT_NONE); // existing writer final fade + DMA drain
+    parked = speaker_parkForRestart(); // retain old task/work for save rollback
+    return parked;
   }
   bool save(uint8_t next) {
-    settings_save(); // flush pending UI preferences while the old route is still selected
+    // Flush pending UI preferences while the old route is still selected.
+    if (!settings_save()) { failed("preferences"); return false; }
     return settings_saveOutputResume(next);
   }
   void restore(uint8_t old) {
-    speaker_setRoute(old);
+    (void)old;
+    if (parked) speaker_restoreAfterRestartPark(activeRoute);
     audio_setPlaying(wasPlaying);
   }
   void restart(uint8_t next) {

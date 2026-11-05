@@ -42,9 +42,17 @@ struct Row {
 cydclassic::Navigation<Page> navigation;
 cydclassic::Gesture gesture;
 cydscroll::Tracker listTracker;
+cydscroll::Fling listFling;
+ClassicScrollStats scrollStats{};
+bool flingActive=false,claimPending=false;
+uint32_t claimAt=0,flingUnderruns=0,thumbUntil=0;
+void finishFling(uint32_t now){
+  if(!flingActive)return;
+  flingActive=false;scrollStats.underruns=audio_underruns()-flingUnderruns;
+  thumbUntil=now+L::ThumbHoldMs;
+}
 bool listDragging=false,listPress=false,thumbDrag=false,viewportPending=false,thumbVisible=false;
 int32_t dragOffset=0;int thumbGrab=0;
-uint32_t thumbUntil=0;
 
 constexpr int CacheSlots=L::MaxRows+1;
 Row cache[CacheSlots];
@@ -148,7 +156,7 @@ const char* title(){return pageTitle(page());}
 // native strip height. `y` is the vertical centre of capitals for the sized faces.
 using cydtext::Face;
 void playerText(const char* value,int x,int y,Face face,int width,uint16_t fg,uint16_t bg,int align=cydtext::HAlignCentre){
-  if(!listPress&&!thumbDrag&&!cydtext::ascii(value)){ui_text(String(value),x,y,uint8_t(3+align),fg,bg,width);return;}
+  if(!listPress&&!thumbDrag&&!flingActive&&!cydtext::ascii(value)){ui_text(String(value),x,y,uint8_t(3+align),fg,bg,width);return;}
   titles_release(); // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip.
   char label[128],fitted[128];cydlib::copyText(label,value);
   for(char* c=label;*c;++c)if((unsigned char)*c<32)*c=' ';
@@ -260,7 +268,7 @@ void paintTile(int i,bool pressed){
 void paintTiles(){for(int i=0;i<L::TileCount;++i)paintTile(i,false);}
 // Fixed text scratch keeps ASCII painting allocation-free; UTF-8 retains the legacy strip loader.
 void rowText(const char* value,int y,int width,uint16_t fg,uint16_t bg){
-  if(!listPress&&!thumbDrag&&!cydtext::ascii(value)){
+  if(!listPress&&!thumbDrag&&!flingActive&&!cydtext::ascii(value)){
     rowUtf8=value;
     if(titles_load(rowUtf8)){titles_draw({L::TextMargin,y-TITLE_STRIP_H/2,min(width,titles_width()),TITLE_STRIP_H},0,0,fg,bg);return;}
   }
@@ -300,6 +308,8 @@ void paintRow(int i,bool pressed){
 }
 // Cache-only seam for part 2: no row loading or catalogue reads here.
 void paintViewport(int32_t offsetPx){
+  const uint32_t start=millis();
+  if(claimPending){scrollStats.claimToPaintMs=inputNow()-claimAt;claimPending=false;}
   if(page().mode==Mode::Search)searchSession.resumePx=-1;
   page().offsetPx=cydclassic::clampOffset(offsetPx,count,rows());
   dirty=0;
@@ -308,6 +318,18 @@ void paintViewport(int32_t offsetPx){
     if(r.absolute!=absolute||!r.valid)dirty|=uint8_t(1u<<i);
     paintRow(i,highlight==i);
   }
+  ++scrollStats.frames;scrollStats.lastFrameMs=millis()-start;
+  scrollStats.maxFrameMs=max(scrollStats.maxFrameMs,scrollStats.lastFrameMs);
+}
+// Evaluate once at wall-clock time. Hard edge clamp: zero velocity before the core's overfling.
+void advanceFling(uint32_t now){
+  if(!flingActive)return;
+  const int32_t limit=cydclassic::clampOffset(INT32_MAX,count,rows());
+  const float pos=listFling.position(now);
+  const int32_t offset=cydclassic::clampOffset(int32_t(lroundf(pos)),count,rows());
+  if(offset!=page().offsetPx){page().offsetPx=offset;viewportPending=true;}
+  if(pos<=0||pos>=limit){listFling.start(float(offset),0,0,float(limit),now);finishFling(now);viewportPending=true;}
+  else if(listFling.finished(now)){finishFling(now);viewportPending=true;}
 }
 void paintThumb(){
   const Rect rail=L::strip<Rect>(tft.width(),tft.height());
@@ -555,6 +577,7 @@ void enter(){
 #ifndef CYDPOD_CATALOG_HOST
   rowUtf8.reserve(128);
 #endif
+  finishFling(inputNow());claimPending=false;
   seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
@@ -578,6 +601,7 @@ void enter(){
   else {invalidate();if(!count){centred(storage_readOnly()?"SD card is read-only":storage_catalogStale()?"Library unavailable":"No entries",100,theme().dim,theme().bg);}}
 }
 void leave(){
+  finishFling(inputNow());claimPending=false;
   seekPreview=false;armVolumeSave();flushSettings();dirty=0;titles_release();
   // ui_go calls leave after a navigation push/pop: current() is the destination.
   // Keep a newly built destination preview, otherwise rebuild lazily on Back.
@@ -588,9 +612,20 @@ void leave(){
 }
 void tick(uint32_t now){
   screenNow=now;
+  advanceFling(now);
+  const bool painted=viewportPending;
   if(viewportPending){viewportPending=false;paintViewport(page().offsetPx);paintThumb();}
   // Drag frames are cache-only, including Search and UTF-8 titles. Load after release.
   if(listPress||thumbDrag)return;
+  if(flingActive){
+    // Fast motion is cache-only. At <200 px/s fill at most one missing row on
+    // a pass with no viewport paint; preserve the existing ring-low protection.
+    if(!painted&&fabsf(listFling.velocity(now))<200&&dirty&&(!audio_bufferLow()||now-lastPaint>=120)){
+      for(int i=0;i<visibleRows();++i)if(dirty&(1u<<i)){dirty&=~(1u<<i);loadRow(i);lastPaint=now;break;}
+    }
+    return;
+  }
+  if(painted)return;
   if(thumbVisible&&int32_t(now-thumbUntil)>=0){thumbVisible=false;paintThumb();}
   if(savePending&&!(touch_isDown()&&gesture.target==Slider)&&int32_t(now-saveAt)>=0)flushSettings();
   if(now-lastStatus>=1000){
@@ -784,10 +819,20 @@ bool swipeable(){return browse()&&navigation.depth>1&&gesture.target!=Slider&&ge
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
+    advanceFling(inputNow());
+    const bool stopping=flingActive;
     ready=-1;dimmed=-1;gesture.down(x,y,topRow(),hit);
     listPress=browse()&&page().mode!=Mode::Home&&hit>=0&&hit<KeyBase&&count>rows();
     listDragging=false;thumbDrag=hit==Thumb;dragOffset=page().offsetPx;
-    if(listPress)listTracker.down(inputNow(),y);
+    if(listPress){
+      listTracker.down(inputNow(),y,stopping?&listFling:nullptr);
+      if(stopping){
+        finishFling(inputNow());listTracker.move(inputNow(),y);listDragging=true;
+        gesture.claimed=true;gesture.vlead=true;thumbVisible=true;
+        claimAt=inputNow();claimPending=true;viewportPending=true;return true;
+      }
+    }
+    if(stopping){listFling.start(float(page().offsetPx),0,0,float(cydclassic::clampOffset(INT32_MAX,count,rows())),inputNow());finishFling(inputNow());}
     if(thumbDrag){
       const Rect r=L::thumb<Rect>(tft.width(),tft.height(),count,page().offsetPx);
       thumbGrab=y>=r.y&&y<r.y+r.h?y-r.y:r.h/2;
@@ -818,6 +863,7 @@ bool press(PressPhase phase,int x,int y){
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next){if(browse()&&!within(x,y,cydclassic::Gesture::SlopNear)&&playerPressed!=-1){playerPressed=-1;miniPlayer();}return true;}
     const bool tracked=listPress&&listTracker.move(inputNow(),y);
     if(thumbDrag||(tracked&&(listDragging||abs(y-gesture.y)>=abs(x-gesture.x)))){
+      if(!gesture.claimed){claimAt=inputNow();claimPending=true;}
       listDragging=!thumbDrag;
       gesture.claimed=true;gesture.vlead=true;highlight=dimmed=-1;
       page().offsetPx=thumbDrag?L::thumbOffset(y,tft.height(),count,thumbGrab):cydclassic::clampOffset(dragOffset-int32_t(listTracker.delta()),count,rows());
@@ -838,7 +884,11 @@ bool press(PressPhase phase,int x,int y){
     if(listPress||thumbDrag){
       const bool dragged=thumbDrag||listDragging;
       listPress=thumbDrag=false;
-      if(dragged){viewportPending=true;thumbUntil=inputNow()+L::ThumbHoldMs;gesture.claimed=true;ready=-1;highlight=dimmed=-1;return true;}
+      if(dragged){
+        if(listDragging&&listTracker.up(inputNow(),listFling,float(page().offsetPx),0,float(cydclassic::clampOffset(INT32_MAX,count,rows())))){
+          flingActive=true;++scrollStats.flings;flingUnderruns=audio_underruns();
+        }
+        viewportPending=true;thumbUntil=inputNow()+L::ThumbHoldMs;gesture.claimed=true;ready=-1;highlight=dimmed=-1;return true;}
     }
     if(gesture.target==Slider){armVolumeSave();gesture.target=-1;return true;}
     if(gesture.target==Seek){
@@ -889,6 +939,13 @@ void touch(TouchEvent ev,int,int){
 
 void classic_home(){searchSession.resumePx=-1;miniReturnDepth=0;flushSettings();freePreview();externalReturn=false;navigation.home();}
 // Back from a page outside Classic (the Bluetooth page): the page it was opened from when Settings opened it, otherwise Now Playing.
+ClassicScrollStats classic_scrollStats(){return scrollStats;}
+void classic_logScrollStats(){
+  const ClassicScrollStats s=classic_scrollStats();
+  Serial.printf("stat: scroll frames %lu lastMs %lu maxMs %lu claimToPaintMs %lu flings %lu underruns %lu\n",
+    (unsigned long)s.frames,(unsigned long)s.lastFrameMs,(unsigned long)s.maxFrameMs,
+    (unsigned long)s.claimToPaintMs,(unsigned long)s.flings,(unsigned long)s.underruns);
+}
 void classic_return(){if(externalReturn)externalReturn=false;else if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}ui_go(SCR_CLASSIC);}
 const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};
 #ifdef CYDPOD_CATALOG_HOST
@@ -909,6 +966,8 @@ const char* classic_modeName(unsigned m){
 }
 int classic_top(){return topRow();}
 int classic_offset(){return page().offsetPx;}
+bool classic_flingActive(){return flingActive;}
+float classic_flingVelocity(){return flingActive?listFling.velocity(screenNow):0;}
 bool classic_thumbVisible(){return thumbVisible;}
 void classic_paintViewport(int offset){paintViewport(offset);}
 void classic_invalidateViewport(){invalidate();}

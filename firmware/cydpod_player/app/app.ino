@@ -322,6 +322,7 @@ void loop() {
     cydtouch::Stats& ts = cydtouch::stats();
     Serial.printf("stat: touch pollGapMax %u ms  refused slop %u claim %u rearm %u wake %u  bridged %u\n",
                   (unsigned)ts.maxGapMs, (unsigned)ts.slop, (unsigned)ts.claim, (unsigned)ts.rearm, (unsigned)ts.wake, (unsigned)ts.bridged);
+    classic_logScrollStats();
     ts.maxGapMs = 0;
     lastStat = now;
   }

@@ -26,7 +26,8 @@
 TFT_eSPI tft;
 Settings g_settings;
 static int current=0,calls=0,volume=32,queueLength=0;
-static uint32_t serial=0,clockNow=0,lastSeek=0,positionMs=84000;
+static uint32_t serial=0,clockNow=0,lastSeek=0,positionMs=84000,underruns=0;
+uint32_t audio_underruns(){return underruns;}
 static int seekCalls=0,relativeSeek=0,backlight=100,fadeGain=100;
 void audio_setSleepGain(uint8_t p){fadeGain=p;}
 static bool seekAllowed=true;
@@ -167,7 +168,7 @@ int classic_offset();bool classic_thumbVisible();
 static void dragListRows(int amount){
   const int y=cydclassic::layout::HeaderH+60,end=y-amount*cydclassic::layout::RowH-(amount>0?7:-7);
   SCREEN_CLASSIC.press(PRESS_DOWN,60,y);SCREEN_CLASSIC.press(PRESS_MOVE,60,end);
-  SCREEN_CLASSIC.tick(++clockNow);SCREEN_CLASSIC.press(PRESS_UP,60,end);SCREEN_CLASSIC.touch(TOUCH_TAP,60,end);pump();
+  SCREEN_CLASSIC.tick(clockNow+=41);SCREEN_CLASSIC.press(PRESS_UP,60,end);SCREEN_CLASSIC.touch(TOUCH_TAP,60,end);pump();
 }
 
 static void touchRegression(){
@@ -1157,7 +1158,7 @@ static void dragRegression(){
     SCREEN_CLASSIC.press(PRESS_MOVE,60,y-10000);SCREEN_CLASSIC.tick(++clockNow);
     check(classic_offset()==maxOffset&&searchIO()==io,"drag hard clamps without reads");
     SCREEN_CLASSIC.press(PRESS_MOVE,60,y);SCREEN_CLASSIC.tick(++clockNow);
-    SCREEN_CLASSIC.press(PRESS_UP,60,y);SCREEN_CLASSIC.touch(TOUCH_TAP,60,y);
+    SCREEN_CLASSIC.tick(clockNow+=41);SCREEN_CLASSIC.press(PRESS_UP,60,y);SCREEN_CLASSIC.touch(TOUCH_TAP,60,y);
     check(classic_depth()==2&&calls==before,"claimed drag returning to start never selects");
     SCREEN_CLASSIC.tick(clockNow+=L::ThumbHoldMs-1);check(classic_thumbVisible(),"thumb holds briefly after release");
     SCREEN_CLASSIC.tick(++clockNow);check(!classic_thumbVisible(),"thumb hides after delay");pump();
@@ -1173,6 +1174,61 @@ static void dragRegression(){
     home();tapTile(5);tapSettingsRow(5);check(std::string(classic_modeName(classic_mode()))=="About","Settings bottom action is reachable by drag");
   }
   std::cout<<"PASS CY-98b drag: slop/1:1, coalesced frames, clamp, tap versus claimed drag, no drag IO, thumb mapping/timeout, Settings; 4/6 rows\n";
+}
+extern bool classic_flingActive();
+extern float classic_flingVelocity();
+static void flingRegression(){
+  namespace L=cydclassic::layout;
+  g_settings.rotation=0;tft.setRotation(0);
+  auto flick=[](){
+    toSongs();
+    SCREEN_CLASSIC.press(PRESS_DOWN,60,160);
+    SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,150);
+    SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,140);
+    SCREEN_CLASSIC.press(PRESS_UP,60,140);SCREEN_CLASSIC.touch(TOUCH_TAP,60,140);
+    check(classic_flingActive(),"release starts fling");return clockNow;
+  };
+  const auto initial=classic_scrollStats();const int before=calls;
+  uint32_t start=flick();const auto io=searchIO();int last=classic_offset();
+  for(int dt:{20,40,60,80,100,120}){
+    const auto frames=classic_scrollStats().frames;SCREEN_CLASSIC.tick(clockNow=start+dt);
+    check(classic_offset()>=last&&classic_scrollStats().frames<=frames+1,"one monotonic viewport frame per pass");last=classic_offset();
+  }
+  check(searchIO()==io&&classic_thumbVisible(),"fast fling has no SD reads and keeps thumb");
+  const int dense=classic_offset();SCREEN_CLASSIC.tick(clockNow=start+1500);const int final=classic_offset();
+  check(!classic_flingActive()&&calls==before,"fling completes without selection");
+  start=flick();SCREEN_CLASSIC.tick(clockNow=start+120);
+  check(classic_offset()==dense,"fake clock gives identical position with skipped frames");
+  SCREEN_CLASSIC.tick(clockNow=start+1500);check(classic_offset()==final,"fling distance independent of frame rate");
+  SCREEN_CLASSIC.tick(clockNow+=L::ThumbHoldMs);check(!classic_thumbVisible(),"thumb expires after fling");
+  start=flick();SCREEN_CLASSIC.tick(clockNow=start+40);const int stopped=classic_offset();
+  underruns+=3;
+  check(SCREEN_CLASSIC.press(PRESS_DOWN,60,140)&&!classic_flingActive(),"touch-down stops fling and claims drag");
+  SCREEN_CLASSIC.press(PRESS_UP,60,140);SCREEN_CLASSIC.touch(TOUCH_TAP,60,140);
+  SCREEN_CLASSIC.tick(clockNow+=200);
+  check(classic_offset()==stopped&&calls==before&&classic_depth()==2,"tap-to-stop never selects or resumes");
+  check(classic_scrollStats().underruns==3,"last fling underrun delta");
+  // Stopping touch immediately becomes a 1:1 drag with no extra slop.
+  start=flick();SCREEN_CLASSIC.tick(clockNow=start+40);
+  const int grab=classic_offset();SCREEN_CLASSIC.press(PRESS_DOWN,60,140);
+  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,135);
+  check(classic_offset()==grab+5,"tap-to-stop continues as drag without slop");
+  SCREEN_CLASSIC.tick(clockNow+=41);SCREEN_CLASSIC.press(PRESS_UP,60,135);
+  toSongs();classic_paintViewport((10-L::rows(tft.height()))*L::RowH-10);
+  SCREEN_CLASSIC.press(PRESS_DOWN,60,160);
+  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,150);
+  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,140);
+  SCREEN_CLASSIC.press(PRESS_UP,60,140);SCREEN_CLASSIC.tick(clockNow+=100);
+  check(classic_offset()==(10-L::rows(tft.height()))*L::RowH&&!classic_flingActive()&&classic_flingVelocity()==0,"bottom edge clamps and zeros velocity");
+  toSongs();SCREEN_CLASSIC.press(PRESS_DOWN,60,140);
+  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,150);
+  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,160);
+  SCREEN_CLASSIC.press(PRESS_UP,60,160);SCREEN_CLASSIC.tick(clockNow+=100);
+  check(classic_offset()==0&&!classic_flingActive(),"top edge clamps");
+  check(classic_scrollStats().flings>=initial.flings+6&&classic_scrollStats().frames>initial.frames,"scroll counters record flings and frames");
+  check(classic_scrollStats().claimToPaintMs<=41,"claim to first frame measured with fake clock");
+  classic_logScrollStats();
+  std::cout<<"PASS CY-99 fling: start/finish, tap-to-stop/drag, hard edges, fake-clock frame independence, cache-only fast frames, thumb timeout, stats/underruns\n";
 }
 int main(){try{
   if(std::getenv("CYDPOD_REGENERATE_CLASSIC")){std::ofstream("../golden/classic_layout.txt")<<classic_geometry();return 0;}
@@ -1194,7 +1250,7 @@ int main(){try{
   for(int i=0;i<10;++i){auto bytes=original;char name[32];snprintf(name,sizeof(name),"Song %02d",i);memset(bytes.data()+pos,0,tag.size());memcpy(bytes.data()+pos,name,strlen(name));
     std::ofstream out(SD.root/(std::string("music/Example/")+name+".m4a"),std::ios::binary);out.write(bytes.data(),bytes.size());}
   check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
-  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){viewportRegression();dragRegression();miniPlayerRegression();return 0;}
+  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){viewportRegression();dragRegression();flingRegression();miniPlayerRegression();return 0;}
   tapTile(1);check(label("Fixture Artist")&&classic_depth()==2,"artist view straight from the tile");snapshot("ui-artists.svg");
   tap(80,66);check(label("All Songs")&&label("Fixture Album"),"artist album view");snapshot("ui-albums.svg");
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");

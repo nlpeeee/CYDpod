@@ -1,0 +1,161 @@
+file	rotation	size	page	state	first_labels
+render/home-idle-no-queue-r0.svg	0	240x320	home	idle-no-queue	CYDpod|Shuffle all|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-populated-r0.svg	0	240x320	songs	populated	Home|Songs|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Home|Songs|Song 03|Fixture Artist|
+render/artists-populated-r0.svg	0	240x320	artists	populated	Home|Artists|Shuffle all|Fixture Artist|1 albums|||||Home|Artists|
+render/artists-child-albums-of-artist-r0.svg	0	240x320	artists-child	albums-of-artist	Artists|Fixture Artist|Shuffle all|Artists|Fixture Artist|All Songs|5 songs|Fixture Album|Fixture Artist||||
+render/artist-album-songs-tracks-of-album-r0.svg	0	240x320	artist-album-songs	tracks-of-album	Fixture Artist|Fixture Album|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Fixture Artist|Fixture Album|Song 02|Fixture Artist|Song 03|Fixture Artist|
+render/albums-populated-r0.svg	0	240x320	albums	populated	Home|Albums|Shuffle all|Fixture Album|Fixture Artist||||Home|Albums||
+render/albums-child-tracks-of-album-r0.svg	0	240x320	albums-child	tracks-of-album	Albums|Fixture Album|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Song 03|Fixture Artist||Albums|Fixture Album
+render/playlists-menu-r0.svg	0	240x320	playlists	menu	Home|Playlists|Shuffle all|Home|Playlists|Favourites|Folders||||
+render/favourites-read-or-allocation-error-notice-r0.svg	0	240x320	favourites	read-or-allocation-error-notice	Playlists|CYDpod|Shuffle all|Unable to read list or allocate memory. Try again.|Playlists|CYDpod
+render/folders-populated-r0.svg	0	240x320	folders	populated	Playlists|Folders|Shuffle all|Example|||Playlists|Folders|||
+render/folder-songs-populated-r0.svg	0	240x320	folder-songs	populated	Folders|Example|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Song 03|Fixture Artist||Folders|Example
+render/search-keyboard-letters-empty-r0.svg	0	240x320	search-keyboard	letters-empty	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-keyboard-typed-beyonce-r0.svg	0	240x320	search-keyboard	typed-beyonce	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-keyboard-letters-q-z-page-r0.svg	0	240x320	search-keyboard	letters-q-z-page	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-results-beyonce-accented-match-r0.svg	0	240x320	search-results	beyonce-accented-match	Home|Search Results|Shuffle all|Edit: beyonce|1 results (max 50)|Beyoncé|Fixture Artist|Home|Search Results||||
+render/search-results-no-matches-r0.svg	0	240x320	search-results	no-matches	Home|Search Results|Shuffle all|Edit: zzz|0 results (max 50)|No matches|Home|Search Results||||
+render/search-keyboard-digits-r0.svg	0	240x320	search-keyboard	digits	Search Results|Search Songs|Space|Clear|Done|0|1|2|3|4|5|6|7|8|9|Delete
+render/settings-menu-r0.svg	0	240x320	settings	menu	Home|Settings|Shuffle all|Home|Settings|Audio Output|Bluetooth|Playback|Display|Refresh Library|Upload / Advanced
+render/dialog-confirm-forget-device-r0.svg	0	240x320	dialog	confirm-forget-device	Home|Settings|Shuffle all|Home|Settings|Audio Output|Bluetooth|Playback|Display|Refresh Library|Upload / Advanced|Forget this device?|It can be paired again later.|Cancel|Forget
+render/dialog-confirm-reset-pin-r0.svg	0	240x320	dialog	confirm-reset-pin	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Display|Refresh Library|Home|Settings|Upload / Advanced|Reset the web passcode?|It goes back to 000000.|Change it on the WiFi tab.|Cancel|Reset
+render/output-bluetooth-selected-r0.svg	0	240x320	output	bluetooth-selected	Settings|Audio Output|Shuffle all|Settings|Audio Output|Bluetooth|Selected|Headphones|Switch back to Bluetooth if there is no sound|||
+render/output-headphones-selected-r0.svg	0	240x320	output	headphones-selected	Settings|Audio Output|Shuffle all|Bluetooth|Headphones|Selected|Switch back to Bluetooth if there is no sound||Settings|Audio Output||
+render/bluetooth-off-headphones-route-r0.svg	0	240x320	bluetooth	off-headphones-route	Bluetooth|Bluetooth is off (output: Headphones)|Use Bluetooth
+render/message-output-change-failed-r0.svg	0	240x320	message	output-change-failed	Audio Output|CYDpod|Shuffle all|Unable to change output. Try again.|Audio Output|CYDpod
+render/bluetooth-bluetooth-route-r0.svg	0	240x320	bluetooth	bluetooth-route	Bluetooth|Pair new|Connected:|Speaker
+render/playback-menu-r0.svg	0	240x320	playback	menu	Settings|Playback|Shuffle all|Settings|Playback|Shuffle|On|Repeat|Off|Screen timeout|Off|Sleep timer|15 minutes||
+render/display-menu-r0.svg	0	240x320	display	menu	Settings|Display|Shuffle all|Brightness -|100%|Brightness +|100%|Flip portrait|Calibrate touch|Panel / Advanced||Settings|Display
+render/refresh-library-confirm-r0.svg	0	240x320	refresh-library	confirm	Settings|Refresh Library|Shuffle all|Rebuild and restart|Music files are preserved|Cancel|||Settings|Refresh Library||
+render/setup-legacy-advanced-bridge-r0.svg	0	240x320	setup-legacy	advanced-bridge	Setup|Audio out|Bluetooth|Bluetooth speaker|Speaker|Upload music|Web passcode|000000|Theme|Classic Touch|Style|Classic Touch|Layout|Classic|Background|no GIFs in /bg
+render/about-menu-r0.svg	0	240x320	about	menu	Settings|About|Shuffle all|CYDpod Classic Touch|5 songs|M4A / AAC-LC 44.1 kHz|62 KB free heap|Settings|About
+render/nowplaying-playing-r0.svg	0	240x320	nowplaying	playing	Songs|2 / 5|Song 00|Fixture Artist|Fixture Album|Songs|2 / 5|100|Speaker|1:24|-2:36|Songs|2 / 5|Speaker
+render/options-menu-r0.svg	0	240x320	options	menu	Now Playing|Options|Song 00|Fixture Artist|Favourite|Add|Shuffle|Repeat|Audio Output|||Now Playing|Options
+render/output-from-options-bluetooth-selected-r0.svg	0	240x320	output	from-options-bluetooth-selected	Options|Audio Output|Song 00|Fixture Artist|Bluetooth|Selected|Options|Audio Output|Headphones|Switch back to Bluetooth if there is no sound|||
+render/home-playing-mini-player-r0.svg	0	240x320	home	playing-mini-player	CYDpod|Song 00|Fixture Artist|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-with-mini-player-r0.svg	0	240x320	songs	with-mini-player	Home|Songs|Song 00|Fixture Artist|Home|Songs|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Song 03|Fixture Artist
+render/home-idle-no-queue-r1.svg	1	320x240	home	idle-no-queue	CYDpod|Shuffle all|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-populated-r1.svg	1	320x240	songs	populated	Home|Songs|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Home|Songs
+render/artists-populated-r1.svg	1	320x240	artists	populated	Home|Artists|Shuffle all|Home|Artists|Fixture Artist|1 albums|||
+render/artists-child-albums-of-artist-r1.svg	1	320x240	artists-child	albums-of-artist	Artists|Fixture Artist|Shuffle all|All Songs|5 songs|Fixture Album|Fixture Artist||Artists|Fixture Artist|
+render/artist-album-songs-tracks-of-album-r1.svg	1	320x240	artist-album-songs	tracks-of-album	Fixture Artist|Fixture Album|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Fixture Artist|Fixture Album
+render/albums-populated-r1.svg	1	320x240	albums	populated	Home|Albums|Shuffle all|Fixture Album|Fixture Artist||||Home|Albums
+render/albums-child-tracks-of-album-r1.svg	1	320x240	albums-child	tracks-of-album	Albums|Fixture Album|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Albums|Fixture Album|Song 01|Fixture Artist|Song 02|Fixture Artist
+render/playlists-menu-r1.svg	1	320x240	playlists	menu	Home|Playlists|Shuffle all|Favourites|Folders||Home|Playlists|
+render/favourites-read-or-allocation-error-notice-r1.svg	1	320x240	favourites	read-or-allocation-error-notice	Playlists|CYDpod|Shuffle all|Unable to read list or allocate memory. Try again.|Playlists|CYDpod
+render/folders-populated-r1.svg	1	320x240	folders	populated	Playlists|Folders|Shuffle all|Example||||Playlists|Folders
+render/folder-songs-populated-r1.svg	1	320x240	folder-songs	populated	Folders|Example|Shuffle all|Beyoncé|Fixture Artist|Folders|Example|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist
+render/search-keyboard-letters-empty-r1.svg	1	320x240	search-keyboard	letters-empty	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-keyboard-typed-beyonce-r1.svg	1	320x240	search-keyboard	typed-beyonce	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-keyboard-letters-q-z-page-r1.svg	1	320x240	search-keyboard	letters-q-z-page	Search Results|Search Songs|Space|Clear|Done|q|r|s|t|u|v|w|x|y|z|Delete
+render/search-results-beyonce-accented-match-r1.svg	1	320x240	search-results	beyonce-accented-match	Home|Search Results|Shuffle all|Edit: beyonce|1 results (max 50)|Home|Search Results|Beyoncé|Fixture Artist||
+render/search-results-no-matches-r1.svg	1	320x240	search-results	no-matches	Home|Search Results|Shuffle all|Edit: zzz|0 results (max 50)|Home|Search Results|No matches||
+render/search-keyboard-digits-r1.svg	1	320x240	search-keyboard	digits	Search Results|Search Songs|Space|Clear|Done|0|1|2|3|4|5|6|7|8|9|Delete
+render/settings-menu-r1.svg	1	320x240	settings	menu	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Display|Home|Settings
+render/dialog-confirm-forget-device-r1.svg	1	320x240	dialog	confirm-forget-device	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Display|Home|Settings|Forget this device?|It can be paired again later.|Cancel|Forget
+render/dialog-confirm-reset-pin-r1.svg	1	320x240	dialog	confirm-reset-pin	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Display|Home|Settings|Reset the web passcode?|It goes back to 000000.|Change it on the WiFi tab.|Cancel|Reset
+render/output-bluetooth-selected-r1.svg	1	320x240	output	bluetooth-selected	Settings|Audio Output|Shuffle all|Bluetooth|Selected|Headphones|Switch back to Bluetooth if there is no sound||Settings|Audio Output
+render/output-headphones-selected-r1.svg	1	320x240	output	headphones-selected	Settings|Audio Output|Shuffle all|Bluetooth|Headphones|Selected|Switch back to Bluetooth if there is no sound|Settings|Audio Output|
+render/bluetooth-off-headphones-route-r1.svg	1	320x240	bluetooth	off-headphones-route	Bluetooth|Bluetooth is off (output: Headphones)|Use Bluetooth
+render/message-output-change-failed-r1.svg	1	320x240	message	output-change-failed	Audio Output|CYDpod|Shuffle all|Unable to change output. Try again.|Audio Output|CYDpod
+render/bluetooth-bluetooth-route-r1.svg	1	320x240	bluetooth	bluetooth-route	Bluetooth|Pair new|Connected:|Speaker
+render/playback-menu-r1.svg	1	320x240	playback	menu	Settings|Playback|Shuffle all|Settings|Playback|Shuffle|On|Repeat|Off|Screen timeout|Off|Sleep timer|15 minutes
+render/display-menu-r1.svg	1	320x240	display	menu	Settings|Display|Shuffle all|Brightness -|100%|Brightness +|100%|Flip portrait|Calibrate touch|Settings|Display
+render/refresh-library-confirm-r1.svg	1	320x240	refresh-library	confirm	Settings|Refresh Library|Shuffle all|Rebuild and restart|Music files are preserved|Settings|Refresh Library|Cancel||
+render/setup-legacy-advanced-bridge-r1.svg	1	320x240	setup-legacy	advanced-bridge	Setup|Audio out|Bluetooth|Bluetooth speaker|Speaker|Upload music|Web passcode|000000|Theme|Classic Touch|Style|Classic Touch|Bluetooth speaker|Speaker
+render/about-menu-r1.svg	1	320x240	about	menu	Settings|About|Shuffle all|CYDpod Classic Touch|5 songs|M4A / AAC-LC 44.1 kHz|62 KB free heap|Settings|About
+render/nowplaying-playing-r1.svg	1	320x240	nowplaying	playing	Songs|2 / 5|Song 00|Fixture Artist|Fixture Album|Songs|2 / 5|100|Speaker|1:24|-2:36|Songs|2 / 5|Speaker
+render/options-menu-r1.svg	1	320x240	options	menu	Now Playing|Options|Song 00|Fixture Artist|Favourite|Add|Shuffle|Repeat|Audio Output|Now Playing|Options
+render/output-from-options-bluetooth-selected-r1.svg	1	320x240	output	from-options-bluetooth-selected	Options|Audio Output|Song 00|Fixture Artist|Bluetooth|Selected|Options|Audio Output|Headphones|Switch back to Bluetooth if there is no sound|
+render/home-playing-mini-player-r1.svg	1	320x240	home	playing-mini-player	CYDpod|Song 00|Fixture Artist|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-with-mini-player-r1.svg	1	320x240	songs	with-mini-player	Home|Songs|Song 00|Fixture Artist|Home|Songs|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist
+render/home-idle-no-queue-r2.svg	2	240x320	home	idle-no-queue	CYDpod|Shuffle all|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-populated-r2.svg	2	240x320	songs	populated	Home|Songs|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Song 03|Fixture Artist||Home|Songs
+render/artists-populated-r2.svg	2	240x320	artists	populated	Home|Artists|Shuffle all|Home|Artists|Fixture Artist|1 albums|||||
+render/artists-child-albums-of-artist-r2.svg	2	240x320	artists-child	albums-of-artist	Artists|Fixture Artist|Shuffle all|All Songs|5 songs|Fixture Album|Fixture Artist||Artists|Fixture Artist|||
+render/artist-album-songs-tracks-of-album-r2.svg	2	240x320	artist-album-songs	tracks-of-album	Fixture Artist|Fixture Album|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Song 03|Fixture Artist||Fixture Artist|Fixture Album
+render/albums-populated-r2.svg	2	240x320	albums	populated	Home|Albums|Shuffle all|Fixture Album|Fixture Artist||||||Home|Albums
+render/albums-child-tracks-of-album-r2.svg	2	240x320	albums-child	tracks-of-album	Albums|Fixture Album|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Albums|Fixture Album|Song 01|Fixture Artist|Song 02|Fixture Artist|Song 03|Fixture Artist|
+render/playlists-menu-r2.svg	2	240x320	playlists	menu	Home|Playlists|Shuffle all|Favourites|Folders||Home|Playlists|||
+render/favourites-read-or-allocation-error-notice-r2.svg	2	240x320	favourites	read-or-allocation-error-notice	Playlists|CYDpod|Shuffle all|Unable to read list or allocate memory. Try again.|Playlists|CYDpod
+render/folders-populated-r2.svg	2	240x320	folders	populated	Playlists|Folders|Shuffle all|Example||||||Playlists|Folders
+render/folder-songs-populated-r2.svg	2	240x320	folder-songs	populated	Folders|Example|Shuffle all|Beyoncé|Fixture Artist|Folders|Example|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Song 03|Fixture Artist|
+render/search-keyboard-letters-empty-r2.svg	2	240x320	search-keyboard	letters-empty	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-keyboard-typed-beyonce-r2.svg	2	240x320	search-keyboard	typed-beyonce	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-keyboard-letters-q-z-page-r2.svg	2	240x320	search-keyboard	letters-q-z-page	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-results-beyonce-accented-match-r2.svg	2	240x320	search-results	beyonce-accented-match	Home|Search Results|Shuffle all|Edit: beyonce|1 results (max 50)|Beyoncé|Fixture Artist||||Home|Search Results|
+render/search-results-no-matches-r2.svg	2	240x320	search-results	no-matches	Home|Search Results|Shuffle all|Edit: zzz|0 results (max 50)|No matches||||Home|Search Results|
+render/search-keyboard-digits-r2.svg	2	240x320	search-keyboard	digits	Search Results|Search Songs|Space|Clear|Done|0|1|2|3|4|5|6|7|8|9|Delete
+render/settings-menu-r2.svg	2	240x320	settings	menu	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Home|Settings|Display|Refresh Library|Upload / Advanced
+render/dialog-confirm-forget-device-r2.svg	2	240x320	dialog	confirm-forget-device	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Home|Settings|Display|Refresh Library|Upload / Advanced|Forget this device?|It can be paired again later.|Cancel|Forget
+render/dialog-confirm-reset-pin-r2.svg	2	240x320	dialog	confirm-reset-pin	Home|Settings|Shuffle all|Home|Settings|Audio Output|Bluetooth|Playback|Display|Refresh Library|Upload / Advanced|Reset the web passcode?|It goes back to 000000.|Change it on the WiFi tab.|Cancel|Reset
+render/output-bluetooth-selected-r2.svg	2	240x320	output	bluetooth-selected	Settings|Audio Output|Shuffle all|Bluetooth|Selected|Headphones|Switch back to Bluetooth if there is no sound|Settings|Audio Output|||
+render/output-headphones-selected-r2.svg	2	240x320	output	headphones-selected	Settings|Audio Output|Shuffle all|Bluetooth|Headphones|Selected|Switch back to Bluetooth if there is no sound||||Settings|Audio Output
+render/bluetooth-off-headphones-route-r2.svg	2	240x320	bluetooth	off-headphones-route	Bluetooth|Bluetooth is off (output: Headphones)|Use Bluetooth
+render/message-output-change-failed-r2.svg	2	240x320	message	output-change-failed	Audio Output|CYDpod|Shuffle all|Unable to change output. Try again.|Audio Output|CYDpod
+render/bluetooth-bluetooth-route-r2.svg	2	240x320	bluetooth	bluetooth-route	Bluetooth|Pair new|Connected:|Speaker
+render/playback-menu-r2.svg	2	240x320	playback	menu	Settings|Playback|Shuffle all|Settings|Playback|Shuffle|On|Repeat|Off|Screen timeout|Off|Sleep timer|15 minutes||
+render/display-menu-r2.svg	2	240x320	display	menu	Settings|Display|Shuffle all|Brightness -|100%|Brightness +|100%|Flip portrait|Calibrate touch|Panel / Advanced||Settings|Display
+render/refresh-library-confirm-r2.svg	2	240x320	refresh-library	confirm	Settings|Refresh Library|Shuffle all|Rebuild and restart|Music files are preserved|Cancel|||Settings|Refresh Library||
+render/setup-legacy-advanced-bridge-r2.svg	2	240x320	setup-legacy	advanced-bridge	Setup|Audio out|Bluetooth|Bluetooth speaker|Speaker|Upload music|Web passcode|000000|Theme|Classic Touch|Style|Classic Touch|Layout|Classic|Background|no GIFs in /bg
+render/about-menu-r2.svg	2	240x320	about	menu	Settings|About|Shuffle all|CYDpod Classic Touch|5 songs|M4A / AAC-LC 44.1 kHz|62 KB free heap|Settings|About
+render/nowplaying-playing-r2.svg	2	240x320	nowplaying	playing	Songs|2 / 5|Song 00|Fixture Artist|Fixture Album|Songs|2 / 5|100|Speaker|1:24|-2:36|Songs|2 / 5|Speaker
+render/options-menu-r2.svg	2	240x320	options	menu	Now Playing|Options|Song 00|Fixture Artist|Favourite|Add|Shuffle|Repeat|Audio Output|||Now Playing|Options
+render/output-from-options-bluetooth-selected-r2.svg	2	240x320	output	from-options-bluetooth-selected	Options|Audio Output|Song 00|Fixture Artist|Bluetooth|Selected|Options|Audio Output|Headphones|Switch back to Bluetooth if there is no sound|||
+render/home-playing-mini-player-r2.svg	2	240x320	home	playing-mini-player	CYDpod|Song 00|Fixture Artist|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-with-mini-player-r2.svg	2	240x320	songs	with-mini-player	Home|Songs|Song 00|Fixture Artist|Home|Songs|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Song 03|Fixture Artist
+render/home-idle-no-queue-r3.svg	3	320x240	home	idle-no-queue	CYDpod|Shuffle all|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-populated-r3.svg	3	320x240	songs	populated	Home|Songs|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Home|Songs
+render/artists-populated-r3.svg	3	320x240	artists	populated	Home|Artists|Shuffle all|Home|Artists|Fixture Artist|1 albums|||
+render/artists-child-albums-of-artist-r3.svg	3	320x240	artists-child	albums-of-artist	Artists|Fixture Artist|Shuffle all|All Songs|5 songs|Fixture Album|Fixture Artist||Artists|Fixture Artist|
+render/artist-album-songs-tracks-of-album-r3.svg	3	320x240	artist-album-songs	tracks-of-album	Fixture Artist|Fixture Album|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist|Fixture Artist|Fixture Album
+render/albums-populated-r3.svg	3	320x240	albums	populated	Home|Albums|Shuffle all|Fixture Album|Fixture Artist||||Home|Albums
+render/albums-child-tracks-of-album-r3.svg	3	320x240	albums-child	tracks-of-album	Albums|Fixture Album|Shuffle all|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Albums|Fixture Album|Song 01|Fixture Artist|Song 02|Fixture Artist
+render/playlists-menu-r3.svg	3	320x240	playlists	menu	Home|Playlists|Shuffle all|Favourites|Folders||Home|Playlists|
+render/favourites-read-or-allocation-error-notice-r3.svg	3	320x240	favourites	read-or-allocation-error-notice	Playlists|CYDpod|Shuffle all|Unable to read list or allocate memory. Try again.|Playlists|CYDpod
+render/folders-populated-r3.svg	3	320x240	folders	populated	Playlists|Folders|Shuffle all|Example||||Playlists|Folders
+render/folder-songs-populated-r3.svg	3	320x240	folder-songs	populated	Folders|Example|Shuffle all|Beyoncé|Fixture Artist|Folders|Example|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist
+render/search-keyboard-letters-empty-r3.svg	3	320x240	search-keyboard	letters-empty	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-keyboard-typed-beyonce-r3.svg	3	320x240	search-keyboard	typed-beyonce	Search Results|Search Songs|Space|Clear|Done|a|b|c|d|e|f|g|h|i|j|k
+render/search-keyboard-letters-q-z-page-r3.svg	3	320x240	search-keyboard	letters-q-z-page	Search Results|Search Songs|Space|Clear|Done|q|r|s|t|u|v|w|x|y|z|Delete
+render/search-results-beyonce-accented-match-r3.svg	3	320x240	search-results	beyonce-accented-match	Home|Search Results|Shuffle all|Edit: beyonce|1 results (max 50)|Home|Search Results|Beyoncé|Fixture Artist||
+render/search-results-no-matches-r3.svg	3	320x240	search-results	no-matches	Home|Search Results|Shuffle all|Edit: zzz|0 results (max 50)|Home|Search Results|No matches||
+render/search-keyboard-digits-r3.svg	3	320x240	search-keyboard	digits	Search Results|Search Songs|Space|Clear|Done|0|1|2|3|4|5|6|7|8|9|Delete
+render/settings-menu-r3.svg	3	320x240	settings	menu	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Display|Home|Settings
+render/dialog-confirm-forget-device-r3.svg	3	320x240	dialog	confirm-forget-device	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Display|Home|Settings|Forget this device?|It can be paired again later.|Cancel|Forget
+render/dialog-confirm-reset-pin-r3.svg	3	320x240	dialog	confirm-reset-pin	Home|Settings|Shuffle all|Audio Output|Bluetooth|Playback|Display|Home|Settings|Reset the web passcode?|It goes back to 000000.|Change it on the WiFi tab.|Cancel|Reset
+render/output-bluetooth-selected-r3.svg	3	320x240	output	bluetooth-selected	Settings|Audio Output|Shuffle all|Bluetooth|Selected|Headphones|Switch back to Bluetooth if there is no sound||Settings|Audio Output
+render/output-headphones-selected-r3.svg	3	320x240	output	headphones-selected	Settings|Audio Output|Shuffle all|Bluetooth|Headphones|Selected|Switch back to Bluetooth if there is no sound|Settings|Audio Output|
+render/bluetooth-off-headphones-route-r3.svg	3	320x240	bluetooth	off-headphones-route	Bluetooth|Bluetooth is off (output: Headphones)|Use Bluetooth
+render/message-output-change-failed-r3.svg	3	320x240	message	output-change-failed	Audio Output|CYDpod|Shuffle all|Unable to change output. Try again.|Audio Output|CYDpod
+render/bluetooth-bluetooth-route-r3.svg	3	320x240	bluetooth	bluetooth-route	Bluetooth|Pair new|Connected:|Speaker
+render/playback-menu-r3.svg	3	320x240	playback	menu	Settings|Playback|Shuffle all|Settings|Playback|Shuffle|On|Repeat|Off|Screen timeout|Off|Sleep timer|15 minutes
+render/display-menu-r3.svg	3	320x240	display	menu	Settings|Display|Shuffle all|Brightness -|100%|Brightness +|100%|Flip portrait|Calibrate touch|Settings|Display
+render/refresh-library-confirm-r3.svg	3	320x240	refresh-library	confirm	Settings|Refresh Library|Shuffle all|Rebuild and restart|Music files are preserved|Settings|Refresh Library|Cancel||
+render/setup-legacy-advanced-bridge-r3.svg	3	320x240	setup-legacy	advanced-bridge	Setup|Audio out|Bluetooth|Bluetooth speaker|Speaker|Upload music|Web passcode|000000|Theme|Classic Touch|Style|Classic Touch|Bluetooth speaker|Speaker
+render/about-menu-r3.svg	3	320x240	about	menu	Settings|About|Shuffle all|CYDpod Classic Touch|5 songs|M4A / AAC-LC 44.1 kHz|62 KB free heap|Settings|About
+render/nowplaying-playing-r3.svg	3	320x240	nowplaying	playing	Songs|2 / 5|Song 00|Fixture Artist|Fixture Album|Songs|2 / 5|100|Speaker|1:24|-2:36|Songs|2 / 5|Speaker
+render/options-menu-r3.svg	3	320x240	options	menu	Now Playing|Options|Song 00|Fixture Artist|Favourite|Add|Shuffle|Repeat|Audio Output|Now Playing|Options
+render/output-from-options-bluetooth-selected-r3.svg	3	320x240	output	from-options-bluetooth-selected	Options|Audio Output|Song 00|Fixture Artist|Bluetooth|Selected|Options|Audio Output|Headphones|Switch back to Bluetooth if there is no sound|
+render/home-playing-mini-player-r3.svg	3	320x240	home	playing-mini-player	CYDpod|Song 00|Fixture Artist|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-with-mini-player-r3.svg	3	320x240	songs	with-mini-player	Home|Songs|Song 00|Fixture Artist|Home|Songs|Beyoncé|Fixture Artist|Song 00|Fixture Artist|Song 01|Fixture Artist|Song 02|Fixture Artist
+render/home-empty-catalogue-r0.svg	0	240x320	home	empty-catalogue	CYDpod|Shuffle all|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-empty-catalogue-r0.svg	0	240x320	songs	empty-catalogue	Home|Songs|Shuffle all|No entries|||||||Home|Songs
+render/artists-empty-catalogue-r0.svg	0	240x320	artists	empty-catalogue	Home|Artists|Shuffle all|No entries|Home|Artists||||||
+render/albums-empty-catalogue-r0.svg	0	240x320	albums	empty-catalogue	Home|Albums|Shuffle all|No entries||Home|Albums|||||
+render/folders-empty-catalogue-r0.svg	0	240x320	folders	empty-catalogue	Playlists|Folders|Shuffle all|No entries|||||||Playlists|Folders
+render/home-empty-catalogue-r1.svg	1	320x240	home	empty-catalogue	CYDpod|Shuffle all|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-empty-catalogue-r1.svg	1	320x240	songs	empty-catalogue	Home|Songs|Shuffle all|No entries|||||Home|Songs
+render/artists-empty-catalogue-r1.svg	1	320x240	artists	empty-catalogue	Home|Artists|Shuffle all|No entries|||||Home|Artists
+render/albums-empty-catalogue-r1.svg	1	320x240	albums	empty-catalogue	Home|Albums|Shuffle all|No entries|Home|Albums||||
+render/folders-empty-catalogue-r1.svg	1	320x240	folders	empty-catalogue	Playlists|Folders|Shuffle all|No entries|||||Playlists|Folders
+render/home-empty-catalogue-r2.svg	2	240x320	home	empty-catalogue	CYDpod|Shuffle all|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-empty-catalogue-r2.svg	2	240x320	songs	empty-catalogue	Home|Songs|Shuffle all|No entries||||||Home|Songs|
+render/artists-empty-catalogue-r2.svg	2	240x320	artists	empty-catalogue	Home|Artists|Shuffle all|No entries|||||||Home|Artists
+render/albums-empty-catalogue-r2.svg	2	240x320	albums	empty-catalogue	Home|Albums|Shuffle all|No entries|||||||Home|Albums
+render/folders-empty-catalogue-r2.svg	2	240x320	folders	empty-catalogue	Playlists|Folders|Shuffle all|No entries||||||Playlists|Folders|
+render/home-empty-catalogue-r3.svg	3	320x240	home	empty-catalogue	CYDpod|Shuffle all|Songs|Artists|Albums|Playlists|Search|Settings|CYDpod
+render/songs-empty-catalogue-r3.svg	3	320x240	songs	empty-catalogue	Home|Songs|Shuffle all|No entries|||||Home|Songs
+render/artists-empty-catalogue-r3.svg	3	320x240	artists	empty-catalogue	Home|Artists|Shuffle all|No entries|||||Home|Artists
+render/albums-empty-catalogue-r3.svg	3	320x240	albums	empty-catalogue	Home|Albums|Shuffle all|No entries|||||Home|Albums
+render/folders-empty-catalogue-r3.svg	3	320x240	folders	empty-catalogue	Playlists|Folders|Shuffle all|No entries|||||Playlists|Folders

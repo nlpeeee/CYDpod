@@ -12,9 +12,7 @@ constexpr int RowTitleY=12,RowDetailY=30,RowTextInset=34,RowIconInset=12,RowIcon
 constexpr int RowInset=30,StripW=30,ThumbMin=12,ThumbInset=25,ThumbW=3;
 template<class R> constexpr inline R row(int w,int i){return {0,HeaderH+i*RowH,w-RowInset,RowH};}
 template<class R> constexpr inline R strip(int w,int h){return {w-StripW,HeaderH,StripW,rows(h)*RowH};}
-// Keyboard action row retains its existing 80 px cells.
-constexpr int ActionW=80,PlayingX=160,FooterIconSize=14;
-template<class R> constexpr inline R action(int w,int h,int cell,bool fixed=false){return {cell*ActionW,footerY(h),cell<2||fixed?ActionW:w-PlayingX,FooterH};}
+constexpr int FooterIconSize=14;
 // Browse mini-player and paging strip; the Player bottom row remains independent.
 constexpr int MiniButtonW=52,MiniProgressH=2,MiniTitleY=13,MiniArtistY=31,MiniTitleH=13,MiniArtistH=10;
 constexpr int MiniTextInset=8,MiniIconSize=18,MiniPressMs=80,DeepHomeW=40,HomeGlyphHalf=7,HomeRoofH=6,HomeWallH=7;
@@ -55,16 +53,25 @@ template<class R> constexpr inline R output(int w,int h){return {w-PlayerOutputH
 template<class R> constexpr inline R outputFace(int w,int h){return {w-PlayerChipInset-PlayerChipW,h-PlayerBottomH+(PlayerBottomH-PlayerChipH)/2,PlayerChipW,PlayerChipH};}
 // Shared endpoint math: paint and input use the same inclusive endpoints.
 constexpr inline int sliderValue(int x,int left,int width,int maximum){return x<=left?0:x>=left+width?maximum:int(int64_t(x-left)*maximum/width);}
-// Search keyboard: retain the fixed landscape action row, including its gaps.
+// Search: full-width ten-key rows in every orientation. Hit cells are half-open,
+// contiguous and own their inset face gaps; drawing and input share these rectangles.
 constexpr int QueryInset=8,QueryY=60,QueryTextInset=54,QueryStatusInset=6,QueryStatusW=42;
-constexpr int PortraitMinH=300,QueryH=32,KeyY=76,KeyH=40,KeyGap=2,KeyTextInset=4;
-constexpr int LandscapeCols=8,DigitCols=5,LetterCols=6,KeyActionY=156,PortraitActionY=236;
-constexpr int KeyActionW=106,KeyDigitsX=212,KeyDigitsW=108;
-constexpr inline int columns(int h,bool digits){return h<PortraitMinH?LandscapeCols:digits?DigitCols:LetterCols;}
-template<class R> constexpr inline R key(int w,int h,int i,bool digits){const int cols=columns(h,digits),cell=w/cols;return {(i%cols)*cell,KeyY+(i/cols)*KeyH,cell,KeyH};}
-template<class R> constexpr inline R keyBack(int h){return h<PortraitMinH?R{0,KeyActionY,KeyActionW,KeyH}:R{ActionW,PortraitActionY,ActionW,KeyH};}
-template<class R> constexpr inline R keyDigits(int h){return h<PortraitMinH?R{KeyDigitsX,KeyActionY,KeyDigitsW,KeyH}:R{PlayingX,PortraitActionY,ActionW,KeyH};}
-template<class R> constexpr inline R keyPage(){return {KeyActionW,KeyActionY,KeyActionW,KeyH};}
+constexpr int PortraitMinH=300,QueryH=32,KeyY=HeaderH+QueryH,KeyGap=2,KeyTextInset=4;
+constexpr int KeyRows=3,KeyCols=10,KeyRowTwo=10,KeyRowThree=19,DigitRowThree=20;
+constexpr inline int keyRow(int i,bool digits){return i<(digits?KeyCols:KeyRowTwo)?0:i<(digits?DigitRowThree:KeyRowThree)?1:2;}
+template<class R> constexpr inline R key(int w,int h,int i,bool digits){
+  const int row=keyRow(i,digits),start=row==0?0:row==1?KeyCols:digits?DigitRowThree:KeyRowThree;
+  const int col=i-start,cols=!digits&&row==1?KeyCols-1:KeyCols;
+  const int top=KeyY+(footerY(h)-KeyY)*row/KeyRows,bottom=KeyY+(footerY(h)-KeyY)*(row+1)/KeyRows;
+  return {col*w/cols,top,(col+1)*w/cols-col*w/cols,bottom-top};
+}
+template<class R> constexpr inline R keyBack(int w,int h){const R r=key<R>(w,h,DigitRowThree+7,true);return {r.x,r.y,w-r.x,r.h};}
+// Bottom row: 123/ABC, Space (double width), Clear, Done.
+template<class R> constexpr inline R keyAction(int w,int h,int cell){
+  const int start=cell==0?0:cell==1?1:cell+1,end=cell==0?1:cell==1?3:cell+2;
+  return {start*w/5,footerY(h),end*w/5-start*w/5,FooterH};
+}
+template<class R> constexpr inline R keyDigits(int w,int h){return keyAction<R>(w,h,0);}
 // CY-80 Home: six tiles (3 x 2 landscape, 2 x 3 portrait) between header and mini-player.
 // The left/top margins match proposal C; the right margin is one gap. Swipe-back needs this much rightward travel.
 constexpr int TileCount=6,TileMargin=8,TileGap=4,TileTop=8,TileBottom=4,TileRadius=8,SwipeBackPx=40;

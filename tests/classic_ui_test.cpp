@@ -552,7 +552,7 @@ static bool findKey(char c,int& x,int& y){
 static void typeQuery(const char* s){
   namespace L=cydclassic::layout;
   for(;*s;++s){int x=0,y=0;
-    for(int attempt=0;attempt<2&&!findKey(*s,x,y)&&tft.height()<L::PortraitMinH;++attempt)tapRect(L::keyPage<Rect>());
+    if(!findKey(*s,x,y))tapRect(L::keyDigits<Rect>(tft.width(),tft.height()));
     check(findKey(*s,x,y),(std::string("search key reachable through the hit map: ")+*s+" r"+std::to_string(tft.getRotation())).c_str());tap(x,y);
   }
   pump();
@@ -567,14 +567,93 @@ static uint64_t searchIO(){return hostOpenCalls+hostReadCalls+hostWriteCalls+hos
 static void searchStep(uint32_t elapsed=1){SCREEN_CLASSIC.tick(clockNow+=elapsed);}
 static void searchSettle(){for(int i=0;i<100&&storage_searchBusy();++i)searchStep();check(!storage_searchBusy()&&!storage_searchFailed(),"session scan completes");}
 static std::vector<uint16_t> activeQueue(){std::vector<uint16_t> q;for(int i=0;i<audio_queueLen();++i)q.push_back(uint16_t(audio_queueTrack(i)));return q;}
+const char* classic_query();unsigned classic_mode();
+static void qwertyRegression(){
+  namespace L=cydclassic::layout;
+  const std::string letters="qwertyuiopasdfghjklzxcvbnm",symbols="0123456789-/:;()&@.,?!'\"_+=";
+  unsigned cases=0;
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);home();tapTile(4);
+    const int w=tft.width(),h=tft.height();
+    const Rect page=L::keyDigits<Rect>(w,h),clear=L::keyAction<Rect>(w,h,2),space=L::keyAction<Rect>(w,h,1),done=L::keyAction<Rect>(w,h,3),del=L::keyBack<Rect>(w,h);
+    if(classic_target(L::key<Rect>(w,h,0,false).cx(),L::KeyY)!=1000+'q')searchTap(page);
+    searchTap(clear);searchStep(150);
+    for(int cell=0;cell<4;++cell){const Rect r=L::keyAction<Rect>(w,h,cell);
+      for(int x:{r.x,r.cx(),r.x+r.w-1})for(int y:{r.y,r.cy(),r.y+r.h-1})
+        check(classic_target(x,y)==-41-cell,"control centres/edges/gaps have exact owners");
+    }
+    for(int x:{del.x,del.cx(),del.x+del.w-1})for(int y:{del.y,del.cy(),del.y+del.h-1})check(classic_target(x,y)==-40,"Delete edges own their gap");
+    check(classic_target(-1,L::KeyY)==-1&&classic_target(w,L::KeyY)==-1&&classic_target(0,L::KeyY-1)==-1,"outside and query strip never type");
+    // Tolerant control release stays with the captured page key across the Space boundary.
+    SCREEN_CLASSIC.press(PRESS_DOWN,page.x+page.w-1,page.cy());check(label("123"),"page waits for release");
+    SCREEN_CLASSIC.press(PRESS_UP,page.x+page.w+6,page.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,page.x+page.w+6,page.cy());
+    check(classic_target(0,L::KeyY)==1000+'0'&&!classic_query()[0],"page release slop toggles once without neighbouring Space");searchTap(page);
+    for(bool digits:{false,true}){
+      if(digits)searchTap(page);
+      const auto& chars=digits?symbols:letters;
+      check(chars.size()==(digits?27u:26u),"bounded keyboard table lengths");
+      for(size_t i=0;i<chars.size();++i){
+        const Rect r=L::key<Rect>(w,h,int(i),digits);
+        check(r.w>=w/10&&r.h>0&&r.y>=L::KeyY&&r.y+r.h<=L::footerY(h),"maximized key geometry inside keyboard");
+        // Every face corner and its inset gap belongs to exactly this key, including boundaries.
+        for(int x:{r.x,r.cx(),r.x+r.w-1})for(int y:{r.y,r.cy(),r.y+r.h-1}){
+          check(classic_target(x,y)==1000+chars[i],"key centres/edges/gaps have one exact owner");
+          searchTap(clear);const uint64_t io=searchIO();
+          SCREEN_CLASSIC.press(PRESS_DOWN,x,y);
+          check(std::string(classic_query())==std::string(1,chars[i]),"character echoes once on down");
+          // Cross into a neighbour, hold, return and release: capture cannot retarget or repeat.
+          for(int n=0;n<4;++n)SCREEN_CLASSIC.press(PRESS_MOVE,(x+w/10)%w,y);
+          SCREEN_CLASSIC.press(PRESS_UP,x,y);SCREEN_CLASSIC.touch(TOUCH_LONG_PRESS,x,y);
+          check(std::string(classic_query())==std::string(1,chars[i])&&searchIO()==io,"adjacent jitter/hold/release never doubles or opens storage");++cases;
+        }
+      }
+      searchTap(clear);
+      const uint64_t io=searchIO();
+      for(char c:chars)searchKey(c);
+      check(std::string(classic_query())==chars&&searchIO()==io,"actual target burst types exact table without storage work");
+      searchTap(page);check(std::string(classic_query())==chars,"page switching preserves query");searchTap(page);
+      // Control keys stay release actions with captured-target slop.
+      SCREEN_CLASSIC.press(PRESS_DOWN,del.cx(),del.cy());check(std::string(classic_query())==chars,"Delete waits for release");
+      SCREEN_CLASSIC.press(PRESS_UP,del.cx(),del.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,del.cx(),del.cy());
+      check(std::string(classic_query())==chars.substr(0,chars.size()-1),"Delete removes one byte");
+      searchTap(space);check(std::string(classic_query())==chars.substr(0,chars.size()-1)+" ","Space inserts once");
+      searchTap(clear);check(!classic_query()[0],"Clear resets text");
+    }
+    searchTap(page); // return from symbols to QWERTY
+    searchTap(clear);searchStep(150);const uint64_t io=searchIO();
+    for(int i=0;i<35;++i)searchKey('q');
+    check(std::string(classic_query())==std::string(31,'q')&&searchIO()==io,"31-byte query cap, no per-key storage");
+    searchTap(clear);ui_go(SCR_CLASSIC); // dismiss the expected full-query toast before classifier input
+    const int recals=recalCount;
+    const Rect q=L::key<Rect>(w,h,0,false);
+    for(uint32_t duration:{1u,650u,4500u}){
+      searchTap(clear);pressRun(duration,10,0,at(q.cx(),q.cy()));
+      check(std::string(classic_query())=="q"&&recalCount==recals,"real classifier short/long/recal hold emits exactly one character");
+    }
+    searchTap(clear);searchStep(150);const uint64_t burstIO=searchIO(),burstOpens=hostOpenCalls;
+    for(char c:std::string("song")){searchKey(c);searchStep(20);}searchStep(129);
+    check(searchIO()==burstIO,"QWERTY burst waits for final 150 ms deadline in each rotation");searchStep();
+    check(hostOpenCalls==burstOpens+1&&storage_searchCount()==8,"one warm applied query per QWERTY burst in each rotation");
+    const int progress=storage_searchProgress();const uint64_t retainedIO=searchIO();
+    searchTap(done);ui_redraw();
+    check(storage_searchProgress()==progress&&searchIO()==retainedIO,"Done/redraw retain in-flight progress without opens in each rotation");
+    searchStep(); // paint the Edit row through the real one-dirty-row scheduler before tapping it
+    const uint64_t editIO=searchIO();const int editProgress=storage_searchProgress();searchTap(L::row<Rect>(w,0));
+    check(classic_mode()==15&&std::string(classic_query())=="song"&&storage_searchProgress()==editProgress&&searchIO()==editIO,"Edit retains same-query progress without opens in each rotation");
+    searchSettle();searchTap(clear);searchStep(150);
+    std::cout<<"CY66_GEOMETRY rotation="<<rotation<<" key="<<w/10<<"x"<<q.h<<" rows="<<L::KeyY<<".."<<L::footerY(h)<<" Delete="<<del.w<<"x"<<del.h<<" controls="<<page.w<<"/"<<space.w<<"/"<<clear.w<<"/"<<done.w<<"\n";
+  }
+  tft.setRotation(0);home();
+  std::cout<<"PASS CY-66 QWERTY: "<<cases<<" centres/edges/gaps; all letters/digits/punctuation, captured adjacent jitter, held/released keys, classifier 1/650/4500 ms, controls/slop, page retention, 31-byte bound, one query per burst, retained progress and no per-key storage; all rotations\n";
+}
 static void searchSessionRegression(){
   namespace L=cydclassic::layout;
   tft.setRotation(0);g_settings.screenTimeout=0;home();tapTile(4);
-  const Rect clear=L::action<Rect>(0,tft.height(),1),done=L::action<Rect>(tft.width(),tft.height(),2);
+  const Rect clear=L::keyAction<Rect>(tft.width(),tft.height(),2),done=L::keyAction<Rect>(tft.width(),tft.height(),3);
   const Rect back{L::HeaderBackX,L::HeaderTextY,1,1},edit=L::row<Rect>(tft.width(),0),hit=L::row<Rect>(tft.width(),1);
   searchTap(clear);searchStep(150);
   const auto queue=activeQueue();const int commands=calls;const uint64_t emptyIO=searchIO();
-  for(int i=0;i<3;++i){searchTap(clear);searchTap(L::keyBack<Rect>(tft.height()));searchStep(200);}
+  for(int i=0;i<3;++i){searchTap(clear);searchTap(L::keyBack<Rect>(tft.width(),tft.height()));searchStep(200);}
   searchTap(done);ui_redraw();searchStep();searchTap(edit);searchStep();
   check(searchIO()==emptyIO,"empty Clear/Delete/Done/navigation performs zero storage work");
   // Cold build: edits echo immediately, nothing opens until the final 150 ms deadline.
@@ -596,7 +675,7 @@ static void searchSessionRegression(){
   for(int i=0;i<3;++i){searchTap(done);ui_redraw();searchStep();searchTap(edit);searchTap(back);searchStep();searchTap(edit);searchStep();}
   check(searchIO()==finishedIO&&storage_searchProgress()==finishedProgress&&storage_searchCount()==10,"unchanged completed navigation retains count/cursor with no storage work");
   // Returning to applied text before idle also retains the session, even across Done.
-  searchKey('x');searchTap(L::keyBack<Rect>(tft.height()));searchTap(done);searchStep();searchTap(edit);
+  searchKey('x');searchTap(L::keyBack<Rect>(tft.width(),tft.height()));searchTap(done);searchStep();searchTap(edit);
   check(searchIO()==finishedIO&&storage_searchCount()==10,"reverted edit keeps completed query without redundant start");
   // Warm scan at rollover: one open, 8/10 records per step, no start on intermediate text.
   searchTap(clear);searchStep(150);searchStep();clockNow=UINT32_MAX-90;searchStep(0);
@@ -760,18 +839,17 @@ static void renderInventory(){
     tapBackButton();tapRow(1);shot("folders","populated","Example");
     tapRow(0);shot("folder-songs","populated","Song 00");
     // Search: empty keyboard, a typed query, an accented match, a miss, and the digit page.
-    home();tapTile(4);tapRect(L::action<Rect>(0,tft.height(),1));
-    {int x=0,y=0;if(!findKey('a',x,y)&&tft.height()<L::PortraitMinH)tapRect(L::keyPage<Rect>());}  // first letter page
+    home();tapTile(4);tapRect(L::keyAction<Rect>(tft.width(),tft.height(),2));
+    {int x=0,y=0;if(!findKey('a',x,y))tapRect(L::keyDigits<Rect>(tft.width(),tft.height()));}
     shot("search-keyboard","letters-empty","Search Songs");
     typeQuery("beyonce");shot("search-keyboard","typed-beyonce","Search Songs");
-    {int x=0,y=0;if(tft.height()<L::PortraitMinH){if(findKey('q',x,y)==false)tapRect(L::keyPage<Rect>());check(findKey('q',x,y),"Q-Z page");}
-     shot("search-keyboard","letters-q-z-page","z");}
-    tapRect(L::action<Rect>(0,tft.height(),2,true));pump();
+    shot("search-keyboard","qwerty-all-rows","z");
+    tapRect(L::keyAction<Rect>(tft.width(),tft.height(),3));pump();
     shot("search-results","beyonce-accented-match",nullptr);
     check(storage_searchCount()==1,"beyonce finds the accented title");
-    tapRow(0);tapRect(L::action<Rect>(0,tft.height(),1));typeQuery("zzz");tapRect(L::action<Rect>(0,tft.height(),2,true));pump();
+    tapRow(0);tapRect(L::keyAction<Rect>(tft.width(),tft.height(),2));typeQuery("zzz");tapRect(L::keyAction<Rect>(tft.width(),tft.height(),3));pump();
     shot("search-results","no-matches","No matches");
-    tapRow(0);tapRect(L::keyDigits<Rect>(tft.height()));shot("search-keyboard","digits","9");tapRect(L::keyDigits<Rect>(tft.height()));
+    tapRow(0);tapRect(L::keyDigits<Rect>(tft.width(),tft.height()));shot("search-keyboard","digits","9");tapRect(L::keyDigits<Rect>(tft.width(),tft.height()));
     // Settings tree.
     home();tapTile(5);shot("settings","menu","Audio Output");
     ui_confirm(T_FORGET_Q,T_FORGET_HINT,T_COUNT,T_FORGET,nullptr);shot("dialog","confirm-forget-device",nullptr,false);tapDialogCancel();
@@ -966,20 +1044,20 @@ int main(){try{
   std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
   classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
   tapTile(4);check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
-  tap(20,216);tap(100,176);tap(60,176);tap(20,136); // song
-  tap(40,300);tap(200,256);check(label("0")&&label("9"),"digit keyboard page");
-  tap(24,96);tap(168,96);tap(216,96);tap(120,256); // 034, backspace -> 03
+  typeQuery("song");tapRect(cydclassic::layout::keyAction<Rect>(tft.width(),tft.height(),1));
+  tapRect(cydclassic::layout::keyDigits<Rect>(tft.width(),tft.height()));check(label("0")&&label("9"),"digit keyboard page");
+  typeQuery("034");tapRect(cydclassic::layout::keyBack<Rect>(tft.width(),tft.height())); // -> song 03
   check(calls==before,"incremental search preserves active queue");snapshot("ui-search-digits.svg");
-  tap(200,300);check(label("Song 03")&&storage_searchCount()==1,"filtered result list");snapshot("ui-search-results.svg");
+  tapRect(cydclassic::layout::keyAction<Rect>(tft.width(),tft.height(),3));check(label("Song 03")&&storage_searchCount()==1,"filtered result list");snapshot("ui-search-results.svg");
   tap(80,110);check(playing&&storage_trackLabel(current)=="Song 03"&&calls>before,"result commits playable queue");
   // Existing 52 px transport and 44 px seek targets include the outer edges.
   tap(120,226);check(!playing,"large play target upper edge");tap(120,276);check(playing,"large play target lower edge");
   tx=100;ty=246;down=true;ui_tick(clockNow+=130);tx=130;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,tx,ty);pump();check(!playing,"sliding inside Play executes instead of silently cancelling");
-  tap(20,20);tap(80,66);tap(120,300);tap(100,256);tap(200,256); // edit, Clear, Delete on empty, ABC
-  tap(60,256);tap(60,256); // z,z
-  tap(200,300);check(label("No matches"),"empty results are visible");
+  tap(20,20);tap(80,66);
+  tapRect(cydclassic::layout::keyAction<Rect>(tft.width(),tft.height(),2));tapRect(cydclassic::layout::keyBack<Rect>(tft.width(),tft.height()));
+  typeQuery("zz");tapRect(cydclassic::layout::keyAction<Rect>(tft.width(),tft.height(),3));check(label("No matches"),"empty results are visible");
   tap(80,66);tft.setRotation(1);ui_redraw();pump();
-  tap(150,176);check(label("q")&&label("z"),"landscape alphabet second page");snapshot("ui-search-landscape.svg");
+  check(label("q")&&label("z"),"landscape QWERTY has every letter on one page");snapshot("ui-search-landscape.svg");
   tft.setRotation(0);ui_redraw();pump();
   classic_home();ui_go(SCR_CLASSIC);pump();tapTile(5);tap(80,154);check(label("Screen timeout")&&label("Sleep timer"),"Playback exposes both sleep settings");g_settings.screenTimeout=2;ui_redraw();pump();snapshot("ui-playback-sleep.svg");g_settings.screenTimeout=0;
   tap(80,154);check(g_settings.screenTimeout==1,"screen timeout cycles and persists setting");
@@ -1008,6 +1086,7 @@ int main(){try{
   bluetoothReturns();
   renderInventory();
   SD.root=uiCardRoot;check(storage_begin(nullptr),"navigation card catalogue");playlist_begin();
+  qwertyRegression();
   searchSessionRegression();
   for(unsigned r:{0u,1u,2u,3u}){navRotation=r;navigationGraph();}navRotation=0;tft.setRotation(0);g_settings.rotation=0;
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");

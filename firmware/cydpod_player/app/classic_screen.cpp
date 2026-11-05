@@ -63,7 +63,7 @@ int volumeSaveArms=0;
 #endif
 uint32_t seekMs=0,seekDuration=0,seekSerial=0;
 char notice[128]={};
-char query[32]={};bool digitKeys=false,lettersSecond=false;uint32_t screenNow=0;
+char query[32]={};bool digitKeys=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
 enum class SearchState:uint8_t { Empty,Active,Cancelled,Error };
 struct SearchSession {
@@ -99,7 +99,7 @@ void applySearch(uint32_t now){
   }
   searchShownCount=searchShownProgress=-1;
 }
-constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44,KeyPage=-45;
+constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44;
 constexpr int TileBase=-50; // Home tile i is target TileBase-i
 constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Options=-24,Slider=-25,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
 Page miniReturn{};uint8_t miniReturnDepth=0;uint32_t miniPressUntil=0;bool miniQueued=false;
@@ -208,13 +208,14 @@ void miniPlayer(){
   playerText(playingInfo.artist,r.x+L::MiniTextInset,r.y+L::MiniArtistY,L::MiniArtistH,r.w-2*L::MiniTextInset,p.dim,p.band,false);
   miniProgress();
 }
+void keyboardActions();
 void footer(){
   if(page().mode==Mode::Player)return;
   if(browse()){if(shownSerial!=audio_trackSerial()||shownPlaying!=audio_isPlaying()||miniQueued!=(audio_queueLen()>0))miniPlayer();return;}
   const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),L::FooterH,p.band);
   tft.drawFastHLine(0,footerY(),tft.width(),p.outline);
   if(page().mode==Mode::Keyboard){
-    text("Space",L::action<Rect>(0,tft.height(),0),p.text,p.band);text("Clear",L::action<Rect>(0,tft.height(),1),p.text,p.band);text("Done",L::action<Rect>(0,tft.height(),2,true),p.text,p.band);return;
+    keyboardActions();return;
   }
 }
 
@@ -442,14 +443,22 @@ void playerTick(uint32_t now){
     playerText(remain.c_str(),tft.width()-L::ProgressInset-remainWidth,tft.height()-L::PlayerTimeBottom,L::PlayerTimeH,tft.width()/2-L::ProgressInset,p.dim,p.bg,false);
   }
 }
-// Five rows of 40 px keys, with a 44 px action bar. No title list in RAM.
-const char* keyLetters(){return digitKeys?"0123456789":tft.height()<L::PortraitMinH?(lettersSecond?"qrstuvwxyz":"abcdefghijklmnop"):"abcdefghijklmnopqrstuvwxyz";}
+// Bounded read-only tables; no per-key state or allocation. Same QWERTY in all rotations.
+const char* keyLetters(){
+  static const char letters[]="qwertyuiopasdfghjklzxcvbnm";
+  static const char symbols[]="0123456789-/:;()&@.,?!'\"_+=";
+  return digitKeys?symbols:letters;
+}
 Rect keyRect(int i){return L::key<Rect>(tft.width(),tft.height(),i,digitKeys);}
-Rect keyBackRect(){return L::keyBack<Rect>(tft.height());}
-Rect keyDigitsRect(){return L::keyDigits<Rect>(tft.height());}
+Rect keyBackRect(){return L::keyBack<Rect>(tft.width(),tft.height());}
+Rect keyDigitsRect(){return L::keyDigits<Rect>(tft.width(),tft.height());}
 void keyFace(const Rect& r,const char* label){
   tft.fillRect(r.x+L::KeyGap/2,r.y+L::KeyGap/2,r.w-L::KeyGap,r.h-L::KeyGap,theme().band);
   ui_text(String(label),r.cx(),r.cy(),MC_DATUM,theme().text,theme().band,r.w-L::KeyTextInset);
+}
+void keyboardActions(){
+  const char* labels[]={digitKeys?"ABC":"123","Space","Clear","Done"};
+  for(int i=0;i<4;++i)keyFace(L::keyAction<Rect>(tft.width(),tft.height(),i),labels[i]);
 }
 void queryPaint(){
   tft.fillRect(0,L::HeaderH,tft.width(),L::QueryH,theme().bg);
@@ -460,15 +469,12 @@ void keyboardPaint(){
   tft.fillRect(0,L::KeyY,tft.width(),footerY()-L::KeyY,theme().bg);
   const char* keys=keyLetters();
   for(int i=0;keys[i];++i){char label[2]={keys[i],0};keyFace(keyRect(i),label);}
-  keyFace(keyBackRect(),"Delete");keyFace(keyDigitsRect(),digitKeys?"ABC":"123");
-  if(tft.height()<L::PortraitMinH)keyFace(L::keyPage<Rect>(),lettersSecond?"A-P":"Q-Z");
-  keyFace(L::action<Rect>(0,tft.height(),0),"Space");keyFace(L::action<Rect>(0,tft.height(),1),"Clear");keyFace(L::action<Rect>(tft.width(),tft.height(),2),"Done");
+  keyFace(keyBackRect(),"Delete");keyboardActions();
   queryPaint();
 }
 void editQuery(int target){
   size_t n=strlen(query);bool changed=true;
   if(target==KeyDigits){digitKeys=!digitKeys;keyboardPaint();return;}
-  if(target==KeyPage){digitKeys=false;lettersSecond=!lettersSecond;keyboardPaint();return;}
   if(target==KeyBack){if(n)query[n-1]=0;else changed=false;}
   else if(target==KeyClear){if(n)query[0]=0;else changed=false;}
   else if(n<sizeof(query)-1){query[n]=target==KeySpace?' ':char(target-KeyBase);query[n+1]=0;}
@@ -641,10 +647,9 @@ int targetAt(int x,int y){
   }
   if(y<L::HeaderH){if(browse()&&navigation.depth>=4&&L::deepHome<Rect>().contains(x,y))return Home;return navigation.depth>1&&x<L::BackW?Back:-1;}
   if(page().mode==Mode::Keyboard){
-    if(y>=footerY())return x<L::ActionW?KeySpace:x<L::PlayingX?KeyClear:KeyDone;
+    for(int i=0;i<4;++i)if(L::keyAction<Rect>(tft.width(),tft.height(),i).contains(x,y))return i==0?KeyDigits:i==1?KeySpace:i==2?KeyClear:KeyDone;
     if(keyBackRect().contains(x,y))return KeyBack;
     if(keyDigitsRect().contains(x,y))return KeyDigits;
-    if(tft.height()<L::PortraitMinH&&L::keyPage<Rect>().contains(x,y))return KeyPage;
     const char* keys=keyLetters();
     for(int i=0;keys[i];++i)if(keyRect(i).contains(x,y))return KeyBase+keys[i];
     return -1;
@@ -686,6 +691,7 @@ bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
     ready=-1;dimmed=-1;gesture.down(x,y,page().top,hit);
+    if(page().mode==Mode::Keyboard&&hit>=KeyBase){editQuery(hit);gesture.claimed=true;return true;}
     if(hit==Slider){volumeChanged=false;volumeAt(x);return true;}
     if(hit==Seek){
       seekCancelled=!audio_canSeek();seekPreview=!seekCancelled;
@@ -700,6 +706,7 @@ bool press(PressPhase phase,int x,int y){
     highlight=hit>=0&&page().mode!=Mode::Keyboard?hit-page().top:-1;if(highlight>=0&&highlight<rows()&&cache[highlight].valid)paintRow(highlight,true);
     return false;
   }
+  if(page().mode==Mode::Keyboard&&gesture.target>=KeyBase)return true; // captured character: no slide/release/hold repeat
   if(phase==PRESS_MOVE){
     if(gesture.target==Slider){volumeAt(x);return true;}
     if(gesture.target==Seek){
@@ -780,6 +787,7 @@ const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};
 int classic_volumeSaveArms(){return volumeSaveArms;}
 uint32_t classic_volumeSaveAt(){return saveAt;}
 int classic_target(int x,int y){return targetAt(x,y);}
+const char* classic_query(){return query;}
 uint32_t classic_seekPreviewMs(){return seekMs;}
 unsigned classic_depth(){return navigation.depth;}
 unsigned classic_mode(){return unsigned(page().mode);}
@@ -806,7 +814,7 @@ std::string classic_geometry(){
         navigation.home();navigation.depth=variant==0?1:variant==3?4:2;page().mode=Mode(m);
         audio_setQueue(nullptr,variant>=2?1:0,-1,false);
         count=variant==0?0:variant==1?1:7;page().top=variant==3?2:0;
-        digitKeys=variant==2;lettersSecond=variant==3;
+        digitKeys=variant==2;
         assert(rows()==(tft.height()==240?4:6));
         const Rect strip=L::strip<Rect>(tft.width(),tft.height());
         assert(strip.y==L::HeaderH&&strip.h==rows()*L::RowH&&strip.y+strip.h==footerY());
@@ -819,7 +827,7 @@ std::string classic_geometry(){
           assert(r.x==end&&r.y==footerY()&&r.y+r.h==tft.height());end=r.x+r.w;
         }assert(end==tft.width());
         out<<" v="<<variant;
-        if(page().mode==Mode::Keyboard){out<<" keys=";for(int i=0;keyLetters()[i];++i)rect(keyRect(i));rect(keyBackRect());rect(keyDigitsRect());}
+        if(page().mode==Mode::Keyboard){out<<" keys=";for(int i=0;keyLetters()[i];++i)rect(keyRect(i));rect(keyBackRect());for(int cell=0;cell<4;++cell)rect(L::keyAction<Rect>(tft.width(),tft.height(),cell));}
         // Lossless run-length table: each y band contains x-end:target runs.
         std::string previous;int start=0;
         for(int y=0;y<=tft.height();++y){
@@ -830,7 +838,7 @@ std::string classic_geometry(){
       }out<<'\n';
     }
   }
-  navigation.home();audio_setQueue(nullptr,0,-1,false);digitKeys=lettersSecond=false;count=0;tft.setRotation(0);return out.str();
+  navigation.home();audio_setQueue(nullptr,0,-1,false);digitKeys=false;count=0;tft.setRotation(0);return out.str();
 }
 #endif
 

@@ -214,7 +214,7 @@ int main(int argc, char** argv) {
 
     {  // Velocity rules: horizon, stale-sample clearing, clamp, degree reduction, ring wrap.
       Velocity v;
-      check(v.get(Strategy::Lsq2) == 0 && v.get(Strategy::Impulse) == 0, "empty = 0");
+      check(v.windowCount() == 0 && v.get(Strategy::Lsq2) == 0 && v.get(Strategy::Impulse) == 0, "empty = 0");
       v.add(0, 0); check(v.get(Strategy::Lsq2) == 0 && v.get(Strategy::Impulse) == 0, "one sample = 0");
       v.add(10, 10); check(near(v.get(Strategy::Lsq2), 1000, 1) && near(v.get(Strategy::Impulse), 1000, 1), "two samples = slope");
       v.add(60, 20);  // 50 ms gap > 40: history cleared, one sample left
@@ -231,7 +231,7 @@ int main(int argc, char** argv) {
       check(g.get(Strategy::Lsq2) == -ScrollCfg().maxFling, "clamped to -maxFling");
       Velocity r;  // more than 20 samples: ring wraps, newest 100 ms still correct
       for (uint32_t ms = 0; ms <= 400; ms += 10) r.add(ms, 0.5f * ms);
-      check(r.count() == 20 && near(r.get(Strategy::Lsq2), 500, 2) && near(r.get(Strategy::Impulse), 500, 2), "ring wrap");
+      check(r.count() == 20 && r.windowCount() == 11 && near(r.get(Strategy::Lsq2), 500, 2) && near(r.get(Strategy::Impulse), 500, 2), "ring wrap");
       std::printf("PASS velocity rules (horizon 100 ms, stale 40 ms, clamp, ring of 20)\n");
     }
 

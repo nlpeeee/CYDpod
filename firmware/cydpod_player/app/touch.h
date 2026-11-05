@@ -32,6 +32,7 @@ void       touch_begin();
 TouchEvent touch_poll(int* x = nullptr, int* y = nullptr);
 bool       touch_isDown();
 uint32_t   touch_heldMs();
+uint32_t   touch_lastSeenMs(); // sample clock, including the press just released
 // Where the current press LANDED (screen coordinates), valid while down. This
 // is the point touch_poll() reports when the press ends: a tap acts where the
 // finger went down, not where it drifted to.

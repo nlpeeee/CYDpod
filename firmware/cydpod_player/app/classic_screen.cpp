@@ -826,9 +826,9 @@ bool press(PressPhase phase,int x,int y){
     listPress=browse()&&page().mode!=Mode::Home&&hit>=0&&hit<KeyBase&&count>rows();
     listDragging=false;thumbDrag=hit==Thumb;dragOffset=page().offsetPx;
     if(listPress){
-      listTracker.down(inputNow(),y,stopping?&listFling:nullptr);
+      listTracker.down(touch_lastSeenMs(),y,stopping?&listFling:nullptr);
       if(stopping){
-        finishFling(inputNow());listTracker.move(inputNow(),y);listDragging=true;
+        finishFling(inputNow());listTracker.move(touch_lastSeenMs(),y);listDragging=true;
         gesture.claimed=true;gesture.vlead=true;thumbVisible=true;
         claimAt=inputNow();claimPending=true;viewportPending=true;return true;
       }
@@ -862,7 +862,7 @@ bool press(PressPhase phase,int x,int y){
       if(!seekCancelled)seekPreviewAt(x);return true;
     }
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next){if(browse()&&!within(x,y,cydclassic::Gesture::SlopNear)&&playerPressed!=-1){playerPressed=-1;miniPlayer();}return true;}
-    const bool tracked=listPress&&listTracker.move(inputNow(),y);
+    const bool tracked=listPress&&listTracker.move(touch_lastSeenMs(),y);
     if(thumbDrag||(tracked&&(listDragging||abs(y-gesture.y)>=abs(x-gesture.x)))){
       if(!gesture.claimed){claimAt=inputNow();claimPending=true;}
       listDragging=!thumbDrag;
@@ -884,11 +884,22 @@ bool press(PressPhase phase,int x,int y){
   if(phase==PRESS_UP){
     if(listPress||thumbDrag){
       const bool dragged=thumbDrag||listDragging;
+      if(listPress){
+        // Release grace delays PRESS_UP, not the finger's actual sample clock.
+        const uint32_t releasedAt=touch_lastSeenMs();
+        scrollStats.releaseGapMs=inputNow()-releasedAt;
+        scrollStats.releasePauseMs=releasedAt-listTracker.samples().lastMs();
+        scrollStats.releaseSamples=listTracker.samples().windowCount();
+        scrollStats.releaseVelocity=0;
+        if(listDragging){
+          if(listTracker.up(releasedAt,listFling,float(page().offsetPx),0,float(cydclassic::clampOffset(INT32_MAX,count,rows())))){
+            flingActive=true;++scrollStats.flings;flingUnderruns=audio_underruns();
+          }
+          scrollStats.releaseVelocity=listTracker.releaseVelocity();
+        }
+      }
       listPress=thumbDrag=false;
       if(dragged){
-        if(listDragging&&listTracker.up(inputNow(),listFling,float(page().offsetPx),0,float(cydclassic::clampOffset(INT32_MAX,count,rows())))){
-          flingActive=true;++scrollStats.flings;flingUnderruns=audio_underruns();
-        }
         viewportPending=true;thumbUntil=inputNow()+L::ThumbHoldMs;gesture.claimed=true;ready=-1;highlight=dimmed=-1;return true;}
     }
     if(gesture.target==Slider){armVolumeSave();gesture.target=-1;return true;}
@@ -943,9 +954,10 @@ void classic_home(){searchSession.resumePx=-1;miniReturnDepth=0;flushSettings();
 ClassicScrollStats classic_scrollStats(){return scrollStats;}
 void classic_logScrollStats(){
   const ClassicScrollStats s=classic_scrollStats();
-  Serial.printf("stat: scroll frames %lu lastMs %lu maxMs %lu claimToPaintMs %lu flings %lu underruns %lu\n",
+  Serial.printf("stat: scroll frames %lu lastMs %lu maxMs %lu claimToPaintMs %lu flings %lu underruns %lu releaseV %.1f releaseGapMs %lu releasePauseMs %lu releaseSamples %lu\n",
     (unsigned long)s.frames,(unsigned long)s.lastFrameMs,(unsigned long)s.maxFrameMs,
-    (unsigned long)s.claimToPaintMs,(unsigned long)s.flings,(unsigned long)s.underruns);
+    (unsigned long)s.claimToPaintMs,(unsigned long)s.flings,(unsigned long)s.underruns,
+    double(s.releaseVelocity),(unsigned long)s.releaseGapMs,(unsigned long)s.releasePauseMs,(unsigned long)s.releaseSamples);
 }
 void classic_return(){if(externalReturn)externalReturn=false;else if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}ui_go(SCR_CLASSIC);}
 const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};

@@ -113,6 +113,7 @@ const char* display_panelName(uint16_t){return "ST7789";}
 bool firmware_uploaderPresent(){return false;}
 bool firmware_bootUploader(){return false;}
 bool touch_isDown(){return useTracker?tracker.down():down;}
+uint32_t touch_lastSeenMs(){return useTracker?tracker.lastSeenMs():clockNow;}
 void touch_position(int& x,int& y){if(useTracker)tracker.landing(x,y);else{x=tx;y=ty;}}
 void touch_livePosition(int& x,int& y){if(useTracker)tracker.live(x,y);else{x=tx;y=ty;}}
 bool titles_load(const String&){return false;}
@@ -1237,6 +1238,35 @@ static void flingRegression(){
   classic_logScrollStats();
   std::cout<<"PASS CY-99 fling: start/finish, tap-to-stop/drag, hard edges, fake-clock frame independence, cache-only fast frames, thumb timeout, stats/underruns\n";
 }
+// CY-103: real PressTracker grace -> ui_touch/syncPress -> Classic PRESS_UP.
+static void lateReleaseRegression(){
+  g_settings.rotation=0;tft.setRotation(0);
+  for(int period:{10,16})for(int delay:{60,90})for(bool rested:{false,true}){
+    toSongs();tracker=cydtouch::PressTracker{};useTracker=true;
+    const int before=calls;uint32_t now=clockNow+300;
+    auto sample=[&](bool valid,int y){
+      // Set the host input clock before event dispatch, as millis() does on device.
+      SCREEN_CLASSIC.tick(clockNow=now);loopStep(now,valid,60,y);
+    };
+    sample(true,190);
+    for(int i=1;i<=10;++i){now+=period;sample(true,190-i*5);}
+    if(rested)for(int i=0;i<12;++i){now+=period;sample(true,140);}
+    const uint32_t lastSeen=now;const int dragged=classic_offset();
+    now+=30;sample(false,0);check(!classic_flingActive(),"no fling during release grace");
+    now=lastSeen+delay;sample(false,0);
+    std::cout<<"CY-103 period="<<period<<" delay="<<delay<<" rested="<<rested
+      <<" fling="<<classic_flingActive()<<std::endl;
+    check(classic_flingActive()!=rested,"CY-103 late release must fling unless finger really rested");
+    const auto stats=classic_scrollStats();
+    check(stats.releaseGapMs==unsigned(delay)&&stats.releaseSamples>=2&&stats.releaseSamples<=11,"release gap and velocity window count");
+    check(rested?stats.releaseVelocity==0:stats.releaseVelocity < -45,"release velocity diagnostic");
+    check(rested?stats.releasePauseMs>40:stats.releasePauseMs==0,"true stationary pause excludes grace");
+    if(!rested){now+=20;SCREEN_CLASSIC.tick(clockNow=now);check(classic_offset()>dragged,"late flick advances content");}
+    check(calls==before,"late flick never selects");
+    useTracker=false;clockNow=now;toSongs();
+  }
+  std::cout<<"PASS CY-103 late release: 60/100 Hz, 60/90 ms grace, true rest suppresses fling\n";
+}
 int main(){try{
   if(std::getenv("CYDPOD_REGENERATE_CLASSIC")){std::ofstream("../golden/classic_layout.txt")<<classic_geometry();return 0;}
 
@@ -1257,7 +1287,7 @@ int main(){try{
   for(int i=0;i<10;++i){auto bytes=original;char name[32];snprintf(name,sizeof(name),"Song %02d",i);memset(bytes.data()+pos,0,tag.size());memcpy(bytes.data()+pos,name,strlen(name));
     std::ofstream out(SD.root/(std::string("music/Example/")+name+".m4a"),std::ios::binary);out.write(bytes.data(),bytes.size());}
   check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
-  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){viewportRegression();dragRegression();flingRegression();miniPlayerRegression();return 0;}
+  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){lateReleaseRegression();viewportRegression();dragRegression();flingRegression();miniPlayerRegression();return 0;}
   tapTile(1);check(label("Fixture Artist")&&classic_depth()==2,"artist view straight from the tile");snapshot("ui-artists.svg");
   tap(80,66);check(label("All Songs")&&label("Fixture Album"),"artist album view");snapshot("ui-albums.svg");
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");

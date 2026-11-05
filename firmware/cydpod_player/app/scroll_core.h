@@ -194,10 +194,14 @@ class Velocity {
     if (n_ && ms == lastMs()) { r_[(head_ + kN - 1) % kN].y = y; return; }  // same timestamp: keep the newest y
     r_[head_] = {ms, y}; head_ = (head_ + 1) % kN; if (n_ < kN) ++n_;
   }
+  int windowCount() const {
+    int m = 0;
+    while (m < n_ && (uint32_t)(lastMs() - at(n_ - 1 - m).ms) <= c_.horizonMs) ++m;
+    return m;
+  }
   // px/s of y over the horizon at the newest sample, clamped to [-maxFling, +maxFling].
   float get(Strategy s) const {
-    int m = 0;  // samples inside the horizon, newest last
-    while (m < n_ && (uint32_t)(lastMs() - at(n_ - 1 - m).ms) <= c_.horizonMs) ++m;
+    const int m = windowCount();
     const float v = m < 2 ? 0 : (s == Strategy::Lsq2 ? lsq(m) : impulse(m));
     return v > c_.maxFling ? c_.maxFling : (v < -c_.maxFling ? -c_.maxFling : v);
   }

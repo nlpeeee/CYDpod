@@ -85,6 +85,7 @@ class PressTracker {
   }
 
   bool     down() const { return down_; }
+  uint32_t lastSeenMs() const { return lastSeen_; } // latest valid sample, retained through release grace
   uint32_t heldMs(uint32_t now) const { return down_ ? now - downAt_ : 0; }
   void     landing(int& x, int& y) const { x = landX_; y = landY_; }
   void     live(int& x, int& y) const { x = liveX_; y = liveY_; }

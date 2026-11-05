@@ -107,6 +107,7 @@ void touch_begin() {
 
 bool     touch_isDown() { return tracker.down(); }
 uint32_t touch_heldMs() { return tracker.heldMs(millis()); }
+uint32_t touch_lastSeenMs() { return tracker.lastSeenMs(); }
 void     touch_position(int& x, int& y) { tracker.landing(x, y); }
 void     touch_livePosition(int& x, int& y) { tracker.live(x, y); }
 

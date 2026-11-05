@@ -1,0 +1,52 @@
+{
+    "board":  "jc2432w328c",
+    "chip":  "esp32",
+    "flashSize":  "4MB",
+    "flashMode":  "dio",
+    "flashFreq":  "80m",
+    "fqbn":  "esp32:esp32:esp32:PartitionScheme=min_spiffs,PSRAM=disabled,FlashSize=4M",
+    "files":  [
+                  {
+                      "file":  "app.ino.bin",
+                      "offset":  "0x10000",
+                      "bytes":  1529664,
+                      "sha256":  "af470ee3bea10fbd681b846e419d5670528b3cef076cab053570777225ad0802"
+                  },
+                  {
+                      "file":  "app.ino.bootloader.bin",
+                      "offset":  "0x1000",
+                      "bytes":  25024,
+                      "sha256":  "f508dfe30f34c2490ec08caaa96f20dc2853f66a0a92f6fb759b205e82924f29"
+                  },
+                  {
+                      "file":  "app.ino.elf",
+                      "offset":  null,
+                      "bytes":  15968960,
+                      "sha256":  "f36103a890d6fd746aa924e9282859bd1e4c309c854eaa699f8d3d8f5bfee1f7"
+                  },
+                  {
+                      "file":  "app.ino.map",
+                      "offset":  null,
+                      "bytes":  19549846,
+                      "sha256":  "66daeae1afbd64eabcb1fab1025620c330cba536ea6fc9aefb383ac3692592e1"
+                  },
+                  {
+                      "file":  "app.ino.merged.bin",
+                      "offset":  null,
+                      "bytes":  4194304,
+                      "sha256":  "b5d06c26f55a342c3933816623c061aba6319c160f06d06aef6e064b7f94d5a7"
+                  },
+                  {
+                      "file":  "app.ino.partitions.bin",
+                      "offset":  "0x8000",
+                      "bytes":  3072,
+                      "sha256":  "0a8b5720e7b77ff11f1462458c3a509dee79224e5279898f26d6a2e3ae0517b7"
+                  },
+                  {
+                      "file":  "boot_app0.bin",
+                      "offset":  "0xe000",
+                      "bytes":  8192,
+                      "sha256":  "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"
+                  }
+              ]
+}

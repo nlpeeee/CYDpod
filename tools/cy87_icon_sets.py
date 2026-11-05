@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CY-87: iPod-inspired icon and button set options -- design previews only (standard library only).
+"""CY-87 icon design previews, plus CY-90 selected-C export/verification (standard library only).
 
 Generates, with no dependencies and no downloads:
   * three icon/button set options (A classic primitives, B click-wheel 1-bit bitmaps,
@@ -12,9 +12,13 @@ Generates, with no dependencies and no downloads:
 Primitive options (current, A) are rasterised by ports of TFT_eSPI 2.5.43 fillTriangle, fillCircle,
 fillRoundRect, drawLine and friends, so their pixels follow the firmware's integer arithmetic.
 Bitmap options (B, C) are supersampled 4x4 here and then thresholded (1-bit) or quantised (4-bit);
-the shipped data would be exactly those bytes. Nothing here touches firmware, tests or goldens.
+the shipped data are exactly those bytes. Default preview mode leaves firmware/tests untouched;
+--export-c writes the selected C flash assets and source-mask fingerprints for CY-90.
+--verify-production compares production host PNGs with the source shapes and recompresses losslessly.
 
 Usage:  python -I tools/cy87_icon_sets.py [--fonts DIR_WITH_FreeSans9pt7b.h] [--out DIR]
+        python -I tools/cy87_icon_sets.py --export-c
+        python -I tools/cy87_icon_sets.py --verify-production tests/out/icon-preview
 """
 import argparse
 import json

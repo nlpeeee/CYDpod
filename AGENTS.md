@@ -1,6 +1,6 @@
 # CYDpod agent instructions
 
-Follow [the player specification](docs/specs/cydpod-plan.md) and [the current implementation checkpoint](docs/IMPLEMENTATION_STATUS.md).
+The player specification is `docs/specs/cydpod-plan.md` and the checkpoint is `docs/IMPLEMENTATION_STATUS.md`. Read only the sections your task spec names.
 
 ## Ownership and orchestration
 
@@ -15,7 +15,7 @@ Follow [the player specification](docs/specs/cydpod-plan.md) and [the current im
 
 - Reuse existing codecs, Bluetooth, I2S, display, filesystem and container-reader implementations. Required AAC-LC 44100 Hz stereo, actual AirPods Pro 2, and stereo line/headphone paths remain acceptance requirements.
 - Preserve pinned source provenance and all dependency notices. Keep downloads, caches and build artifacts out of Git.
-- Run the repository's compile-only check once established and retain its output. Do not report hardware success from compile or synthetic-host tests.
+- Run the checks your task spec names, once, on your final commit (tiers in `E:\dev\hq\playbook\CHUNKING.md`; default is compile-only with `-SkipProbe -SkipHostMedia`). Keep the output in a log file and quote only PASS/FAIL lines. Do not report hardware success from compile or synthetic-host tests.
 - Serial/device operations are separate from checks. Identify the actual CYD before opening/resetting/flashing a port; never infer that COM8 is the target from enumeration alone. Do not format user media automatically.
 - Put specifications in `docs/specs/` and research/validation evidence in `docs/research/`.
 - After two failed corrections of the same blocker, preserve evidence and propose a fresh chat with a better prompt rather than continuing speculative corrections.

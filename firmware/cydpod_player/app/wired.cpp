@@ -7,7 +7,7 @@
 #include "speaker.h"
 #include "wired_pump.h"
 #include "settings.h"
-#include <atomic>
+#include <freertos/FreeRTOS.h>
 #include <driver/i2s_std.h>
 #include <new>
 
@@ -69,10 +69,18 @@ struct Work {
   cydwired::Fade fade{cydwired::kLimitedCeilingQ15};
 };
 
-// Lock-free single-word mailbox: UI publishes only after saving. Loaded once
-// per chunk by the writer, so rapid UI requests coalesce without per-sample locks.
-static_assert(ATOMIC_INT_LOCK_FREE == 2, "limit mailbox must be lock-free");
-std::atomic<unsigned> requestedLimit{1};
+// Single-word mailbox: UI publishes only after saving. ESP32 critical sections
+// synchronize both cores; hold only for one load/store, never NVS or processing.
+// The writer reads once per chunk, coalescing requests without per-sample locks.
+portMUX_TYPE limitMux = portMUX_INITIALIZER_UNLOCKED;
+unsigned requestedLimit = 1;
+
+bool readRequestedLimit() {
+  portENTER_CRITICAL(&limitMux);
+  const bool on = requestedLimit != 0;
+  portEXIT_CRITICAL(&limitMux);
+  return on;
+}
 Work* work = nullptr;
 i2s_chan_handle_t tx = nullptr;
 bool enabled = false;
@@ -161,7 +169,7 @@ bool startStream() {
     return false;
   }
   enabled = true;
-  work->fade.resetLimit(requestedLimit.load(std::memory_order_acquire) != 0);
+  work->fade.resetLimit(readRequestedLimit());
   ++sessions;
   // Clocks run on zeros before any signal: >= 16 LRCK for the PLL and the DAC's
   // 104-sample un-mute, with margin.
@@ -218,7 +226,7 @@ void writerTask(void*) {
       speaker_routeFailed(OUT_WIRED);
       continue;
     }
-    work->fade.requestLimit(requestedLimit.load(std::memory_order_acquire) != 0);
+    work->fade.requestLimit(readRequestedLimit());
     if (!cydwired::pumpOnce(audio, work->fade, work->chunk, sink, counters, true, muted))
       vTaskDelay(kBackoffTicks);
     logWriteErrors(errorsSeen);
@@ -284,7 +292,9 @@ bool wired_active() { return enabled; }
 
 void wired_setMuted(bool m) { muted = m; }
 void wired_setHeadphoneLimit(bool on) {
-  requestedLimit.store(on ? 1u : 0u, std::memory_order_release);
+  portENTER_CRITICAL(&limitMux);
+  requestedLimit = on ? 1u : 0u;
+  portEXIT_CRITICAL(&limitMux);
 }
 
 WiredStats wired_stats() {

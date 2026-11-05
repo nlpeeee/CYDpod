@@ -591,9 +591,12 @@ static void renderInventory(){
     home();shot("home","idle-no-queue","Songs");
     tapTile(0);shot("songs","populated","Song 00");
     home();tapTile(1);shot("artists","populated","Fixture Artist");
+    tapRow(0);shot("artists-child","albums-of-artist","Fixture Album");
+    tapRow(1);shot("artist-album-songs","tracks-of-album","Song 00");
     home();tapTile(2);shot("albums","populated","Fixture Album");
+    tapRow(0);shot("albums-child","tracks-of-album","Song 00");
     home();tapTile(3);shot("playlists","menu","Favourites");
-    tapRow(0);shot("favourites","empty-list-notice","Unable to read list or allocate memory. Try again.");
+    tapRow(0);shot("favourites","read-or-allocation-error-notice","Unable to read list or allocate memory. Try again.");  // existing message for an empty source, not an empty-browse state
     tapBackButton();tapRow(1);shot("folders","populated","Example");
     tapRow(0);shot("folder-songs","populated","Song 00");
     // Search: empty keyboard, a typed query, an accented match, a miss, and the digit page.
@@ -601,6 +604,8 @@ static void renderInventory(){
     {int x=0,y=0;if(!findKey('a',x,y)&&tft.height()<L::PortraitMinH)tapRect(L::keyPage<Rect>());}  // first letter page
     shot("search-keyboard","letters-empty","Search Songs");
     typeQuery("beyonce");shot("search-keyboard","typed-beyonce","Search Songs");
+    {int x=0,y=0;if(tft.height()<L::PortraitMinH){if(findKey('q',x,y)==false)tapRect(L::keyPage<Rect>());check(findKey('q',x,y),"Q-Z page");}
+     shot("search-keyboard","letters-q-z-page","z");}
     tapRect(L::action<Rect>(0,tft.height(),2,true));pump();
     shot("search-results","beyonce-accented-match",nullptr);
     check(storage_searchCount()==1,"beyonce finds the accented title");
@@ -630,6 +635,18 @@ static void renderInventory(){
     tapRow(3);shot("output","from-options-bluetooth-selected","Audio Output");
     home();shot("home","playing-mini-player","Songs");
     tapTile(0);shot("songs","with-mini-player","Song 00");
+  }
+  // A card with no music: the normal empty browse states (distinct from the Favourites error notice above).
+  SD.root=std::filesystem::current_path()/("render-empty-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(SD.root/"music");
+  check(storage_begin(nullptr)&&storage_trackCount()==0,"empty card catalogue");playlist_begin();
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);queueLength=0;queueData=nullptr;playing=false;
+    home();shot("home","empty-catalogue","Songs");
+    tapTile(0);shot("songs","empty-catalogue",nullptr);
+    home();tapTile(1);shot("artists","empty-catalogue",nullptr);
+    home();tapTile(2);shot("albums","empty-catalogue",nullptr);
+    home();tapTile(3);tapRow(1);shot("folders","empty-catalogue",nullptr);
   }
   tft.setRotation(0);home();
   std::ofstream tsv("render/inventory.tsv");tsv<<"file\trotation\tsize\tpage\tstate\tfirst_labels\n";

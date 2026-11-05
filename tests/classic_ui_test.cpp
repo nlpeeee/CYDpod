@@ -154,6 +154,7 @@ static void home(){classic_home();ui_go(SCR_CLASSIC);pump();}
 static void toPlayer(){home();tap(80,110);}
 static void toPlayback(){home();tap(80,176);tap(80,154);}
 static void toMusic(){home();tap(80,66);}
+unsigned classic_depth();int classic_top();
 static void touchRegression(){
   const uint32_t durations[]={1,20,50,100,300,650,4000,4500},periods[]={10,80,150};
   int cases=0;
@@ -217,23 +218,23 @@ static void touchRegression(){
   toPlayback();before=shuffleCalls;
   pressRun(400,10,0,[](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<250)?115:72;});
   check(shuffleCalls==before,"a deliberate far exit cancels for good, even after returning");
-  // A footer control: slop reaches past its edge into the neighbouring Up button without retargeting it.
-  home();tap(80,176);   // Settings: seven rows, so the footer has Up/Down arrows beside Home
-  pressRun(200,10,0,[](uint32_t t,int& x,int& y){x=t<60?60:70;y=300;});   // Home is x 0-63; 70 is inside Up
-  check(label("Music")&&label("Search Songs"),"Home released 7 px into the Up button still goes Home");
+  // Header Back retains its captured target when released just outside its right edge.
+  home();tap(80,176);   // Settings Back returns Home on release.
+  pressRun(200,10,0,[](uint32_t t,int& x,int& y){x=t<60?99:106;y=18;});
+  check(label("Music")&&label("Search Songs"),"Back released 7 px beyond its edge still goes Home");
   std::cout<<"PASS CY-62 tolerant release: 1-8 px excursions return or end near, 14 px outside cancels and re-arms, 40 px exits for good, neighbour not retargeted\n";
 
   // Lists: row tap with horizontal jitter, sideways and vertical claims, true scrolling.
   toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-10:10);y=66;});
-  check(label("Fixture Artist"),"horizontal jitter in a scrolling list does not suppress the row tap");
+  check(classic_depth()==3&&label("Fixture Artist"),"horizontal jitter in a scrolling list does not suppress the row tap");
   const uint32_t claimBefore=cydtouch::stats().claim;
   toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-24:24);y=66;});
-  check(!label("Fixture Artist")&&cydtouch::stats().claim==claimBefore+1,"a large sideways swing claims the press and is counted");
+  check(classic_depth()==2&&cydtouch::stats().claim==claimBefore+1,"a large sideways swing claims the press and is counted");
   toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+(t>=50?3:0);y=t>=50?52:66;});
-  check(!label("Fixture Artist"),"a mostly vertical 14 px move claims the press");
+  check(classic_depth()==2,"a mostly vertical 14 px move claims the press");
   toMusic();check(!label("Search Songs"),"Music page starts at the top");
   pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=int(150-std::min<uint32_t>(t,200)*120/200);});
-  check(label("Favourites")&&!label("Fixture Artist"),"a true vertical drag scrolls the list instead of activating a row");
+  check(label("Favourites")&&classic_depth()==2,"a true vertical drag scrolls the list instead of activating a row");
   std::cout<<"PASS CY-62 lists: jitter under 16 px keeps the row tap, sideways/vertical drags claim, vertical drag scrolls\n";
 
   // Wake: the whole touch is swallowed, the next one works.
@@ -245,6 +246,7 @@ static void touchRegression(){
   g_settings.screenTimeout=0;ui_tick(clockNow+=1000);
   std::cout<<"PASS CY-62 wake swallow unchanged under the real classifier\n";
 }
+unsigned classic_depth();int classic_top();
 int classic_volumeSaveArms();uint32_t classic_volumeSaveAt();int classic_target(int,int);uint32_t classic_seekPreviewMs();
 static void nowPlayingRegression(){
   namespace L=cydclassic::layout;
@@ -287,7 +289,7 @@ static void nowPlayingRegression(){
     tap(20,20);const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
     ui_redraw();pump();snapshot(rotation==0?"cy61-player-portrait.svg":rotation==1?"cy61-player-landscape.svg":"cy61-player-landscape3.svg");
   }
-  tft.setRotation(0);home();tap(80,176);tap(200,300); // Settings -> footer Playing
+  tft.setRotation(0);home();tap(80,176);tap(120,300); // Settings -> mini-player text
   ui_redraw();pump();check(label("Settings"),"Player Back label names a Settings parent, not Home");
   tap(20,18);check(label("Audio Output"),"Back returns to the named Settings parent");home();
   std::cout<<"CY61_NOWPLAYING_OK: rotations 0/1/3, SVG geometry, slider/seek edges and monotonic drag, live shared volume, one deferred save, down-only transport, favourite, shuffle, repeat, Output and Options\n";
@@ -310,7 +312,7 @@ static void miniPlayerRegression(){
     }
     const Rect up=L::pageStrip<Rect>(w,h,false),dn=L::pageStrip<Rect>(w,h,true);
     check(up.w==30&&dn.w==30&&up.y+up.h==dn.y,"30 px paging halves meet");
-    for(int expected:{capacity-1,std::min(10-capacity,2*(capacity-1)),10-capacity,10-capacity}){tap(dn.cx(),dn.cy());check(classic_top()==expected,"page down advances rows minus one and stops at end");}
+    for(int expected:{std::min(10-capacity,capacity-1),std::min(10-capacity,2*(capacity-1)),10-capacity,10-capacity}){tap(dn.cx(),dn.cy());check(classic_top()==expected,"page down advances rows minus one and stops at end");}
     const int oldTop=classic_top();const unsigned depth=classic_depth();
     for(int i=0;i<10;++i){tap(title.cx(),title.cy());check(classic_depth()==depth,"mini opens Playing without stack growth");tap(20,18);check(classic_depth()==depth&&classic_top()==oldTop,"Back restores exact list position and depth");}
     // Return from Player Options to an existing Playing page instead of nesting it.
@@ -441,11 +443,11 @@ int main(){try{
   tap(12,110);check(lastSeek==0,"progress start clamp");tap(306,110);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
   std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, Next on touch-down and recalibration claim\n";
   tap(70,300);check(volume>30&&volume<40,"Player volume slider action");snapshot("ui-player-volume.svg");
-  tap(20,20);check(label("Song 02"),"restore scrolled browse position");
+  tap(20,20);check(classic_top()==2&&label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");
-  tap(30,300);tap(80,176);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
-  tap(135,300);tap(80,216);check(ui_current()==SCR_SETUP,"advanced settings bridge");ui_go(SCR_PLAYER);pump();check(label("Refresh Library"),"legacy Back returns to scrolled settings parent");tap(88,300);
+  home();tap(80,176);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
+  tap(225,220);tap(80,216);check(ui_current()==SCR_SETUP,"advanced settings bridge");ui_go(SCR_PLAYER);pump();check(label("Refresh Library"),"legacy Back returns to scrolled settings parent");tap(225,100);
   // CT-05: an unclaimed 0.6 to 4 s press activates the row like a tap.
   tx=80;ty=60;down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=900);down=false;ui_touch(TOUCH_LONG_PRESS,80,66);pump();
   check(label("Bluetooth")&&label("Selected"),"long press activates the row (CT-05)");
@@ -501,8 +503,8 @@ int main(){try{
   ui_redraw();pump();check(countLabel("Selected")==1,"one Selected entry");
 #endif
   // Folder preview must be dropped above the source page, then rebuilt at its old scroll position.
-  tap(30,300);tap(80,66);tap(80,216);tap(80,66);
-  tap(135,300);tap(80,66);check(playing,"folder preview starts playback");
+  home();tap(80,66);tap(80,216);tap(80,66);
+  tap(225,220);tap(80,66);check(playing,"folder preview starts playback");
   before=calls;hostFreeHeap=10000;tap(20,20);
   check(label("Unable to reload list. Check SD card or try again."),"Back rebuild is gated after preview release");
   check(calls==before,"failed preview rebuild preserves active playback queue");

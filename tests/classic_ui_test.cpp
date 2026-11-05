@@ -1220,12 +1220,19 @@ static void flingRegression(){
   SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,140);
   SCREEN_CLASSIC.press(PRESS_UP,60,140);SCREEN_CLASSIC.tick(clockNow+=100);
   check(classic_offset()==(10-L::rows(tft.height()))*L::RowH&&!classic_flingActive()&&classic_flingVelocity()==0,"bottom edge clamps and zeros velocity");
+  // Reverse an outward pull while still clamped: the inward release must leave the edge.
+  toSongs();SCREEN_CLASSIC.press(PRESS_DOWN,60,140);
+  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,180);
+  SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,170);
+  SCREEN_CLASSIC.press(PRESS_UP,60,170);SCREEN_CLASSIC.tick(clockNow);
+  check(classic_flingActive(),"inward fling at exact boundary is not stopped");
+  SCREEN_CLASSIC.tick(clockNow+=20);check(classic_offset()>0,"inward fling leaves boundary");
   toSongs();SCREEN_CLASSIC.press(PRESS_DOWN,60,140);
   SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,150);
   SCREEN_CLASSIC.tick(clockNow+=20);SCREEN_CLASSIC.press(PRESS_MOVE,60,160);
   SCREEN_CLASSIC.press(PRESS_UP,60,160);SCREEN_CLASSIC.tick(clockNow+=100);
   check(classic_offset()==0&&!classic_flingActive(),"top edge clamps");
-  check(classic_scrollStats().flings>=initial.flings+6&&classic_scrollStats().frames>initial.frames,"scroll counters record flings and frames");
+  check(classic_scrollStats().flings>=initial.flings+7&&classic_scrollStats().frames>initial.frames,"scroll counters record flings and frames");
   check(classic_scrollStats().claimToPaintMs<=41,"claim to first frame measured with fake clock");
   classic_logScrollStats();
   std::cout<<"PASS CY-99 fling: start/finish, tap-to-stop/drag, hard edges, fake-clock frame independence, cache-only fast frames, thumb timeout, stats/underruns\n";

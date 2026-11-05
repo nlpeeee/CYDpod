@@ -328,7 +328,8 @@ void advanceFling(uint32_t now){
   const float pos=listFling.position(now);
   const int32_t offset=cydclassic::clampOffset(int32_t(lroundf(pos)),count,rows());
   if(offset!=page().offsetPx){page().offsetPx=offset;viewportPending=true;}
-  if(pos<=0||pos>=limit){listFling.start(float(offset),0,0,float(limit),now);finishFling(now);viewportPending=true;}
+  const float velocity=listFling.velocity(now);
+  if(pos<0||pos>limit||(pos==0&&velocity<=0)||(pos==limit&&velocity>=0)){listFling.start(float(offset),0,0,float(limit),now);finishFling(now);viewportPending=true;}
   else if(listFling.finished(now)){finishFling(now);viewportPending=true;}
 }
 void paintThumb(){

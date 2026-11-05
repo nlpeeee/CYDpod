@@ -36,15 +36,6 @@ void ui_icon(Icon icon, int cx, int cy, int s, uint16_t fg, uint16_t bg) {
       tft.fillTriangle(cx+h,cy-h,cx+h,cy+h,cx-h/2,cy,fg);
       tft.fillRect(cx-h-max(3,s/7)+3,cy-h,max(3,s/7),s,fg);
       break;
-    case ICON_VOL_DOWN:
-      speaker(cx - 2, cy, s, fg);
-      tft.fillRect(cx + h / 2, cy - 1, h / 2 + 3, 3, fg);
-      break;
-    case ICON_VOL_UP:
-      speaker(cx - 2, cy, s, fg);
-      tft.fillRect(cx + h / 2, cy - 1, h / 2 + 3, 3, fg);
-      tft.fillRect(cx + h / 2 + (h / 2 + 3) / 2 - 1, cy - (h / 2 + 3) / 2, 3, h / 2 + 3, fg);
-      break;
     case ICON_GEAR: {
       const int r = h * 3 / 4;
       for (int i = 0; i < 8; i++) {
@@ -217,14 +208,6 @@ void ui_iconToggle(const Rect& r, Icon icon, bool on, uint16_t surface, bool pre
   ui_icon(icon, r.cx(), r.cy(), ICON_MD, (on || pressed) ? p.onControlActive : p.dim, face);
 }
 
-// A solid track: the played part in the bar colour, the rest in the track colour.
-void ui_slider(const Rect& r, int value, int maxValue, uint16_t) {
-  const int h = constrain(r.h / 4, 4, 8);
-  const Rect track = { r.x, r.cy() - h / 2, r.w, h };
-  const int px = maxValue > 0 ? (int)((int32_t)r.w * constrain(value, 0, maxValue) / maxValue) : 0;
-  tft.fillRect(track.x, track.y, px, track.h, theme().bar);
-  tft.fillRect(track.x + px, track.y, track.w - px, track.h, theme().barBg);
-}
 
 // Chrome faces: body 2 and the 8 px caption face. Song titles come from strips (titles.h).
 static uint8_t ui_font(TypeRole role) { return role == TYPE_CAPTION ? 1 : 2; }

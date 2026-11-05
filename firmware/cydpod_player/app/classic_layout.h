@@ -55,10 +55,6 @@ template<class R> constexpr inline R output(int w,int h){return {w-PlayerOutputH
 template<class R> constexpr inline R outputFace(int w,int h){return {w-PlayerChipInset-PlayerChipW,h-PlayerBottomH+(PlayerBottomH-PlayerChipH)/2,PlayerChipW,PlayerChipH};}
 // Shared endpoint math: paint and input use the same inclusive endpoints.
 constexpr inline int sliderValue(int x,int left,int width,int maximum){return x<=left?0:x>=left+width?maximum:int(int64_t(x-left)*maximum/width);}
-// Volume: slider and the two step buttons share their paint and hit rectangles.
-constexpr int SliderInset=24,SliderY=126,StepInset=8,StepY=190,StepW=96,StepIconX=56,StepIconY=216,StepIconSize=26;
-template<class R> constexpr inline R slider(int w){return {SliderInset,SliderY,w-2*SliderInset,ControlH};}
-template<class R> constexpr inline R step(int w,bool plus){return {plus?w-StepW-StepInset:StepInset,StepY,StepW,ControlH};}
 // Search keyboard: retain the fixed landscape action row, including its gaps.
 constexpr int QueryInset=8,QueryY=60,QueryTextInset=54,QueryStatusInset=6,QueryStatusW=42;
 constexpr int PortraitMinH=300,QueryH=32,KeyY=76,KeyH=40,KeyGap=2,KeyTextInset=4;

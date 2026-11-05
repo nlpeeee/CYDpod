@@ -26,7 +26,7 @@ extern const unsigned char* const chrtbl_f16[96];
 
 namespace {
 namespace L=cydclassic::layout;
-enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Volume,Options,About,Refresh,Message,Search,Keyboard,System };
+enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Options,About,Refresh,Message,Search,Keyboard,System };
 struct Page {
   Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;uint16_t top=0;
   SourceKind sourceKind=SRC_M3U;char title[64]={};
@@ -67,7 +67,7 @@ char query[32]={};bool digitKeys=false,lettersSecond=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44,KeyPage=-45;
 constexpr int TileBase=-50; // Home tile i is target TileBase-i
-constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
+constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Options=-24,Slider=-25,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
 Page miniReturn{};uint8_t miniReturnDepth=0;uint32_t miniPressUntil=0;bool miniQueued=false;
 Page& page(){return navigation.current();}
 bool browse(){return page().mode!=Mode::Player&&page().mode!=Mode::Keyboard;}
@@ -75,7 +75,6 @@ int rows(){return L::rows(tft.height());}
 int footerY(){return L::footerY(tft.height());}
 Rect rowRect(int i){return L::row<Rect>(tft.width(),i);}
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
-Rect sliderRect(){return L::slider<Rect>(tft.width());}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
 void freePreview(){free(preview);preview=nullptr;previewCount=0;}
 void text(const char* s,const Rect& r,uint16_t fg,uint16_t bg,TypeRole role=TYPE_BODY){ui_text(String(s),r.x+L::TextMargin,r.cy(),ML_DATUM,fg,bg,r.w-2*L::TextMargin,role);}
@@ -86,7 +85,7 @@ const char* pageTitle(const Page& value){
     case Mode::Home:return "CYDpod";case Mode::Playlists:return "Playlists";case Mode::Player:return "Now Playing";
     case Mode::Search:return "Search Results";case Mode::Keyboard:return "Search Songs";
     case Mode::Settings:return "Settings";case Mode::Playback:return "Playback";case Mode::Display:return "Display";
-    case Mode::Output:return "Audio Output";case Mode::Volume:return "Volume";case Mode::Options:return "Options";
+    case Mode::Output:return "Audio Output";case Mode::Options:return "Options";
     case Mode::About:return "About";case Mode::Refresh:return "Refresh Library";case Mode::Message:return "CYDpod";case Mode::System:return "Library & System";
     default:return "CYDpod";
   }
@@ -335,15 +334,9 @@ void armVolumeSave(){if(volumeChanged){
 #endif
 g_settings.volume=audio_volume();savePending=true;saveAt=millis()+1500;volumeChanged=false;}}
 void volumeAt(int x){
-  Rect s=page().mode==Mode::Player?L::playerVolumeTrack<Rect>(tft.width(),tft.height()):sliderRect();
-  const int value=L::sliderValue(x,s.x,page().mode==Mode::Player?s.w:s.w-1,100);
+  const Rect s=L::playerVolumeTrack<Rect>(tft.width(),tft.height());
+  const int value=L::sliderValue(x,s.x,s.w,100);
   if(value!=audio_volume()){audio_setVolume(value);g_settings.volume=audio_volume();volumeChanged=true;}
-}
-void volumePaint(){
-  const Palette& p=theme();centred(String(audio_volume())+"%",90,p.text,p.bg);
-  Rect s=sliderRect();tft.fillRect(s.x,s.y,s.w,s.h,p.bg);ui_slider(s,audio_volume(),100,p.bg);
-  ui_textButton(L::step<Rect>(0,false),T_COUNT);ui_textButton(L::step<Rect>(tft.width(),true),T_COUNT);
-  ui_icon(ICON_VOL_DOWN,L::StepIconX,L::StepIconY,L::StepIconSize,p.text,p.btn);ui_icon(ICON_VOL_UP,tft.width()-L::StepIconX,L::StepIconY,L::StepIconSize,p.text,p.btn);
 }
 // ui_button normally insets its face. Clip an expanded cell so the painted
 // Player face, as well as its hit target, matches the proposal's rectangle.
@@ -459,7 +452,6 @@ void enter(){
   if(page().mode==Mode::Keyboard){keyboardPaint();searchShownCount=searchShownProgress=-1;}
   else if(page().mode==Mode::Player){playerTrack();playerTransport();playerBottom();lastPlayer=0;playerTick(millis());}
   else if(page().mode==Mode::Home)paintTiles();
-  else if(page().mode==Mode::Volume){volumePaint();shownVolume=audio_volume();}
   else if(page().mode==Mode::Message){
     // Bounded, word-wrapped ASCII status text; music labels use cached UTF-8 strips.
     tft.setTextColor(theme().text,theme().bg);tft.setTextFont(2);tft.setTextWrap(true);tft.setCursor(14,80);
@@ -510,7 +502,6 @@ void tick(uint32_t now){
     if(shownSerial!=audio_trackSerial()||shownPlaying!=audio_isPlaying()||miniQueued!=(audio_queueLen()>0))miniPlayer();
     if(now-lastPlayer>=1000){lastPlayer=now;if(miniQueued)miniProgress();}
   }
-  if(page().mode==Mode::Volume&&shownVolume!=audio_volume()){shownVolume=audio_volume();volumePaint();}
   // A single row per loop bounds SD and drawing work; audio/Bluetooth run between rows.
   if(dirty&&(!audio_bufferLow()||now-lastPaint>=120)){
     for(int i=0;i<rows();++i)if(dirty&(1u<<i)){dirty&=~(1u<<i);loadRow(i);lastPaint=now;break;}
@@ -624,11 +615,6 @@ int targetAt(int x,int y){
   }
   if(page().mode==Mode::Home){for(int i=0;i<L::TileCount;++i)if(L::tile<Rect>(tft.width(),tft.height(),i).contains(x,y))return TileBase-i;return -1;}
   if(browse()&&L::strip<Rect>(tft.width(),tft.height()).contains(x,y))return count>rows()?(L::pageStrip<Rect>(tft.width(),tft.height(),false).contains(x,y)?Up:Down):-1;
-  if(page().mode==Mode::Volume){
-    if(sliderRect().contains(x,y))return Slider;
-    if(L::step<Rect>(tft.width(),false).contains(x,y))return Minus;
-    if(L::step<Rect>(tft.width(),true).contains(x,y))return Plus;return -1;
-  }
   int row=(y-L::HeaderH)/L::RowH;return row>=0&&row<rows()&&page().top+row<count?page().top+row:-1;
 }
 // True when (x,y) is within `slop` px of the control the press landed on. Probing the
@@ -730,7 +716,6 @@ void touch(TouchEvent ev,int,int){
     case Home:classic_home();ui_go(SCR_CLASSIC);break;
     case Up:case Down:page().top=cydclassic::clampTop(page().top+(target==Up?-1:1)*max(1,rows()-1),count,rows());invalidate();footer();break;
     case Now:if(storage_trackCount())openPlaying();break;
-    case Volume:show(Mode::Volume);break;
     case Options:show(Mode::Options);break;
     case Favourite:toggleFavourite();break;
     case Shuffle:if(browse()&&!audio_queueLen()){
@@ -739,7 +724,6 @@ void touch(TouchEvent ev,int,int){
     }else {cycleShuffle();playerTransport();}break;
     case Repeat:cycleRepeat();playerTransport();break;
     case Output:show(Mode::Output);break;
-    case Minus:case Plus:audio_setVolume(constrain(int(audio_volume())+(target==Plus?5:-5),0,100));g_settings.volume=audio_volume();savePending=true;saveAt=millis()+1500;break;
     default:break;
   }
 }
@@ -760,7 +744,7 @@ uint32_t classic_seekPreviewMs(){return seekMs;}
 unsigned classic_depth(){return navigation.depth;}
 unsigned classic_mode(){return unsigned(page().mode);}
 const char* classic_modeName(unsigned m){
-  static const char* const names[]={"Home","Playlists","Catalog","Sources","SourceSongs","Player","Settings","Playback","Display","Output","Volume","Options","About","Refresh","Message","Search","Keyboard","System"};
+  static const char* const names[]={"Home","Playlists","Catalog","Sources","SourceSongs","Player","Settings","Playback","Display","Output","Options","About","Refresh","Message","Search","Keyboard","System"};
   static_assert(sizeof(names)/sizeof(names[0])==unsigned(Mode::System)+1,"mode name table matches Mode");
   return m<sizeof(names)/sizeof(names[0])?names[m]:"?";
 }
@@ -773,9 +757,9 @@ std::string classic_geometry(){
     for(int i=0;i<rows();++i)rect(rowRect(i));
     for(int i=0;i<L::TileCount;++i)rect(L::tile<Rect>(tft.width(),tft.height(),i));
     for(int cell:{0,1,2})rect(L::mini<Rect>(tft.width(),tft.height(),cell));rect(L::miniProgress<Rect>(tft.width(),tft.height()));rect(L::deepHome<Rect>());for(bool down:{false,true})rect(L::pageStrip<Rect>(tft.width(),tft.height(),down));
-    for(int a:{Prev,Play,Next})rect(transportRect(a));rect(sliderRect());
+    for(int a:{Prev,Play,Next})rect(transportRect(a));
     for(Rect r:{L::playerBack<Rect>(),L::favourite<Rect>(tft.width()),L::options<Rect>(tft.width()),L::progress<Rect>(tft.width(),tft.height()),L::playerVolume<Rect>(tft.width(),tft.height()),L::playerVolumeTrack<Rect>(tft.width(),tft.height()),L::output<Rect>(tft.width(),tft.height()),L::outputFace<Rect>(tft.width(),tft.height()),L::playerToggle<Rect>(tft.width(),tft.height(),false),L::playerToggle<Rect>(tft.width(),tft.height(),true)})rect(r);
-    rect(L::seek<Rect>(tft.width(),tft.height()));rect(L::strip<Rect>(tft.width(),tft.height()));rect(L::step<Rect>(tft.width(),false));rect(L::step<Rect>(tft.width(),true));rect({0,L::HeaderH,tft.width(),L::QueryH});out<<'\n';
+    rect(L::seek<Rect>(tft.width(),tft.height()));rect(L::strip<Rect>(tft.width(),tft.height()));rect({0,L::HeaderH,tft.width(),L::QueryH});out<<'\n';
     for(int m=0;m<=int(Mode::Keyboard);++m){
       out<<"mode="<<m;
       for(int variant=0;variant<4;++variant){

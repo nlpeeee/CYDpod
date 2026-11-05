@@ -16,7 +16,7 @@
 
 enum Icon : uint8_t {
   ICON_NONE, ICON_PREV, ICON_PLAY, ICON_PAUSE, ICON_NEXT,
-  ICON_VOL_DOWN, ICON_VOL_UP, ICON_GEAR, ICON_BLUETOOTH, ICON_BACK, ICON_NOTE,
+  ICON_GEAR, ICON_BLUETOOTH, ICON_BACK, ICON_NOTE,
   ICON_SHUFFLE, ICON_REPEAT, ICON_REPEAT_ONE, ICON_UP, ICON_DOWN,
   ICON_CHEVRON, ICON_SPEAKER, ICON_STAR, ICON_HEADPHONES
 };
@@ -41,8 +41,6 @@ void ui_textButton(const Rect& r, Txt label, bool primary = false, bool pressed 
 // A borderless toggle sitting on a header band: the face appears only when on.
 void ui_iconToggle(const Rect& r, Icon icon, bool on, uint16_t surface, bool pressed = false);
 
-// A value the finger can drag along `r`, drawn as a solid track.
-void ui_slider(const Rect& r, int value, int maxValue, uint16_t surface);
 
 // Text in any script. Pure ASCII is drawn with the built-in font; anything
 // else from its pre-rendered strip (titles.h), falling back to the built-in

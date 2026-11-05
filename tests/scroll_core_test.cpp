@@ -175,6 +175,110 @@ int main(int argc, char** argv) {
       check(mx > 20 && o.finished(4000), "velocity kick moves out and settles");
       std::printf("PASS edge spring\n");
     }
+    {  // Velocity / Tracker on synthetic drags (integer coordinates like the touch panel). Tolerance: LSQ2 8% + 25 px/s, Impulse 15% + 25 px/s (noisier under jitter).
+      struct Case { const char* name; float rate; float (*y)(float); float (*v)(float); int jit; float endS; };
+      static const Case cases[] = {
+        {"const +1000 @60", 60, [](float t) { return 500 + 1000 * t; }, [](float) { return 1000.0f; }, 0, 0.30f},
+        {"const +1000 @100", 100, [](float t) { return 500 + 1000 * t; }, [](float) { return 1000.0f; }, 0, 0.30f},
+        {"const -2500 @60", 60, [](float t) { return 900 - 2500 * t; }, [](float) { return -2500.0f; }, 0, 0.25f},
+        {"const +300 @100", 100, [](float t) { return 100 + 300 * t; }, [](float) { return 300.0f; }, 0, 0.40f},
+        {"accel 4000 @60", 60, [](float t) { return 200 + 2000 * t * t; }, [](float t) { return 4000 * t; }, 0, 0.30f},
+        {"accel 4000 @100", 100, [](float t) { return 200 + 2000 * t * t; }, [](float t) { return 4000 * t; }, 0, 0.30f},
+        {"decel 5000 @60", 60, [](float t) { return 100 + 2000 * t - 2500 * t * t; }, [](float t) { return 2000 - 5000 * t; }, 0, 0.30f},
+        {"decel 5000 @100", 100, [](float t) { return 100 + 2000 * t - 2500 * t * t; }, [](float t) { return 2000 - 5000 * t; }, 0, 0.30f},
+        {"jitter1 +1500 @60", 60, [](float t) { return 100 + 1500 * t; }, [](float) { return 1500.0f; }, 1, 0.30f},
+        {"jitter1 +1500 @100", 100, [](float t) { return 100 + 1500 * t; }, [](float) { return 1500.0f; }, 1, 0.30f},
+        {"jitter1 -800 @100", 100, [](float t) { return 700 - 800 * t; }, [](float) { return -800.0f; }, 1, 0.30f},
+      };
+      uint32_t rng = 12345;
+      float worstL = 0, worstI = 0;
+      for (const Case& c : cases) {
+        Tracker tl(ScrollCfg(), Strategy::Lsq2), ti(ScrollCfg(), Strategy::Impulse);
+        const uint32_t dt = (uint32_t)(1000.0f / c.rate + 0.5f);
+        uint32_t tEnd = 0;
+        for (uint32_t ms = 0; ms <= (uint32_t)(c.endS * 1000); ms += dt) {
+          float y = std::floor(c.y(ms * 0.001f) + 0.5f);
+          if (c.jit) { rng = rng * 1664525u + 1013904223u; y += (float)((int)((rng >> 16) % 3) - 1); }
+          if (ms == 0) { tl.down(ms, y); ti.down(ms, y); } else { tl.move(ms, y); ti.move(ms, y); }
+          tEnd = ms;
+        }
+        const float want = c.v(tEnd * 0.001f), gl = tl.velocity(), gi = ti.velocity();
+        const float tol = 0.08f * std::fabs(want) + 25.0f;
+        worstL = std::fmax(worstL, std::fabs(gl - want) / (std::fabs(want) + 1)); worstI = std::fmax(worstI, std::fabs(gi - want) / (std::fabs(want) + 1));
+        std::printf("  vel %-20s true %8.1f  LSQ2 %8.1f (%+6.1f)  Impulse %8.1f (%+6.1f)\n", c.name, want, gl, gl - want, gi, gi - want);
+        check(near(gl, want, tol), std::string("LSQ2 velocity ") + c.name);
+        check(near(gi, want, 0.15f * std::fabs(want) + 25.0f), std::string("Impulse velocity ") + c.name);
+      }
+      std::printf("PASS velocity on synthetic drags (worst relative error LSQ2 %.1f%%, Impulse %.1f%%)\n", 100 * worstL, 100 * worstI);
+    }
+
+    {  // Velocity rules: horizon, stale-sample clearing, clamp, degree reduction, ring wrap.
+      Velocity v;
+      check(v.get(Strategy::Lsq2) == 0 && v.get(Strategy::Impulse) == 0, "empty = 0");
+      v.add(0, 0); check(v.get(Strategy::Lsq2) == 0 && v.get(Strategy::Impulse) == 0, "one sample = 0");
+      v.add(10, 10); check(near(v.get(Strategy::Lsq2), 1000, 1) && near(v.get(Strategy::Impulse), 1000, 1), "two samples = slope");
+      v.add(60, 20);  // 50 ms gap > 40: history cleared, one sample left
+      check(v.count() == 1 && v.get(Strategy::Lsq2) == 0, "gap > 40 ms clears the history");
+      Velocity w;  // fast then slow: only the last 100 ms count
+      for (uint32_t ms = 0; ms <= 100; ms += 10) w.add(ms, 20.0f * ms);        // 20000 px/s, clamped anyway
+      for (uint32_t ms = 110; ms <= 300; ms += 10) w.add(ms, 2000 + 0.1f * (ms - 100));  // 100 px/s
+      check(near(w.get(Strategy::Lsq2), 100, 5) && near(w.get(Strategy::Impulse), 100, 5), "old samples outside the 100 ms horizon ignored");
+      Velocity f;
+      for (uint32_t ms = 0; ms <= 60; ms += 10) f.add(ms, 100.0f * ms);        // 100000 px/s
+      check(f.get(Strategy::Lsq2) == ScrollCfg().maxFling && f.get(Strategy::Impulse) == ScrollCfg().maxFling, "clamped to +maxFling");
+      Velocity g;
+      for (uint32_t ms = 0; ms <= 60; ms += 10) g.add(ms, -100.0f * ms);
+      check(g.get(Strategy::Lsq2) == -ScrollCfg().maxFling, "clamped to -maxFling");
+      Velocity r;  // more than 20 samples: ring wraps, newest 100 ms still correct
+      for (uint32_t ms = 0; ms <= 400; ms += 10) r.add(ms, 0.5f * ms);
+      check(r.count() == 20 && near(r.get(Strategy::Lsq2), 500, 2) && near(r.get(Strategy::Impulse), 500, 2), "ring wrap");
+      std::printf("PASS velocity rules (horizon 100 ms, stale 40 ms, clamp, ring of 20)\n");
+    }
+
+    {  // Tracker: slop, claim without jump, tap vs drag, fling start, hold-then-lift, tap-to-stop.
+      ScrollCfg cfg; Tracker t;
+      t.down(0, 300);
+      check(!t.move(10, 303) && !t.move(20, 306) && t.delta() == 0 && !t.claimed(), "within slop: not claimed");
+      check(!t.move(30, 307), "exactly slop: not claimed");
+      check(t.move(40, 308) && near(t.delta(), 1.0f, 1e-4f), "claim: delta is overshoot past slop (no jump)");
+      check(t.move(50, 320) && near(t.delta(), 13.0f, 1e-4f), "1:1 tracking after the claim");
+      Tracker c2; c2.down(0, 300); c2.move(10, 292); c2.move(20, 290);
+      check(c2.claimed() && near(c2.delta(), -3.0f, 1e-4f), "upward claim: first delta = 290 - 293");
+      Fling fl;
+      Tracker tap; tap.down(0, 100); tap.move(15, 102); tap.move(30, 103);
+      check(!tap.up(50, fl, 0, 0, 1000) && tap.isTap() && fl.finished(50), "slop-sized wiggle is a tap, no fling");
+      Tracker dr; dr.down(0, 400);
+      for (uint32_t ms = 10; ms <= 100; ms += 10) dr.move(ms, 400 - 2.0f * ms);  // 2000 px/s upward
+      const bool started = dr.up(105, fl, 800, 0, 100000);
+      check(started && !dr.isTap() && dr.claimed() && !fl.finished(105) && fl.finalY() > 800, "fast drag starts a fling in the content direction");
+      check(near(dr.releaseVelocity(), -2000, 60), "release velocity measured");
+      Tracker slow; slow.down(0, 400);
+      for (uint32_t ms = 10; ms <= 400; ms += 10) slow.move(ms, 400 + 0.04f * ms);  // 40 px/s, past the slop, under minFling
+      Fling f2; check(!slow.up(405, f2, 50, 0, 1000) && f2.finished(405) && !slow.isTap(), "slow drag: no fling, not a tap");
+      Tracker hold; hold.down(0, 400);
+      for (uint32_t ms = 10; ms <= 100; ms += 10) hold.move(ms, 400 + 2.0f * ms);
+      for (uint32_t ms = 110; ms <= 200; ms += 10) hold.move(ms, 400 + 200);  // finger rests, same y reports
+      Fling f3; check(!hold.up(205, f3, 50, 0, 100000) && f3.finished(205) && !hold.isTap(), "hold-then-lift: no fling");
+      Fling f4;
+      Tracker late2; late2.down(0, 400);
+      for (uint32_t ms = 10; ms <= 100; ms += 10) late2.move(ms, 400 + 2.0f * ms);
+      check(late2.up(139, f4, 50, 0, 100000) && !late2.isTap(), "up 39 ms after the last sample still flings");
+      Tracker late3; late3.down(0, 400);
+      for (uint32_t ms = 10; ms <= 100; ms += 10) late3.move(ms, 400 + 2.0f * ms);
+      Fling f5; check(!late3.up(141, f5, 50, 0, 100000) && f5.finished(141), "up 41 ms after the last sample: no fling");
+      // Tap-to-stop: a running fling is stopped in place and the touch is a drag, not a tap.
+      Fling run; run.start(0, 3000, -1e7f, 1e7f, 1000);
+      const float at = run.position(1200);
+      Tracker ts; ts.down(1200, 500, &run);
+      check(ts.stoppedFling() && !ts.isTap() && run.finished(1200) && near(run.position(5000), at, 1e-3f), "touch-down aborts the fling in place");
+      check(ts.move(1210, 502) && near(ts.delta(), 2.0f, 1e-4f) && !ts.isTap(), "after tap-to-stop the touch is a drag (claimed, no slop)");
+      Fling idle; Tracker tn; tn.down(0, 5, &idle);
+      check(!tn.stoppedFling() && tn.isTap(), "down with no running fling: plain tap candidate");
+      Fling done; done.start(0, 3000, -1e7f, 1e7f, 0); Tracker td; td.down(100000, 5, &done);
+      check(!td.stoppedFling(), "down after the fling finished: not a stop");
+      std::printf("PASS tracker (slop/claim no-jump, tap vs drag, fling start, hold-then-lift, tap-to-stop)\n");
+      (void)cfg;
+    }
     std::printf("PASS all\n");
     return 0;
   } catch (const std::exception& ex) {

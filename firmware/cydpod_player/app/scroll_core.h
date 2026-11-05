@@ -20,6 +20,9 @@ struct ScrollCfg {
   float springDamping = 0.98f;      // Edge spring damping ratio (<1: slight overshoot)
   float edgeRangePx = 60.0f;        // Edge::dampen asymptote (largest rubber-band offset)
   float settlePx = 0.5f;            // Edge spring is finished when its envelope falls below this
+  float slopPx = 7.0f;              // touch slop: finger travel before a touch becomes a drag (7 px at 143 ppi)
+  uint32_t horizonMs = 100;         // velocity window (VelocityTracker HORIZON)
+  uint32_t stopMs = 40;             // ASSUME_POINTER_STOPPED_TIME: older last sample = finger stopped
 };
 
 namespace detail {
@@ -134,6 +137,7 @@ class Fling {
 
   bool finished(uint32_t nowMs) const { return elapsed(nowMs) >= tBal_ + cubS_; }
   float finalY() const { return endY_; }
+  void stop(uint32_t nowMs) { start(position(nowMs), 0, min_, max_, nowMs); }  // tap-to-stop: freeze here (outside bounds: springback)
   float durationMs() const { return (tBal_ + cubS_) * 1000.0f; }  // spline + overfling + springback
 
  private:
@@ -173,6 +177,129 @@ class Edge {
   ScrollCfg c_;
   uint32_t t0_ = 0;
   float x0_ = 0, v0_ = 0, w_ = 1, z_ = 1, wd_ = 1, endS_ = 0;
+};
+
+enum class Strategy : uint8_t { Lsq2, Impulse };
+
+// Finger velocity from a ring of (ms,y) samples inside the horizon (VelocityTracker.cpp semantics): a sample more
+// than stopMs after the previous one clears the history. Float only, fixed storage.
+class Velocity {
+ public:
+  explicit Velocity(const ScrollCfg& c = ScrollCfg()) : c_(c) {}
+  void clear() { n_ = 0; head_ = 0; }
+  int count() const { return n_; }
+  uint32_t lastMs() const { return n_ ? at(n_ - 1).ms : 0; }
+  void add(uint32_t ms, float y) {
+    if (n_ && (uint32_t)(ms - lastMs()) > c_.stopMs) clear();
+    if (n_ && ms == lastMs()) { r_[(head_ + kN - 1) % kN].y = y; return; }  // same timestamp: keep the newest y
+    r_[head_] = {ms, y}; head_ = (head_ + 1) % kN; if (n_ < kN) ++n_;
+  }
+  // px/s of y over the horizon at the newest sample, clamped to [-maxFling, +maxFling].
+  float get(Strategy s) const {
+    int m = 0;  // samples inside the horizon, newest last
+    while (m < n_ && (uint32_t)(lastMs() - at(n_ - 1 - m).ms) <= c_.horizonMs) ++m;
+    const float v = m < 2 ? 0 : (s == Strategy::Lsq2 ? lsq(m) : impulse(m));
+    return v > c_.maxFling ? c_.maxFling : (v < -c_.maxFling ? -c_.maxFling : v);
+  }
+
+ private:
+  static constexpr int kN = 20;
+  struct S { uint32_t ms; float y; };
+  const S& at(int i) const { return r_[(head_ + kN - n_ + i) % kN]; }  // i-th oldest
+  static float energyToV(float w) { return w < 0 ? -sqrtf(-2 * w) : sqrtf(2 * w); }
+  // Impulse: kinetic-energy work integral (oldest first, first term halved); v = sign * sqrt(2 |work|).
+  float impulse(int m) const {
+    const int b = n_ - m;
+    if (m == 2) return (at(b + 1).y - at(b).y) / ((float)(at(b + 1).ms - at(b).ms) * 0.001f);
+    float work = 0;
+    for (int i = 0; i < m - 1; ++i) {
+      const S &p = at(b + i), &q = at(b + i + 1);
+      if (q.ms == p.ms) continue;
+      const float vc = (q.y - p.y) / ((float)(q.ms - p.ms) * 0.001f);
+      work += (vc - energyToV(work)) * fabsf(vc);
+      if (i == 0) work *= 0.5f;
+    }
+    return energyToV(work);
+  }
+  // LSQ2: y = a0 + a1 x + a2 x^2 over x = (ms - newest)/100 in [-1,0], degree min(2, m-1); v = a1 * 10 px/s.
+  float lsq(int m) const {
+    const int b = n_ - m, k = (m - 1 < 2 ? m - 1 : 2) + 1;
+    const uint32_t tn = lastMs(); const float yn = at(n_ - 1).y;
+    float a[3][4] = {};
+    for (int i = 0; i < m; ++i) {
+      const float x = -(float)(tn - at(b + i).ms) * 0.01f, y = at(b + i).y - yn;
+      const float xp[5] = {1, x, x * x, x * x * x, x * x * x * x};
+      for (int r = 0; r < k; ++r) { for (int c = 0; c < k; ++c) a[r][c] += xp[r + c]; a[r][3] += xp[r] * y; }
+    }
+    for (int c = 0; c < k; ++c) {  // Gaussian elimination, partial pivoting
+      int p = c;
+      for (int r = c + 1; r < k; ++r) if (fabsf(a[r][c]) > fabsf(a[p][c])) p = r;
+      if (fabsf(a[p][c]) < 1e-9f) return 0;
+      for (int j = 0; j < 4; ++j) { const float t = a[c][j]; a[c][j] = a[p][j]; a[p][j] = t; }
+      for (int r = c + 1; r < k; ++r) { const float f = a[r][c] / a[c][c]; for (int j = c; j < 4; ++j) a[r][j] -= f * a[c][j]; }
+    }
+    float co[3] = {};
+    for (int r = k - 1; r >= 0; --r) {
+      float s = a[r][3]; for (int c = r + 1; c < k; ++c) s -= a[r][c] * co[c];
+      co[r] = s / a[r][r];
+    }
+    return co[1] * 10.0f;
+  }
+  ScrollCfg c_;
+  S r_[kN] = {};
+  int n_ = 0, head_ = 0;
+};
+
+// Touch gesture: down / move / up. A touch becomes a drag after |dy| > slopPx; the slop is subtracted so delta() is
+// 0 at the claim (no jump). Samples enter the velocity ring only when y changed. Touch-down on a running Fling stops
+// it and marks the touch as a drag, never a tap.
+class Tracker {
+ public:
+  explicit Tracker(const ScrollCfg& c = ScrollCfg(), Strategy s = Strategy::Lsq2) : c_(c), vel_(c), strat_(s) {}
+  void setStrategy(Strategy s) { strat_ = s; }
+  Strategy strategy() const { return strat_; }
+
+  void down(uint32_t ms, float y, Fling* running = nullptr) {
+    vel_.clear(); vel_.add(ms, y);
+    downY_ = lastY_ = anchor_ = y; claimed_ = false; active_ = true; stoppedFling_ = false;
+    if (running && !running->finished(ms)) { running->stop(ms); stoppedFling_ = true; }
+  }
+  // Returns true once the touch is a drag (claimed). delta() is then y minus the claim point (slop removed).
+  bool move(uint32_t ms, float y) {
+    if (!active_) return false;
+    if (y != lastY_) { vel_.add(ms, y); lastY_ = y; }
+    if (!claimed_ && (stoppedFling_ || fabsf(y - downY_) > c_.slopPx)) {
+      claimed_ = true;
+      anchor_ = stoppedFling_ ? downY_ : downY_ + detail::sgn(y - downY_) * c_.slopPx;
+    }
+    return claimed_;
+  }
+  // Release. Starts `fling` at content position y0 within [minY,maxY] and returns true when the touch was a drag,
+  // |v| > minFling and the last changed sample is not older than stopMs (hold-then-lift: no fling). vScale maps
+  // finger velocity to content velocity (-1: content moves opposite to a finger moving along +y).
+  bool up(uint32_t ms, Fling& fling, float y0, float minY, float maxY, float vScale = -1.0f) {
+    active_ = false; upV_ = 0;
+    if (!claimed_ || (uint32_t)(ms - vel_.lastMs()) > c_.stopMs) return false;
+    upV_ = vel_.get(strat_);
+    if (fabsf(upV_) <= c_.minFling) return false;
+    fling.start(y0, vScale * upV_, minY, maxY, ms);
+    return true;
+  }
+  bool active() const { return active_; }
+  bool claimed() const { return claimed_; }
+  bool stoppedFling() const { return stoppedFling_; }               // touch-down hit a running fling
+  bool isTap() const { return !claimed_ && !stoppedFling_; }        // meaningful at up(); long-press is the caller's
+  float delta() const { return claimed_ ? lastY_ - anchor_ : 0; }   // finger travel since the claim point
+  float velocity() const { return vel_.get(strat_); }               // live finger velocity (px/s)
+  float releaseVelocity() const { return upV_; }                    // velocity seen by the last up()
+  const Velocity& samples() const { return vel_; }
+
+ private:
+  ScrollCfg c_;
+  Velocity vel_;
+  Strategy strat_;
+  float downY_ = 0, lastY_ = 0, anchor_ = 0, upV_ = 0;
+  bool active_ = false, claimed_ = false, stoppedFling_ = false;
 };
 
 }  // namespace cydscroll

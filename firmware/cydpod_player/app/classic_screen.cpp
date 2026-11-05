@@ -24,7 +24,7 @@ namespace {
 namespace L=cydclassic::layout;
 enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Options,About,Refresh,Message,Search,Keyboard,System };
 struct Page {
-  Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;uint16_t top=0;
+  Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;int32_t offsetPx=0;
   SourceKind sourceKind=SRC_M3U;char title[64]={};
 };
 // Brightness -/+, Orientation and Theme, then Calibrate touch on the resistive board only.
@@ -36,11 +36,14 @@ uint8_t nextRotation(uint8_t rotation){static const uint8_t next[4]={2,3,1,0};re
 void resetPin(){g_settings.webPin="000000";settings_save();}
 struct Row {
   char label[128]={},detail[96]={};CatalogView child{};
-  int16_t track=-1,source=-1;bool valid=false,navigates=false,disabled=false;
+  int32_t absolute=-1;int16_t track=-1,source=-1;bool valid=false,navigates=false,disabled=false;
 };
 cydclassic::Navigation<Page> navigation;
 cydclassic::Gesture gesture;
-Row cache[6];
+constexpr int CacheSlots=L::MaxRows+1;
+Row cache[CacheSlots];
+String rowUtf8; // Reserved once; the legacy UTF-8 strip loader accepts String.
+static_assert(sizeof(cache)<=6*sizeof(Row)+512,"Viewport cache RAM budget");
 cydlib::Record playingInfo{};
 uint8_t dirty=0;
 int count=0,ready=-1,highlight=-1,dimmed=-1;
@@ -92,7 +95,7 @@ void applySearch(uint32_t now){
     cydlib::copyText(searchSession.applied,query);
     if(query[0]){storage_searchStart(query);searchSession.state=SearchState::Active;}
     else {storage_searchCancel();searchSession.state=SearchState::Empty;}
-    page().top=0;
+    page().offsetPx=0;
   }
   searchShownCount=searchShownProgress=-1;
 }
@@ -104,7 +107,11 @@ Page& page(){return navigation.current();}
 bool browse(){return page().mode!=Mode::Player&&page().mode!=Mode::Keyboard;}
 int rows(){return L::rows(tft.height());}
 int footerY(){return L::footerY(tft.height());}
-Rect rowRect(int i){return L::row<Rect>(tft.width(),i);}
+int topRow(){return page().offsetPx/L::RowH;}
+int visibleRows(){return rows()+(page().offsetPx%L::RowH?1:0);}
+Rect rowRect(int i){Rect r=L::row<Rect>(tft.width(),i);r.y-=page().offsetPx%L::RowH;return r;}
+Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
+void setTop(int top){page().offsetPx=cydclassic::clampTop(top,count,rows())*L::RowH;}
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
 void freePreview(){free(preview);preview=nullptr;previewCount=0;}
@@ -237,29 +244,58 @@ void paintTile(int i,bool pressed){
   ui_text(String(names[i]),r.cx(),r.y+r.h-L::TileLabelBottom,MC_DATUM,ink,face,r.w-2*L::TileTextInset);
 }
 void paintTiles(){for(int i=0;i<L::TileCount;++i)paintTile(i,false);}
+// Fixed text scratch keeps ASCII painting allocation-free; UTF-8 retains the legacy strip loader.
+void rowText(const char* value,int y,int width,uint16_t fg,uint16_t bg){
+  if(!cydtext::ascii(value)){
+    rowUtf8=value;
+    if(titles_load(rowUtf8)){titles_draw({L::TextMargin,y-TITLE_STRIP_H/2,min(width,titles_width()),TITLE_STRIP_H},0,0,fg,bg);return;}
+  }
+  titles_release();tft.setTextColor(fg,bg);tft.setTextDatum(ML_DATUM);
+  char fitted[132];cydlib::copyText(fitted,value);
+  if(tft.textWidth(fitted,2)>width){
+    size_t n=strlen(fitted);
+    do{if(n)--n;while(n&&(uint8_t(fitted[n])&0xC0)==0x80)--n;fitted[n]=0;
+      while(n&&fitted[n-1]==' ')fitted[--n]=0;
+      memcpy(fitted+n,"...",4);
+    }while(n&&tft.textWidth(fitted,2)>width);
+    if(tft.textWidth(fitted,2)>width)fitted[0]=0;
+  }
+  tft.drawString(fitted,L::TextMargin,y,2);
+}
 void paintRow(int i,bool pressed){
-  if(i<0||i>=rows())return;Row& r=cache[i];const Palette& p=theme();const Rect box=rowRect(i);
-  uint16_t bg=pressed?p.accent:p.bg,fg=pressed?p.onAccent:r.disabled?p.disabled:p.text;
+  if(i<0||i>=visibleRows())return;
+  const int absolute=topRow()+i;Row& r=cachedRow(absolute);const Palette& p=theme();const Rect box=rowRect(i);
+  const bool loaded=r.absolute==absolute&&r.valid;
+  const uint16_t bg=pressed?p.accent:p.bg,fg=pressed?p.onAccent:loaded&&r.disabled?p.disabled:p.text;
+  // Absolute coordinates preserve row origins while TFT clips both partial edges.
+  tft.setViewport(0,L::HeaderH,box.w,rows()*L::RowH,false);
   tft.fillRect(box.x,box.y,box.w,box.h,bg);
-  if(!r.valid)return;
-  if(page().mode==Mode::Output&&r.disabled){
-    // Fixed small font keeps the no-detection hint on one line on the W328C.
+  if(!loaded){
+    if(absolute<count)tft.fillRoundRect(L::TextMargin,box.y+L::RowTitleY-3,box.w/2,6,2,p.outlineSubtle);
+  }else if(page().mode==Mode::Output&&r.disabled){
     tft.setTextDatum(ML_DATUM);tft.setTextColor(fg,bg);tft.drawString(r.label,L::TextMargin,box.cy(),1);
   }else if(r.detail[0]){
-    ui_text(String(r.label),L::TextMargin,box.y+L::RowTitleY,ML_DATUM,fg,bg,box.w-L::RowTextInset);
-    ui_text(String(r.detail),L::TextMargin,box.y+L::RowDetailY,ML_DATUM,pressed?p.onAccent:p.dim,bg,box.w-L::RowTextInset,TYPE_CAPTION);
-  }else text(r.label,box,fg,bg);
-  if(r.navigates)ui_icon(ICON_CHEVRON,box.w-L::RowIconInset,box.cy(),L::RowIconSize,fg,bg);
-  else if(r.track==audio_currentTrack()&&audio_isPlaying())ui_icon(ICON_PLAY,box.w-L::RowIconInset,box.cy(),L::RowIconSize,fg,bg);
-  tft.drawFastHLine(0,box.y+L::RowH-1,box.w,p.outlineSubtle);
+    rowText(r.label,box.y+L::RowTitleY,box.w-L::RowTextInset,fg,bg);
+    rowText(r.detail,box.y+L::RowDetailY,box.w-L::RowTextInset,pressed?p.onAccent:p.dim,bg);
+  }else rowText(r.label,box.cy(),box.w-2*L::TextMargin,fg,bg);
+  if(loaded){
+    if(r.navigates)ui_icon(ICON_CHEVRON,box.w-L::RowIconInset,box.cy(),L::RowIconSize,fg,bg);
+    else if(r.track==audio_currentTrack()&&audio_isPlaying())ui_icon(ICON_PLAY,box.w-L::RowIconInset,box.cy(),L::RowIconSize,fg,bg);
+  }
+  tft.drawFastHLine(0,box.y+L::RowH-1,box.w,p.outlineSubtle);tft.resetViewport();
+}
+// Cache-only seam for part 2: no row loading or catalogue reads here.
+void paintViewport(int32_t offsetPx){
+  page().offsetPx=cydclassic::clampOffset(offsetPx,count,rows());
+  for(int i=0;i<visibleRows();++i)paintRow(i,highlight==i);
 }
 void invalidate(){
-  page().top=cydclassic::clampTop(page().top,count,rows());dirty=uint8_t((1u<<rows())-1);
-  for(int i=0;i<6;++i)cache[i].valid=false;
+  page().offsetPx=cydclassic::clampOffset(page().offsetPx,count,rows());dirty=uint8_t((1u<<visibleRows())-1);
+  for(Row& r:cache){r.valid=false;r.absolute=-1;}
   const Palette& p=theme();const int x=tft.width()-L::StripW,h=rows()*L::RowH;
   tft.fillRect(x,L::HeaderH,L::StripW,h,p.band);
   if(count>rows())for(bool down:{false,true}){const Rect r=L::pageStrip<Rect>(tft.width(),tft.height(),down);ui_icon(down?ICON_DOWN:ICON_UP,r.cx(),r.cy(),L::FooterIconSize,p.text,p.band);}
-  if(count>rows()){const int thumb=max(L::ThumbMin,h*rows()/count);const int y=L::HeaderH+(h-thumb)*page().top/max(1,count-rows());tft.fillRect(x+L::ThumbInset,y,L::ThumbW,thumb,p.dim);}
+  if(count>rows()){const int thumb=max(L::ThumbMin,h*rows()/count);const int y=L::HeaderH+int(int64_t(h-thumb)*page().offsetPx/max(1,(count-rows())*L::RowH));tft.fillRect(x+L::ThumbInset,y,L::ThumbW,thumb,p.dim);}
 }
 void setRow(Row& r,const char* label,const String& detail=String(),bool navigate=false,bool disabled=false){
   cydlib::copyText(r.label,label);cydlib::copyText(r.detail,detail.c_str());r.valid=true;r.navigates=navigate;r.disabled=disabled;
@@ -280,7 +316,7 @@ int rowCount(){
   }
 }
 void loadRow(int i){
-  Row& r=cache[i];r=Row{};const int at=page().top+i;
+  const int at=topRow()+i;Row& r=cachedRow(at);r=Row{};r.absolute=at;
   if(at>=count){r.valid=true;paintRow(i,false);return;}
   switch(page().mode){
     case Mode::Playlists:
@@ -491,6 +527,7 @@ void editQuery(int target){
   if(changed){scheduleSearch(150);queryPaint();}
 }
 void enter(){
+  rowUtf8.reserve(128);
   seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
@@ -559,7 +596,7 @@ void tick(uint32_t now){
   }
   // A single row per loop bounds SD and drawing work; audio/Bluetooth run between rows.
   if(dirty&&(!audio_bufferLow()||now-lastPaint>=120)){
-    for(int i=0;i<rows();++i)if(dirty&(1u<<i)){dirty&=~(1u<<i);loadRow(i);lastPaint=now;break;}
+    for(int i=0;i<visibleRows();++i)if(dirty&(1u<<i)){dirty&=~(1u<<i);loadRow(i);lastPaint=now;break;}
   }
 }
 void sourceMenu(SourceKind kind,const char* label){show(Mode::Sources,label);page().sourceKind=kind;count=rowCount();invalidate();footer();}
@@ -586,7 +623,8 @@ void openTile(int i){
   }
 }
 void activate(int at){
-  const int index=at-page().top;if(index<0||index>=rows())return;Row selected=cache[index];
+  const int index=at-topRow();if(index<0||index>=visibleRows())return;Row selected=cachedRow(at);
+  if(selected.absolute!=at)return;
   if(!selected.valid||selected.disabled){Serial.println("cmd: row ignored (unavailable)");ui_toast("Entry unavailable. Try again.");return;}
   Serial.printf("cmd: row %d accepted screen %u\n",at,unsigned(page().mode));
   switch(page().mode){
@@ -677,7 +715,8 @@ int targetAt(int x,int y){
   }
   if(page().mode==Mode::Home){for(int i=0;i<L::TileCount;++i)if(L::tile<Rect>(tft.width(),tft.height(),i).contains(x,y))return TileBase-i;return -1;}
   if(browse()&&L::strip<Rect>(tft.width(),tft.height()).contains(x,y))return count>rows()?(L::pageStrip<Rect>(tft.width(),tft.height(),false).contains(x,y)?Up:Down):-1;
-  int row=(y-L::HeaderH)/L::RowH;return row>=0&&row<rows()&&page().top+row<count?page().top+row:-1;
+  const int local=y-L::HeaderH;const int at=(local+page().offsetPx)/L::RowH;
+  return local>=0&&local<rows()*L::RowH&&at<count?at:-1;
 }
 // True when (x,y) is within `slop` px of the control the press landed on. Probing the
 // hit test keeps this exact for every control shape and can never reach a neighbour:
@@ -707,7 +746,7 @@ bool swipeable(){return browse()&&navigation.depth>1&&gesture.target!=Slider&&ge
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
-    ready=-1;dimmed=-1;gesture.down(x,y,page().top,hit);
+    ready=-1;dimmed=-1;gesture.down(x,y,topRow(),hit);
     if(page().mode==Mode::Keyboard&&hit>=KeyBase){editQuery(hit);gesture.claimed=true;return true;}
     if(hit==Slider){volumeChanged=false;volumeAt(x);return true;}
     if(hit==Seek){
@@ -720,7 +759,7 @@ bool press(PressPhase phase,int x,int y){
       if(gesture.claimed)return true;
     }
     if(tileOf(hit)>=0){tilePressed=tileOf(hit);paintTile(tilePressed,true);return false;}
-    highlight=hit>=0&&page().mode!=Mode::Keyboard?hit-page().top:-1;if(highlight>=0&&highlight<rows()&&cache[highlight].valid)paintRow(highlight,true);
+    highlight=hit>=0&&page().mode!=Mode::Keyboard?hit-topRow():-1;if(highlight>=0&&highlight<rows()&&cachedRow(hit).absolute==hit&&cachedRow(hit).valid)paintRow(highlight,true);
     return false;
   }
   if(page().mode==Mode::Keyboard&&gesture.target>=KeyBase)return true; // captured character: no slide/release/hold repeat
@@ -733,7 +772,7 @@ bool press(PressPhase phase,int x,int y){
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next){if(browse()&&!within(x,y,cydclassic::Gesture::SlopNear)&&playerPressed!=-1){playerPressed=-1;miniPlayer();}return true;}
     const bool claimed=gesture.move(x,y,!within(x,y,cydclassic::Gesture::SlopFar),gesture.target>=0&&gesture.target<KeyBase&&count>rows());
     if(gesture.claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
-      if(top!=page().top){page().top=top;highlight=-1;invalidate();footer();}}
+      if(top!=topRow()){setTop(top);highlight=-1;invalidate();footer();}}
     // CY-80 swipe-back: travelling right claims the press so the release never taps a row or tile.
     if(swipeable()&&gesture.swipeBack(x,y))gesture.claimed=true;
     // Show what a release would do: lit while within the slop, plain once outside, lit again on return.
@@ -778,7 +817,7 @@ void touch(TouchEvent ev,int,int){
   switch(target){
     case Back:back();break;
     case Home:classic_home();ui_go(SCR_CLASSIC);break;
-    case Up:case Down:page().top=cydclassic::clampTop(page().top+(target==Up?-1:1)*max(1,rows()-1),count,rows());invalidate();footer();break;
+    case Up:case Down:setTop(topRow()+(target==Up?-1:1)*max(1,rows()-1));invalidate();footer();break;
     case Now:if(storage_trackCount())openPlaying();break;
     case Options:show(Mode::Options);break;
     case Favourite:toggleFavourite();break;
@@ -813,7 +852,11 @@ const char* classic_modeName(unsigned m){
   static_assert(sizeof(names)/sizeof(names[0])==unsigned(Mode::System)+1,"mode name table matches Mode");
   return m<sizeof(names)/sizeof(names[0])?names[m]:"?";
 }
-int classic_top(){return page().top;}
+int classic_top(){return topRow();}
+int classic_offset(){return page().offsetPx;}
+void classic_paintViewport(int offset){paintViewport(offset);}
+void classic_invalidateViewport(){invalidate();}
+int classic_cacheSlots(){return CacheSlots;}
 #ifdef CYDPOD_CATALOG_HOST
 void classic_hostTrackInfo(const cydlib::Record* record){hostTrackInfo=record;}
 #endif
@@ -833,7 +876,7 @@ std::string classic_geometry(){
       for(int variant=0;variant<4;++variant){
         navigation.home();navigation.depth=variant==0?1:variant==3?4:2;page().mode=Mode(m);
         audio_setQueue(nullptr,variant>=2?1:0,-1,false);
-        count=variant==0?0:variant==1?1:7;page().top=variant==3?2:0;
+        count=variant==0?0:variant==1?1:7;page().offsetPx=(variant==3?2:0)*L::RowH;
         digitKeys=variant==2;
         assert(rows()==(tft.height()==240?4:6));
         const Rect strip=L::strip<Rect>(tft.width(),tft.height());

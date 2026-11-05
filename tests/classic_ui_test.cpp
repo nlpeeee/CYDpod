@@ -1098,6 +1098,35 @@ static void headphoneLimitRegression(const char* preview){
   check(g_settings.colorTheme==THEME_BLACK&&label("Black"),"CY-91 Theme selection spot check");
   std::cout<<"PASS CY-92 UI: distinct row, tolerant release once, cancel, BT route unchanged, failed save coherent, production preview; CY-91 Theme spot check\n";
 }
+// CY-98a exercises the cache-only renderer independently of future pixel input.
+int classic_offset();void classic_paintViewport(int);void classic_invalidateViewport();int classic_cacheSlots();
+static void viewportRegression(){
+  namespace L=cydclassic::layout;
+  check(classic_cacheSlots()==L::MaxRows+1,"one extra partial-row cache slot");
+  for(unsigned rotation:{0u,1u}){
+    g_settings.rotation=rotation;tft.setRotation(rotation);toSongs();tap(80,56);tap(20,20);
+    const int w=tft.width(),h=tft.height(),capacity=L::rows(h);
+    for(int offset:{1,39,40,81}){
+      std::vector<uint16_t> chrome;
+      for(int y=0;y<h;++y)if(y<L::HeaderH||y>=L::footerY(h))for(int x=0;x<w;++x)chrome.push_back(tft.pixel(x,y));
+      const auto io=searchIO();tft.labels.clear();classic_paintViewport(offset);
+      check(classic_offset()==offset&&searchIO()==io,"pixel paint keeps offset and performs no catalogue IO");
+      size_t at=0;for(int y=0;y<h;++y)if(y<L::HeaderH||y>=L::footerY(h))for(int x=0;x<w;++x)check(tft.pixel(x,y)==chrome[at++],"partial rows clip before header/footer");
+      check(classic_target(20,L::HeaderH)==offset/L::RowH&&classic_target(20,L::HeaderH+L::RowH-offset%L::RowH)==offset/L::RowH+1,"partial row hit boundaries agree with pixels");
+      classic_invalidateViewport();check(classic_offset()==offset,"invalidation preserves fractional offset");pump();
+    }
+    classic_paintViewport(1);tapMini();tap(20,20);check(classic_offset()==1,"mini-player return retains pixel offset");
+    tap(20,20);tapTile(0);classic_paintViewport(1);ui_redraw();pump();check(classic_offset()==1,"re-enter retains pixel offset");
+    classic_invalidateViewport();tft.labels.clear();const auto io=searchIO();classic_paintViewport(1);
+    check(!label("Song 00")&&searchIO()==io,"missing rows paint title-less placeholders without reads");pump();
+    tft.labels.clear();classic_paintViewport(1);check(label("Song 00")&&label(capacity==6?"Song 06":"Song 04"),"loader recovers both partial edges");
+    classic_paintViewport(100000);check(classic_offset()==(10-capacity)*L::RowH,"offset clamps to last full viewport");
+    classic_paintViewport(-10);check(classic_offset()==0,"offset clamps at zero");
+    const Rect down=L::pageStrip<Rect>(w,h,true);tap(down.cx(),down.cy());
+    check(classic_offset()==(capacity-1)*L::RowH,"existing row step maps to pixel multiple");
+  }
+  std::cout<<"PASS CY-98a viewport: offsets/clamp, partial-edge clipping, cache-only placeholders/recovery, mini return, invalidation, row steps; 4/6 rows\n";
+}
 int main(){try{
   if(const char* preview=std::getenv("CYDPOD_HP_LIMIT_ONLY")){headphoneLimitRegression(preview);return 0;}
 
@@ -1112,6 +1141,7 @@ int main(){try{
   for(int i=0;i<10;++i){auto bytes=original;char name[32];snprintf(name,sizeof(name),"Song %02d",i);memset(bytes.data()+pos,0,tag.size());memcpy(bytes.data()+pos,name,strlen(name));
     std::ofstream out(SD.root/(std::string("music/Example/")+name+".m4a"),std::ios::binary);out.write(bytes.data(),bytes.size());}
   check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
+  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){viewportRegression();return 0;}
   tapTile(1);check(label("Fixture Artist")&&classic_depth()==2,"artist view straight from the tile");snapshot("ui-artists.svg");
   tap(80,66);check(label("All Songs")&&label("Fixture Album"),"artist album view");snapshot("ui-albums.svg");
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");

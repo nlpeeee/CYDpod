@@ -4,6 +4,7 @@
 #include <stdlib.h>
 namespace cydclassic {
 inline int clampTop(int top,int count,int rows){int end=count>rows?count-rows:0;return top<0?0:top>end?end:top;}
+inline int32_t clampOffset(int32_t offset,int count,int rows){const int32_t end=int32_t(count>rows?count-rows:0)*layout::RowH;return offset<0?0:offset>end?end:offset;}
 // A press is a tap while it ends near the control it landed on. Near means within
 // SlopNear px of the target (the screen measures it, so a neighbouring control can
 // never be reached by slop); wandering out and back is forgiven, leaving by more

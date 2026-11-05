@@ -340,7 +340,7 @@ int main() {
 
   // CY-92: same production reset/target methods used by startStream/writerTask.
   {
-    CHECK(kLimitedCeilingQ15 == lround(32768.0 * pow(10.0, -18.0 / 20.0)), "-18 dB Q15 constant");
+    CHECK(kLimitedCeilingQ15 == lround(32768.0 * pow(10.0, -30.0 / 20.0)), "-30 dB Q15 constant");
     CHECK(kCeilingQ15 == lround(32768.0 * pow(10.0, -6.0 / 20.0)), "-6 dB Q15 constant");
     Fade f; Inputs in; in.playing = true;
     for (bool on : {true, false}) {

@@ -32,7 +32,7 @@
 // CEILING. The wired module's headphone amplifier runs from 3.3 V on this
 // board and clips near full scale, so the stage scales everything by
 // the selected digital ceiling AFTER user volume (applied inside audio_pull).
-// On is -18 dBFS, Off retains -6 dBFS analogue headroom. This is a gain
+// On is -30 dBFS, Off retains -6 dBFS analogue headroom. This is a gain
 // limit, not a peak compressor or a calibrated listening-level guarantee.
 // It is folded into the same multiply as the ramp.
 //
@@ -53,8 +53,8 @@ static_assert(kRampFrames * 1000 >= 5 * kSampleRate && kRampFrames * 1000 <= 10 
               "ramp must be 5..10 ms");
 // -6.0 dBFS peak into the DAC: round(32768 * 10^(-6/20)) = 16423.
 constexpr int32_t kCeilingQ15 = 16423;
-// round(32768 * 10^(-18/20)). The 12298-Q15 gap slews in 278.87 ms.
-constexpr int32_t kLimitedCeilingQ15 = 4125;
+// round(32768 * 10^(-30/20)). The 15387-Q15 gap slews in 348.91 ms.
+constexpr int32_t kLimitedCeilingQ15 = 1036;
 constexpr int32_t limitCeilingQ15(bool on) { return on ? kLimitedCeilingQ15 : kCeilingQ15; }
 constexpr int32_t kUnityQ15 = 32768;
 

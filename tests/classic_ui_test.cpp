@@ -557,6 +557,89 @@ static void typeQuery(const char* s){
   }
   pump();
 }
+// CY-63: drive the real screen press/touch hooks without pump() hiding the debounce boundary.
+static void searchTap(const Rect& r){
+  SCREEN_CLASSIC.press(PRESS_DOWN,r.cx(),r.cy());SCREEN_CLASSIC.press(PRESS_UP,r.cx(),r.cy());
+  SCREEN_CLASSIC.touch(TOUCH_TAP,r.cx(),r.cy());
+}
+static void searchKey(char c){int x=0,y=0;check(findKey(c,x,y),"session test key in real hit map");searchTap({x,y,1,1});}
+static uint64_t searchIO(){return hostOpenCalls+hostReadCalls+hostWriteCalls+hostCloseCalls;}
+static void searchStep(uint32_t elapsed=1){SCREEN_CLASSIC.tick(clockNow+=elapsed);}
+static void searchSettle(){for(int i=0;i<100&&storage_searchBusy();++i)searchStep();check(!storage_searchBusy()&&!storage_searchFailed(),"session scan completes");}
+static std::vector<uint16_t> activeQueue(){std::vector<uint16_t> q;for(int i=0;i<audio_queueLen();++i)q.push_back(uint16_t(audio_queueTrack(i)));return q;}
+static void searchSessionRegression(){
+  namespace L=cydclassic::layout;
+  tft.setRotation(0);g_settings.screenTimeout=0;home();tapTile(4);
+  const Rect clear=L::action<Rect>(0,tft.height(),1),done=L::action<Rect>(tft.width(),tft.height(),2);
+  const Rect back{L::HeaderBackX,L::HeaderTextY,1,1},edit=L::row<Rect>(tft.width(),0),hit=L::row<Rect>(tft.width(),1);
+  searchTap(clear);searchStep(150);
+  const auto queue=activeQueue();const int commands=calls;const uint64_t emptyIO=searchIO();
+  for(int i=0;i<3;++i){searchTap(clear);searchTap(L::keyBack<Rect>(tft.height()));searchStep(200);}
+  searchTap(done);ui_redraw();searchStep();searchTap(edit);searchStep();
+  check(searchIO()==emptyIO,"empty Clear/Delete/Done/navigation performs zero storage work");
+  // Cold build: edits echo immediately, nothing opens until the final 150 ms deadline.
+  SD.remove("/.sys/search.idx");const uint64_t coldIO=searchIO();
+  for(char c:std::string("song")){tft.labels.clear();searchKey(c);check(label(c=='s'?"s":c=='o'?"so":c=='n'?"son":"song"),"edit echoes before tick or storage");searchStep(40);}
+  searchStep(109);check(searchIO()==coldIO&&!storage_searchBusy(),"burst waits through 149 ms after newest edit");
+  searchStep();check(storage_searchBuilding()&&storage_searchProgress()==40,"only final burst query starts once at 150 ms");
+  const int built=storage_searchProgress();const uint64_t busyIO=searchIO();
+  searchTap(back);ui_redraw();
+  check(searchIO()==busyIO&&storage_searchProgress()==built&&storage_searchBuilding(),"unchanged Back/redraw retain busy cursor with no reopen");
+  // Leaving both pages cancels the query, but reentry resumes the backend's partial build.
+  searchTap(back);check(!storage_searchBusy(),"leaving Search cancels scan");
+  const uint64_t cancelledIO=searchIO();for(int i=0;i<3;++i)searchStep();check(searchIO()==cancelledIO&&!storage_searchBusy(),"off-page tick never advances cancelled build");
+  const uint64_t reopen=hostOpenCalls;searchTap(L::tile<Rect>(tft.width(),tft.height(),4));
+  check(hostOpenCalls==reopen,"Home/reentry queues work without opening files in touch");
+  searchStep();check(storage_searchBuilding()&&storage_searchProgress()==80,"reentry resumes partial index instead of rebuilding first records");
+  searchSettle();check(storage_searchCount()==10,"settled final burst is song, not an intermediate edit");
+  const uint64_t finishedIO=searchIO();const int finishedProgress=storage_searchProgress();
+  for(int i=0;i<3;++i){searchTap(done);ui_redraw();searchStep();searchTap(edit);searchTap(back);searchStep();searchTap(edit);searchStep();}
+  check(searchIO()==finishedIO&&storage_searchProgress()==finishedProgress&&storage_searchCount()==10,"unchanged completed navigation retains count/cursor with no storage work");
+  // Returning to applied text before idle also retains the session, even across Done.
+  searchKey('x');searchTap(L::keyBack<Rect>(tft.height()));searchTap(done);searchStep();searchTap(edit);
+  check(searchIO()==finishedIO&&storage_searchCount()==10,"reverted edit keeps completed query without redundant start");
+  // Warm scan at rollover: one open, 8/10 records per step, no start on intermediate text.
+  searchTap(clear);searchStep(150);searchStep();clockNow=UINT32_MAX-90;searchStep(0);
+  const uint64_t warmOpen=hostOpenCalls,warmIO=searchIO();
+  searchKey('s');searchStep(50);searchKey('o');searchStep(149);
+  check(searchIO()==warmIO,"deadline survives rollover and still waits 149 ms");searchStep();
+  check(hostOpenCalls==warmOpen+1&&storage_searchProgress()==80&&storage_searchCount()==8,"one warm open applies latest text at wrapped deadline");
+  const uint64_t scanOpen=hostOpenCalls;const int scanCount=storage_searchCount(),scanProgress=storage_searchProgress();
+  searchTap(done);ui_redraw();
+  check(hostOpenCalls==scanOpen&&storage_searchProgress()==scanProgress&&storage_searchCount()==scanCount,"unchanged warm scan navigation retains cursor and hits");
+  searchStep();searchSettle();searchTap(edit);
+  // Back while a new edit is pending must not expose old query hits or permit a queue commit.
+  searchTap(clear);searchKey('z');searchTap(back);check(storage_searchCount()==10,"old backend hits retained privately until apply");
+  searchTap(hit);check(calls==commands&&activeQueue()==queue,"pending old-query row cannot commit playing queue");
+  searchStep(149);check(storage_searchCount()==10,"pending query does not advance obsolete backend scan");
+  searchStep();searchSettle();check(storage_searchCount()==0,"newest miss replaces old hits");
+  for(int i=0;i<6;++i)searchStep();check(label("No matches"),"obsolete hits do not paint as new-query results");
+  searchTap(hit);check(calls==commands&&activeQueue()==queue,"no-match row cannot commit old results");
+  // Done bypasses idle and applies in the next tick; starts never run in the handler.
+  searchTap(edit);searchTap(clear);searchKey('s');const uint64_t immediateOpen=hostOpenCalls;
+  searchTap(done);check(hostOpenCalls==immediateOpen,"Done itself performs no storage opens");searchStep();
+  check(hostOpenCalls==immediateOpen+1&&storage_searchCount()==8,"Done immediately applies pending text on next tick before 150 ms");searchSettle();
+  // I/O failure retains an explicit error; redraw does not retry, unchanged Done does.
+  searchTap(edit);searchKey('o');hostReadBudget=0;searchTap(done);searchStep();hostReadBudget=-1;
+  check(storage_searchFailed()&&!storage_searchBusy(),"failed scan enters error state");
+  const uint64_t errorIO=searchIO();ui_redraw();searchStep();check(searchIO()==errorIO,"error redraw never starts an implicit retry");
+  for(int i=0;i<6;++i)searchStep();searchTap(edit);searchTap(done);searchStep();searchSettle();
+  check(!storage_searchFailed()&&storage_searchCount()==10&&hostOpenCalls>immediateOpen+1,"unchanged Done explicitly retries failed query");
+  // Queue identity and all entries stay intact until an explicit valid row selection.
+  check(calls==commands&&activeQueue()==queue,"all session edits/cancellation/error retries preserve playing queue");
+  const std::vector<uint16_t> expected(storage_searchTracks(),storage_searchTracks()+storage_searchCount());
+  for(int i=0;i<8;++i)searchStep();searchTap(hit);
+  check(calls>commands&&activeQueue()==expected&&current==expected[0],"valid selection commits entire intended results queue and selected track");
+  // Leaving Keyboard directly through Home cancels too; restored completed text restarts safely.
+  home();tapTile(4);check(storage_searchBusy()||storage_searchCount()==10,"cancelled completed query can be reentered");
+  classic_home();ui_go(SCR_CLASSIC);check(!storage_searchBusy(),"leaving Keyboard cancels query");
+  tapTile(4);searchKey('z');searchTap(back);searchTap(back);searchTap(L::tile<Rect>(tft.width(),tft.height(),4));
+  const uint64_t pendingReentry=hostOpenCalls;searchStep(149);
+  check(hostOpenCalls==pendingReentry,"leaving/reentering retains newest edit deadline rather than bypassing idle");
+  searchStep();searchSettle();check(storage_searchCount()==0,"pending reentry applies latest text after its deadline");
+  classic_home();ui_go(SCR_CLASSIC);
+  std::cout<<"PASS CY-63 Search session: immediate echo, 150 ms burst/rollover, tick-only Done, retained busy/completed cursor/count/no opens, empty no-I/O, cancel/resume, error retry, obsolete-hit and full queue isolation\n";
+}
 static void tapDialogCancel(){
   const int W=tft.width(),H=tft.height(),w=std::min(W-SP_L*2,296),h=150,rx=(W-w)/2,ry=(H-h)/2,bh=44,by=ry+h-SP_M-bh,bw=(w-SP_M*3)/2;
   tap(rx+SP_M+bw/2,by+bh/2);
@@ -925,6 +1008,7 @@ int main(){try{
   bluetoothReturns();
   renderInventory();
   SD.root=uiCardRoot;check(storage_begin(nullptr),"navigation card catalogue");playlist_begin();
+  searchSessionRegression();
   for(unsigned r:{0u,1u,2u,3u}){navRotation=r;navigationGraph();}navRotation=0;tft.setRotation(0);g_settings.rotation=0;
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";

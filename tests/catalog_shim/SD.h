@@ -5,6 +5,7 @@
 #include <vector>
 #define FILE_WRITE "w"
 #define FILE_APPEND "a"
+inline uint64_t hostOpenCalls=0,hostReadCalls=0,hostWriteCalls=0,hostCloseCalls=0;
 inline int64_t hostWriteBudget=-1;
 inline int64_t hostReadBudget=-1;
 inline bool hostReadOnly=false;  // write-protected card: mkdir, remove, rename and any non-read open fail
@@ -20,13 +21,13 @@ class File {
   struct Handle {
     FILE* file=nullptr;std::filesystem::path path;std::string name;
     bool directory=false;std::vector<std::filesystem::path> entries;size_t next=0;
-    ~Handle(){if(file){fclose(file);--hostOpenFiles;}}
+    ~Handle(){if(file){++hostCloseCalls;fclose(file);--hostOpenFiles;}}
   };
   std::shared_ptr<Handle> h;
  public:
   File()=default;
   File(const std::filesystem::path& p,const char* mode){
-    ++hostOpenReport.touched;  // real use so the linker keeps the end-of-run report
+    ++hostOpenCalls;++hostOpenReport.touched;  // real use so the linker keeps the end-of-run report
     if(std::filesystem::is_directory(p)){h=std::make_shared<Handle>();h->directory=true;
       for(auto& e:std::filesystem::directory_iterator(p))h->entries.push_back(e.path());std::sort(h->entries.begin(),h->entries.end());
     }else{if(hostOpenFiles>=hostMaxOpenFiles){++hostOpenRefused;return;}FILE* f=fopen(p.string().c_str(),(std::string(mode)+"b").c_str());if(!f)return;h=std::make_shared<Handle>();h->file=f;if(++hostOpenFiles>hostOpenHighWater)hostOpenHighWater=hostOpenFiles;}
@@ -40,8 +41,8 @@ class File {
   size_t size(){if(!h||!h->file)return 0;long p=ftell(h->file);fseek(h->file,0,SEEK_END);long n=ftell(h->file);fseek(h->file,p,SEEK_SET);return size_t(n);}
   size_t position(){return h&&h->file?size_t(ftell(h->file)):0;}
   bool seek(uint32_t p){return h&&h->file&&fseek(h->file,long(p),SEEK_SET)==0;}
-  size_t read(uint8_t* p,size_t n){if(hostReadBudget>=0){n=std::min<size_t>(n,size_t(hostReadBudget));hostReadBudget-=n;}return h&&h->file?fread(p,1,n,h->file):0;}
-  size_t write(const uint8_t* p,size_t n){if(!h||!h->file)return 0;if(hostWriteBudget>=0){n=std::min<size_t>(n,size_t(hostWriteBudget));hostWriteBudget-=n;}return fwrite(p,1,n,h->file);}
+  size_t read(uint8_t* p,size_t n){++hostReadCalls;if(hostReadBudget>=0){n=std::min<size_t>(n,size_t(hostReadBudget));hostReadBudget-=n;}return h&&h->file?fread(p,1,n,h->file):0;}
+  size_t write(const uint8_t* p,size_t n){++hostWriteCalls;if(!h||!h->file)return 0;if(hostWriteBudget>=0){n=std::min<size_t>(n,size_t(hostWriteBudget));hostWriteBudget-=n;}return fwrite(p,1,n,h->file);}
   size_t print(const char* p){return write((const uint8_t*)p,strlen(p));}
   size_t println(const String& s){size_t n=print(s.c_str());return n+print("\r\n");}
   size_t printf(const char* fmt,...){char p[2048];va_list a;va_start(a,fmt);int n=vsnprintf(p,sizeof(p),fmt,a);va_end(a);return n>=0&&n<int(sizeof(p))?write((const uint8_t*)p,n):0;}

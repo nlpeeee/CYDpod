@@ -65,6 +65,40 @@ uint32_t seekMs=0,seekDuration=0,seekSerial=0;
 char notice[128]={};
 char query[32]={};bool digitKeys=false,lettersSecond=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
+enum class SearchState:uint8_t { Empty,Active,Cancelled,Error };
+struct SearchSession {
+  char applied[32]={};uint32_t due=0;
+  SearchState state=SearchState::Empty;bool pending=false;
+} searchSession;
+static_assert(sizeof(SearchSession)<=48,"Search session RAM budget");
+Page& page();
+// Backend hits belong only to the applied text. Never expose obsolete hits while editing.
+bool searchCurrent(){return !searchSession.pending&&searchSession.state==SearchState::Active&&!strcmp(query,searchSession.applied);}
+int searchCount(){return searchCurrent()?storage_searchCount():0;}
+bool searchWaiting(){return searchSession.pending||(searchCurrent()&&storage_searchBusy());}
+bool searchError(){return !searchSession.pending&&searchSession.state==SearchState::Error;}
+// Starts/opens stay in tick; Done makes the next loop apply without waiting for idle.
+void scheduleSearch(uint32_t wait){
+  // Input precedes tick in loop(). Timestamp edits at input, rather than the previous
+  // loop's start (which may be old after SD I/O); the host supplies its fake tick clock.
+#ifdef CYDPOD_CATALOG_HOST
+  const uint32_t editedAt=screenNow;
+#else
+  const uint32_t editedAt=millis();
+#endif
+  searchSession.pending=true;searchSession.due=(wait?editedAt:screenNow)+wait;
+}
+void applySearch(uint32_t now){
+  if(!searchSession.pending||int32_t(now-searchSession.due)<0)return;
+  searchSession.pending=false;
+  if(strcmp(query,searchSession.applied)||searchSession.state==SearchState::Cancelled||searchSession.state==SearchState::Error){
+    cydlib::copyText(searchSession.applied,query);
+    if(query[0]){storage_searchStart(query);searchSession.state=SearchState::Active;}
+    else {storage_searchCancel();searchSession.state=SearchState::Empty;}
+    page().top=0;
+  }
+  searchShownCount=searchShownProgress=-1;
+}
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44,KeyPage=-45;
 constexpr int TileBase=-50; // Home tile i is target TileBase-i
 constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Options=-24,Slider=-25,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
@@ -239,7 +273,7 @@ int sourceId(int wanted){
 int rowCount(){
   switch(page().mode){
     case Mode::Home:return 0;case Mode::Playlists:return 2+playlist_sourceCount(SRC_M3U);
-    case Mode::Search:return 1+max(1,storage_searchCount());
+    case Mode::Search:return 1+max(1,searchCount());
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
@@ -259,11 +293,11 @@ void loadRow(int i){
     case Mode::Catalog:{CatalogEntry e;if(storage_browseEntry(page().view,at,e)){setRow(r,e.label.c_str(),e.detail,e.navigates);r.track=e.track;r.child=e.child;}
       else setRow(r,"Unable to read entry","Check SD card",false,true);break;}
     case Mode::Search:
-      if(at==0)setRow(r,(String("Edit: ")+query).c_str(),storage_searchFailed()?String("SD error. Edit to retry"):storage_searchBusy()?String(storage_searchBuilding()?"Preparing index ":"Searching ")+String(storage_searchProgress())+"%":String(storage_searchCount())+" results (max 50)",true);
-      else if(at-1<storage_searchCount()){
+      if(at==0)setRow(r,(String("Edit: ")+query).c_str(),searchError()?String("SD error. Edit to retry"):searchSession.pending?String("Searching..."):searchWaiting()?String(storage_searchBuilding()?"Preparing index ":"Searching ")+String(storage_searchProgress())+"%":String(searchCount())+" results (max 50)",true);
+      else if(at-1<searchCount()){
         String song,artist;r.track=storage_searchTracks()[at-1];
         if(storage_trackSummary(r.track,song,artist))setRow(r,song.c_str(),artist);else setRow(r,"Track unavailable",String(),false,true);
-      }else setRow(r,storage_searchBusy()?"Searching...":"No matches",String(),false,true);
+      }else setRow(r,searchWaiting()?"Searching...":"No matches",String(),false,true);
       break;
     case Mode::Sources:{int source=sourceId(at);setRow(r,playlist_name(source).c_str(),String(),true,source<0);r.source=source;break;}
     case Mode::SourceSongs:{String title,artist;if(preview&&at<previewCount&&storage_trackSummary(preview[at],title,artist)){setRow(r,title.c_str(),artist);r.track=preview[at];}else setRow(r,"Track unavailable",String(),false,true);break;}
@@ -420,7 +454,7 @@ void keyFace(const Rect& r,const char* label){
 void queryPaint(){
   tft.fillRect(0,L::HeaderH,tft.width(),L::QueryH,theme().bg);
   ui_text(String(query[0]?query:"Type a title or artist"),L::QueryInset,L::QueryY,ML_DATUM,theme().text,theme().bg,tft.width()-L::QueryTextInset);
-  ui_text(storage_searchFailed()?String("SD!"):storage_searchBusy()?String(storage_searchProgress())+"%":String(storage_searchCount()),tft.width()-L::QueryStatusInset,L::QueryY,MR_DATUM,theme().dim,theme().bg,L::QueryStatusW,TYPE_CAPTION);
+  ui_text(searchError()?String("SD!"):searchSession.pending?String("..."):searchWaiting()?String(storage_searchProgress())+"%":String(searchCount()),tft.width()-L::QueryStatusInset,L::QueryY,MR_DATUM,theme().dim,theme().bg,L::QueryStatusW,TYPE_CAPTION);
 }
 void keyboardPaint(){
   tft.fillRect(0,L::KeyY,tft.width(),footerY()-L::KeyY,theme().bg);
@@ -435,18 +469,18 @@ void editQuery(int target){
   size_t n=strlen(query);bool changed=true;
   if(target==KeyDigits){digitKeys=!digitKeys;keyboardPaint();return;}
   if(target==KeyPage){digitKeys=false;lettersSecond=!lettersSecond;keyboardPaint();return;}
-  if(target==KeyBack){if(n)query[n-1]=0;}
-  else if(target==KeyClear)query[0]=0;
+  if(target==KeyBack){if(n)query[n-1]=0;else changed=false;}
+  else if(target==KeyClear){if(n)query[0]=0;else changed=false;}
   else if(n<sizeof(query)-1){query[n]=target==KeySpace?' ':char(target-KeyBase);query[n+1]=0;}
   else {changed=false;ui_toast("Search text is full (31 characters)");}
-  if(changed){storage_searchStart(query);queryPaint();}
+  if(changed){scheduleSearch(150);queryPaint();}
 }
 void enter(){
   seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
-  if(page().mode==Mode::Search)storage_searchStart(query);
+  if((page().mode==Mode::Search||page().mode==Mode::Keyboard)&&searchSession.state==SearchState::Cancelled&&!searchSession.pending)scheduleSearch(0);
   count=rowCount();shownSerial=UINT32_MAX;tft.fillScreen(theme().bg);header();footer();
   shownVolume=shownConnection=-1;
   if(page().mode==Mode::Keyboard){keyboardPaint();searchShownCount=searchShownProgress=-1;}
@@ -466,7 +500,9 @@ void leave(){
   // ui_go calls leave after a navigation push/pop: current() is the destination.
   // Keep a newly built destination preview, otherwise rebuild lazily on Back.
   if(page().mode!=Mode::SourceSongs||externalReturn)freePreview();
-  if(page().mode!=Mode::Search&&page().mode!=Mode::Keyboard)storage_searchCancel();
+  if(externalReturn||(page().mode!=Mode::Search&&page().mode!=Mode::Keyboard)){
+    if(searchSession.state==SearchState::Active){storage_searchCancel();searchSession.state=SearchState::Cancelled;}
+  }
 }
 void tick(uint32_t now){
   screenNow=now;
@@ -486,8 +522,12 @@ void tick(uint32_t now){
     if(state!=shownConnection){shownConnection=state;header();footer();if(page().mode==Mode::Player)playerOutput();}
   }
   if(page().mode==Mode::Search||page().mode==Mode::Keyboard){
-    storage_searchTick();
-    const int n=storage_searchCount(),progress=storage_searchBusy()?storage_searchProgress():101;
+    applySearch(now);
+    if(searchCurrent()){
+      storage_searchTick();
+      if(storage_searchFailed())searchSession.state=SearchState::Error;
+    }
+    const int n=searchCount(),progress=searchSession.pending?-2:searchError()?-3:searchWaiting()?storage_searchProgress():101;
     if(n!=searchShownCount||progress!=searchShownProgress){
       searchShownCount=n;searchShownProgress=progress;
       if(page().mode==Mode::Keyboard)queryPaint();
@@ -526,7 +566,7 @@ void openTile(int i){
     case 1:catalog({CatalogKind::Artists,0},"Artists");break;
     case 2:catalog({CatalogKind::Albums,0},"Albums");break;
     case 3:show(Mode::Playlists);break;
-    case 4:storage_searchStart(query);show(Mode::Search);show(Mode::Keyboard);break;
+    case 4:show(Mode::Search);show(Mode::Keyboard);break;
     default:show(Mode::Settings);break;
   }
 }
@@ -541,7 +581,7 @@ void activate(int at){
       else if(playlist_playView(page().view,at))show(Mode::Player);else message(playlist_memoryRefused()?"Not enough memory, try again":"Unable to read songs or allocate queue.");break;
     case Mode::Search:
       if(at==0)show(Mode::Keyboard);
-      else if(at-1<storage_searchCount()){
+      else if(at-1<searchCount()&&selected.track==storage_searchTracks()[at-1]){
         if(playlist_playTracks(storage_searchTracks(),storage_searchCount(),at-1,-1)){
           // A query is ephemeral: resume the selected song in the full Songs queue.
           g_settings.srcKind=SRC_ALL;settings_save();show(Mode::Player);
@@ -708,7 +748,7 @@ void touch(TouchEvent ev,int,int){
   const int target=ready;ready=-1;
   // CT-05: a firm, slow press (600 ms to 4 s) that was not claimed by a drag or the 4 s calibration hold acts like a tap.
   if(ev!=TOUCH_TAP&&ev!=TOUCH_LONG_PRESS)return;
-  if(page().mode==Mode::Keyboard&&target!=Back&&target!=-1){if(target==KeyDone)back();else editQuery(target);return;}
+  if(page().mode==Mode::Keyboard&&target!=Back&&target!=-1){if(target==KeyDone){if(searchSession.pending||searchSession.state==SearchState::Error)scheduleSearch(0);back();}else editQuery(target);return;}
   if(target>=0){activate(target);return;}
   if(tileOf(target)>=0){openTile(tileOf(target));return;}
   switch(target){

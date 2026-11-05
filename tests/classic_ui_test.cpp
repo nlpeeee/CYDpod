@@ -1125,6 +1125,10 @@ static void viewportRegression(){
     const Rect down=L::pageStrip<Rect>(w,h,true);tap(down.cx(),down.cy());
     check(classic_offset()==std::min(10-capacity,capacity-1)*L::RowH,"existing row step maps to pixel multiple");
   }
+  home();tapTile(4);typeQuery("song");tapRect(L::keyAction<Rect>(tft.width(),tft.height(),3));searchSettle();pump();
+  classic_paintViewport(41);tapMini();tap(20,20);searchSettle();pump();
+  check(classic_offset()==41,"same-query reload after mini-player return restores pixel bookmark");
+  ui_redraw();pump();check(classic_offset()==41,"search invalidation retains pixel bookmark");
   std::cout<<"PASS CY-98a viewport: offsets/clamp, partial-edge clipping, cache-only placeholders/recovery, mini return, invalidation, row steps; 4/6 rows\n";
 }
 int main(){try{

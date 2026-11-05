@@ -67,7 +67,7 @@ char query[32]={};bool digitKeys=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
 enum class SearchState:uint8_t { Empty,Active,Cancelled,Error };
 struct SearchSession {
-  char applied[32]={};uint32_t due=0;
+  char applied[32]={};uint32_t due=0;int32_t resumePx=-1;
   SearchState state=SearchState::Empty;bool pending=false;
 } searchSession;
 static_assert(sizeof(SearchSession)<=48,"Search session RAM budget");
@@ -92,6 +92,7 @@ void applySearch(uint32_t now){
   if(!searchSession.pending||int32_t(now-searchSession.due)<0)return;
   searchSession.pending=false;
   if(strcmp(query,searchSession.applied)||searchSession.state==SearchState::Cancelled||searchSession.state==SearchState::Error){
+    if(strcmp(query,searchSession.applied))searchSession.resumePx=-1;
     cydlib::copyText(searchSession.applied,query);
     if(query[0]){storage_searchStart(query);searchSession.state=SearchState::Active;}
     else {storage_searchCancel();searchSession.state=SearchState::Empty;}
@@ -111,7 +112,7 @@ int topRow(){return page().offsetPx/L::RowH;}
 int visibleRows(){return rows()+(page().offsetPx%L::RowH?1:0);}
 Rect rowRect(int i){Rect r=L::row<Rect>(tft.width(),i);r.y-=page().offsetPx%L::RowH;return r;}
 Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
-void setTop(int top){page().offsetPx=cydclassic::clampTop(top,count,rows())*L::RowH;}
+void setTop(int top){if(page().mode==Mode::Search)searchSession.resumePx=-1;page().offsetPx=cydclassic::clampTop(top,count,rows())*L::RowH;}
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
 void freePreview(){free(preview);preview=nullptr;previewCount=0;}
@@ -286,6 +287,7 @@ void paintRow(int i,bool pressed){
 }
 // Cache-only seam for part 2: no row loading or catalogue reads here.
 void paintViewport(int32_t offsetPx){
+  if(page().mode==Mode::Search)searchSession.resumePx=-1;
   page().offsetPx=cydclassic::clampOffset(offsetPx,count,rows());
   dirty=0;
   for(int i=0;i<visibleRows();++i){
@@ -539,6 +541,9 @@ void enter(){
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
+  // Same-query reloads temporarily report zero hits. Keep the saved pixel bookmark
+  // until that existing reload completes, while the displayed offset stays clamped.
+  if(page().mode==Mode::Search&&searchSession.state==SearchState::Cancelled&&!strcmp(query,searchSession.applied)&&page().offsetPx>0)searchSession.resumePx=page().offsetPx;
   if((page().mode==Mode::Search||page().mode==Mode::Keyboard)&&searchSession.state==SearchState::Cancelled&&!searchSession.pending)scheduleSearch(0);
   count=rowCount();shownSerial=UINT32_MAX;tft.fillScreen(theme().bg);header();footer();
   shownVolume=shownConnection=-1;
@@ -590,7 +595,11 @@ void tick(uint32_t now){
     if(n!=searchShownCount||progress!=searchShownProgress){
       searchShownCount=n;searchShownProgress=progress;
       if(page().mode==Mode::Keyboard)queryPaint();
-      else {count=rowCount();invalidate();footer();}
+      else {
+        count=rowCount();
+        if(searchSession.resumePx>=0){page().offsetPx=cydclassic::clampOffset(searchSession.resumePx,count,rows());if(!searchWaiting())searchSession.resumePx=-1;}
+        invalidate();footer();
+      }
     }
     if(page().mode==Mode::Keyboard)return;
   }

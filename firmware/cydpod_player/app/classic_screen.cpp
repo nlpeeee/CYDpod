@@ -27,11 +27,18 @@ extern const unsigned char* const chrtbl_f16[96];
 
 namespace {
 namespace L=cydclassic::layout;
-enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Volume,Options,About,Refresh,Message,Search,Keyboard };
+enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Volume,Options,About,Refresh,Message,Search,Keyboard,System };
 struct Page {
   Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;uint16_t top=0;
   SourceKind sourceKind=SRC_M3U;char title[64]={};
 };
+// Brightness -/+ and Orientation, then Calibrate touch on the resistive board only.
+constexpr int DisplayRows=CYD_TOUCH_CAPACITIVE?3:4;
+// Landscape -> landscape flipped -> portrait -> portrait flipped, so every rotation can be reached
+// and left again (rotation 1 is the W328C's upright landscape, board.h).
+const char* const RotationName[4]={"Portrait","Landscape","Portrait flipped","Landscape flipped"};
+uint8_t nextRotation(uint8_t rotation){static const uint8_t next[4]={2,3,1,0};return next[rotation&3];}
+void resetPin(){g_settings.webPin="000000";settings_save();}
 struct Row {
   char label[128]={},detail[96]={};CatalogView child{};
   int16_t track=-1,source=-1;bool valid=false,navigates=false,disabled=false;
@@ -81,7 +88,7 @@ const char* pageTitle(const Page& value){
     case Mode::Search:return "Search Results";case Mode::Keyboard:return "Search Songs";
     case Mode::Settings:return "Settings";case Mode::Playback:return "Playback";case Mode::Display:return "Display";
     case Mode::Output:return "Audio Output";case Mode::Volume:return "Volume";case Mode::Options:return "Options";
-    case Mode::About:return "About";case Mode::Refresh:return "Refresh Library";case Mode::Message:return "CYDpod";
+    case Mode::About:return "About";case Mode::Refresh:return "Refresh Library";case Mode::Message:return "CYDpod";case Mode::System:return "Library & System";
     default:return "CYDpod";
   }
 }
@@ -238,7 +245,7 @@ int rowCount(){
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
-    case Mode::Settings:return 7;case Mode::Playback:return 4;case Mode::Display:return 5;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 1 : 0);
+    case Mode::Settings:return 6;case Mode::System:return 4;case Mode::Playback:return 4;case Mode::Display:return DisplayRows;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 1 : 0);
     case Mode::Options:return 4;case Mode::Refresh:return 2;
     default:return 0;
   }
@@ -262,11 +269,14 @@ void loadRow(int i){
       break;
     case Mode::Sources:{int source=sourceId(at);setRow(r,playlist_name(source).c_str(),String(),true,source<0);r.source=source;break;}
     case Mode::SourceSongs:{String title,artist;if(preview&&at<previewCount&&storage_trackSummary(preview[at],title,artist)){setRow(r,title.c_str(),artist);r.track=preview[at];}else setRow(r,"Track unavailable",String(),false,true);break;}
-    case Mode::Settings:{const char* names[]={"Audio Output","Bluetooth","Playback","Display","Refresh Library","Upload / Advanced","About"};setRow(r,names[at],String(),true);break;}
+    case Mode::Settings:{const char* names[]={"Audio Output","Bluetooth","Playback","Display","Library & System","About"};setRow(r,names[at],String(),true);break;}
+    case Mode::System:{const char* names[]={"Refresh Library","Upload music","Web passcode","Language"};
+      setRow(r,names[at],at==2?g_settings.webPin:at==3?String(tr(T_LANG_NAME)):String(),at<2);break;}
     case Mode::Playback:
       if(at<2)setRow(r,at==0?"Shuffle":"Repeat",at==0?String(audio_shuffle()?"On":"Off"):String(audio_repeat()==REPEAT_ONE?"One":audio_repeat()==REPEAT_ALL?"All":"Off"));
       else setRow(r,at==2?"Screen timeout":"Sleep timer",at==2?String(sleep_timeoutLabel(g_settings.screenTimeout)):String(sleep_timerLabel(g_settings.sleepTimer)));break;
-    case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Flip portrait","Calibrate touch","Panel / Advanced"};setRow(r,names[at],at<2?String(g_settings.brightness)+"%":String(),at>=3);break;}
+    case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Orientation","Calibrate touch"};
+      setRow(r,names[at],at<2?String(g_settings.brightness)+"%":at==2?String(RotationName[g_settings.rotation&3]):String(),at==3);break;}
     case Mode::Output:{if(at==OUT_SELECTABLE_COUNT){setRow(r,"Switch back to Bluetooth if there is no sound",String(),false,true);break;}const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
     case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):String(),at==3);break;}
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
@@ -553,15 +563,25 @@ void activate(int at){
       if(playlist_playTracks(preview,previewCount,at,page().source)){settings_save();show(Mode::Player);}else message("Unable to start this list.");break;
     case Mode::Settings:
       if(at==0)show(Mode::Output);else if(at==1)external(SCR_BLUETOOTH);else if(at==2)show(Mode::Playback);else if(at==3)show(Mode::Display);
-      else if(at==4)show(Mode::Refresh);else if(at==5)external(SCR_SETUP);else show(Mode::About);break;
+      else if(at==4)show(Mode::System);else show(Mode::About);break;
+    case Mode::System:
+      if(at==0)show(Mode::Refresh);
+      else if(at==1){
+        if(!firmware_uploaderPresent()){ui_toast(T_UPLOADER_MISSING);break;}
+        // Keep the exact spot in the song: upload mode ends in a restart.
+        g_settings.lastTrack=audio_currentTrack();g_settings.lastPosMs=audio_positionMs();settings_saveResume();
+        firmware_bootUploader(); // restarts
+      }else if(at==2)ui_confirm(T_PIN_RESET_Q,T_PIN_RESET_1,T_PIN_RESET_2,T_RESET,resetPin);
+      else{g_settings.lang=(g_settings.lang+1)%LANG_COUNT;settings_save();enter();}
+      break;
     case Mode::Playback:
       if(at==0)cycleShuffle();else if(at==1)cycleRepeat();
       else if(at==2){g_settings.screenTimeout=(g_settings.screenTimeout+1)%4;settings_save();invalidate();}
       else {sleep_setTimer((g_settings.sleepTimer+1)%5,screenNow);settings_save();invalidate();}break;
     case Mode::Display:
       if(at<2){g_settings.brightness=constrain(int(g_settings.brightness)+(at?10:-10),10,100);display_setBacklight(g_settings.brightness);settings_save();invalidate();}
-      else if(at==2){g_settings.rotation=(g_settings.rotation&2)?0:2;display_setRotation(g_settings.rotation);settings_save();enter();}
-      else if(at==3){calibrate_run();enter();}else external(SCR_SETUP);break;
+      else if(at==2){g_settings.rotation=nextRotation(g_settings.rotation);display_setRotation(g_settings.rotation);settings_save();enter();}
+      else{calibrate_run();enter();}break;
     case Mode::Output:
       if(at<OUT_SELECTABLE_COUNT){const uint8_t next=outRouteSelectable(at);
         if(next==g_settings.outRoute)break;
@@ -739,6 +759,12 @@ uint32_t classic_volumeSaveAt(){return saveAt;}
 int classic_target(int x,int y){return targetAt(x,y);}
 uint32_t classic_seekPreviewMs(){return seekMs;}
 unsigned classic_depth(){return navigation.depth;}
+unsigned classic_mode(){return unsigned(page().mode);}
+const char* classic_modeName(unsigned m){
+  static const char* const names[]={"Home","Playlists","Catalog","Sources","SourceSongs","Player","Settings","Playback","Display","Output","Volume","Options","About","Refresh","Message","Search","Keyboard","System"};
+  static_assert(sizeof(names)/sizeof(names[0])==unsigned(Mode::System)+1,"mode name table matches Mode");
+  return m<sizeof(names)/sizeof(names[0])?names[m]:"?";
+}
 int classic_top(){return page().top;}
 std::string classic_geometry(){
   std::ostringstream out;

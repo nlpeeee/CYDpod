@@ -572,6 +572,55 @@ static void tapDialogCancel(){
   const int W=tft.width(),H=tft.height(),w=std::min(W-SP_L*2,296),h=150,rx=(W-w)/2,ry=(H-h)/2,bh=44,by=ry+h-SP_M-bh,bw=(w-SP_M*3)/2;
   tap(rx+SP_M+bw/2,by+bh/2);
 }
+static void tapDialogOk(){
+  const int W=tft.width(),H=tft.height(),w=std::min(W-SP_L*2,296),h=150,rx=(W-w)/2,ry=(H-h)/2,bh=44,by=ry+h-SP_M-bh,bw=(w-SP_M*3)/2;
+  tap(rx+SP_M*2+bw+bw/2,by+bh/2);
+}
+// CY-81: the Settings tree after the legacy Setup screen was retired. Every row that used to be
+// reachable only through Setup and is still wanted lives here; the retired rows are gone.
+static void settingsRegression(){
+  namespace L=cydclassic::layout;
+  const unsigned rotations[]={0,1,2,3};
+  for(unsigned rotation:rotations){
+    tft.setRotation(rotation);g_settings.rotation=uint8_t(rotation);g_settings.outRoute=OUT_BT;
+    home();tapTile(5);
+    check(label("Audio Output")&&label("Bluetooth")&&label("Playback")&&label("Display"),"Settings shows Output, Bluetooth, Playback and Display");
+    tapSettingsRow(4);check(label("Library & System"),"Library & System page title");
+    for(const char* kept:{"Refresh Library","Upload music","Web passcode","Language"})check(label(kept),(std::string("System row kept: ")+kept).c_str());
+    for(const char* retired:{"Style","Layout","Background","Invert colours","Panel type","Panel / Advanced","Upload / Advanced","Theme","Flip portrait"})
+      check(!label(retired),(std::string("retired row absent: ")+retired).c_str());
+  }
+  // Orientation visits all four rotations and returns to where it started (the old Flip portrait
+  // could not leave portrait once on the landscape W328C).
+  tft.setRotation(1);g_settings.rotation=1;home();tapTile(5);tapRow(3);
+  check(label("Brightness -")&&label("Brightness +")&&label("Orientation")&&label("Landscape"),"Display shows brightness and the orientation name");
+#if CYD_TOUCH_CAPACITIVE
+  check(!label("Calibrate touch"),"no touch calibration row on the capacitive board");
+#else
+  check(label("Calibrate touch"),"touch calibration row on the resistive board");
+#endif
+  const uint8_t expectedOrder[]={3,0,2,1};std::vector<uint8_t> seen;
+  for(uint8_t want:expectedOrder){
+    const int saves=settingsSaves;tapRow(2);
+    check(g_settings.rotation==want&&tft.getRotation()==want&&settingsSaves==saves+1,"Orientation steps to the next rotation and saves once");seen.push_back(g_settings.rotation);
+    check(label("Orientation"),"still on Display after rotating");
+  }
+  check(seen.size()==4&&g_settings.rotation==1,"four Orientation taps visit every rotation and come back to landscape");
+  const int level=g_settings.brightness;tapRow(0);check(g_settings.brightness==std::max(10,level-10)&&backlight==g_settings.brightness,"Brightness - lowers and applies the backlight");
+  tapRow(1);tapRow(1);check(g_settings.brightness==std::min(100,std::max(10,level-10)+20),"Brightness + raises it");
+  // Library & System.
+  tft.setRotation(1);g_settings.rotation=1;g_settings.lang=LANG_EN;g_settings.webPin="123456";
+  home();tapTile(5);tapSettingsRow(4);check(label("123456"),"the web passcode is shown in full");
+  int saves=settingsSaves;tapRow(3);check(g_settings.lang==LANG_ZH&&settingsSaves==saves+1,"Language row cycles to Chinese and saves");
+  tapRow(3);check(g_settings.lang==LANG_EN&&label("English"),"Language row cycles back");
+  tapRow(2);tapDialogCancel();check(g_settings.webPin=="123456","cancelling the passcode reset keeps the passcode");
+  tapRow(2);tapDialogOk();check(g_settings.webPin=="000000","confirming resets the web passcode");
+  tapRow(1);check(label("Uploader not installed")&&classic_depth()==3,"Upload music without the uploader says so and stays put");
+  tap(20,20);
+  tapRow(0);check(label("Rebuild and restart"),"Refresh Library opens its confirmation from Library & System");
+  tft.setRotation(0);g_settings.rotation=0;g_settings.lang=LANG_EN;
+  std::cout<<"PASS CY-81 Settings: live rows kept, retired rows absent in all rotations, Orientation visits all four rotations, brightness, Library & System rows (refresh, upload, passcode reset, language)\n";
+}
 static void renderInventory(){
   namespace L=cydclassic::layout;
   std::filesystem::create_directories("render");
@@ -625,9 +674,9 @@ static void renderInventory(){
     home();tapTile(5);tapRow(1);shot("bluetooth","bluetooth-route","Pair new");
     home();tapTile(5);tapRow(2);shot("playback","menu","Screen timeout");
     home();tapTile(5);tapRow(3);shot("display","menu","Brightness -");
-    home();tapTile(5);tapSettingsRow(4);shot("refresh-library","confirm","Rebuild and restart");
-    home();tapTile(5);tapSettingsRow(5);shot("setup-legacy","advanced-bridge",nullptr);
-    home();tapTile(5);tapSettingsRow(6);shot("about","menu",nullptr);
+    home();tapTile(5);tapSettingsRow(4);shot("system","menu","Web passcode");
+    tapRow(0);shot("refresh-library","confirm","Rebuild and restart");
+    home();tapTile(5);tapSettingsRow(5);shot("about","menu",nullptr);
     // Playing: Now Playing (volume slider and output chip), Options, mini-player on Home and in lists.
     home();tapTile(0);tapRow(1);check(playing&&ui_current()==SCR_CLASSIC,"a song row starts playback");
     shot("nowplaying","playing","Fixture Artist");
@@ -692,7 +741,7 @@ int main(){try{
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");
   home();tapTile(5);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
-  tap(225,220);tap(80,216);check(ui_current()==SCR_SETUP,"advanced settings bridge");ui_go(SCR_PLAYER);pump();check(label("Refresh Library"),"legacy Back returns to scrolled settings parent");tap(225,100);
+  tap(80,216);check(classic_depth()==3&&label("Library & System")&&label("Web passcode")&&label("Refresh Library")&&label("Upload music"),"Library & System opens from Settings");tap(20,20);check(label("Audio Output")&&classic_depth()==2,"Back returns to Settings");
   // CT-05: an unclaimed 0.6 to 4 s press activates the row like a tap.
   tx=80;ty=60;down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=900);down=false;ui_touch(TOUCH_LONG_PRESS,80,66);pump();
   check(label("Bluetooth")&&label("Selected"),"long press activates the row (CT-05)");
@@ -796,6 +845,7 @@ int main(){try{
   touchRegression();
   miniPlayerRegression();
   homeTilesRegression();
+  settingsRegression();
   renderInventory();
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";

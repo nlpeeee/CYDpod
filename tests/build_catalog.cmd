@@ -28,6 +28,10 @@ cl /nologo /O2 /EHsc /W4 /std:c++17 /I..\..\firmware\cydpod_player\app /Fe:touch
 if errorlevel 1 exit /b 1
 .\touch_gesture_test.exe
 if errorlevel 1 exit /b 1
+cl /nologo /O2 /EHsc /W4 /std:c++17 /I....irmwaredpod_playerpp /Fe:scroll_core_test.exe ..scroll_core_test.cpp
+if errorlevel 1 exit /b 1
+.scroll_core_test.exe ..dataosp_fling.csv
+if errorlevel 1 exit /b 1
 cl /nologo /O2 /EHsc /W4 /std:c++17 /I..\..\firmware\cydpod_player\app /Fe:cst820_report_test.exe ..\cst820_report_test.cpp
 if errorlevel 1 exit /b 1
 .\cst820_report_test.exe

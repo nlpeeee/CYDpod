@@ -61,7 +61,9 @@ char query[32]={};bool digitKeys=false,lettersSecond=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44,KeyPage=-45;
 constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
+Page miniReturn{};uint8_t miniReturnDepth=0;uint32_t miniPressUntil=0;bool miniQueued=false;
 Page& page(){return navigation.current();}
+bool browse(){return page().mode!=Mode::Player&&page().mode!=Mode::Keyboard;}
 int rows(){return L::rows(tft.height());}
 int footerY(){return L::footerY(tft.height());}
 Rect rowRect(int i){return L::row<Rect>(tft.width(),i);}
@@ -124,7 +126,7 @@ void playerHeader(){
   const Palette& p=theme();tft.fillRect(0,0,tft.width(),L::PlayerHeaderH,p.band);tft.drawFastHLine(0,L::PlayerHeaderH,tft.width(),p.outline);
   if(playerPressed==Back)tft.fillRect(0,0,L::PlayerBackW,L::PlayerHeaderH,p.pressed);
   ui_icon(ICON_BACK,L::PlayerBackX,L::PlayerHeaderY,L::PlayerHeaderIcon,p.text,p.band);
-  const Page& parent=navigation.entries[navigation.depth>1?navigation.depth-2:0];
+  const Page& parent=miniReturnDepth==navigation.depth?miniReturn:navigation.entries[navigation.depth>1?navigation.depth-2:0];
   const char* name=parent.mode==Mode::Home?"Home":pageTitle(parent);
   ui_text(String(name),L::PlayerParentX,L::PlayerHeaderY,ML_DATUM,p.text,p.band,L::PlayerBackW-L::PlayerParentX,TYPE_CAPTION);
   const int pos=audio_queuePos(audio_currentTrack());
@@ -144,14 +146,38 @@ void header(){
     ui_icon(ICON_BACK,L::HeaderBackX,L::HeaderTextY,L::HeaderIconSize,p.text,p.band);
     ui_text(String(parent.mode==Mode::Home?"Home":pageTitle(parent)),L::HeaderParentX,L::HeaderTextY,ML_DATUM,p.text,p.band,L::BackW-L::HeaderParentX,TYPE_CAPTION);
   }
-  const int left=navigation.depth>1?L::BackW:0,right=tft.width()-L::HeaderTitleRight;
+  if(navigation.depth>=4&&browse()){const Rect h=L::deepHome<Rect>();ui_icon(ICON_HOME,h.cx(),h.cy(),L::HeaderIconSize,p.text,p.band);}
+  const int left=navigation.depth>=4&&browse()?L::BackW+L::DeepHomeW:navigation.depth>1?L::BackW:0,right=tft.width()-L::HeaderTitleRight;
   ui_text(String(title()),(left+right)/2,L::HeaderTextY,MC_DATUM,p.text,p.band,right-left);
   const bool wired=g_settings.outRoute==OUT_WIRED;
   const bool connected=wired?wired_active():bt_connected();
   ui_icon(wired?ICON_HEADPHONES:ICON_BLUETOOTH,tft.width()-L::RouteInset,L::HeaderTextY,L::RouteSize,connected?p.text:p.dim,p.band);
 }
+void miniProgress(){
+  const Rect r=L::miniProgress<Rect>(tft.width(),tft.height());
+  const uint32_t duration=audio_durationMs();
+  const int px=audio_queueLen()&&duration?min<int>(r.w,uint64_t(audio_positionMs())*r.w/duration):0;
+  tft.fillRect(r.x,r.y,r.w,r.h,theme().outline);
+  if(px)tft.fillRect(r.x,r.y,px,r.h,theme().accent);
+}
+void miniPlayer(){
+  const Palette& p=theme();const int w=tft.width(),h=tft.height();
+  tft.fillRect(0,L::miniY(h),w,L::FooterH,p.band);
+  miniQueued=audio_queueLen()>0;shownSerial=audio_trackSerial();shownPlaying=audio_isPlaying();
+  if(!miniQueued){text("Shuffle all",{0,L::miniY(h),w,L::FooterH},storage_trackCount()?p.text:p.disabled,p.band);return;}
+  for(int cell:{0,2}){const Rect r=L::mini<Rect>(w,h,cell);const uint16_t bg=playerPressed==(cell?Next:Play)?p.pressed:p.band;
+    tft.fillRect(r.x,r.y+L::MiniProgressH,r.w,r.h-L::MiniProgressH,bg);
+    ui_icon(cell?ICON_NEXT:shownPlaying?ICON_PAUSE:ICON_PLAY,r.cx(),r.cy(),L::MiniIconSize,p.text,bg);}
+  const Rect r=L::mini<Rect>(w,h,1);
+  // Reuse the existing Player record: one bounded metadata read only on state/track changes.
+  if(!storage_trackInfo(audio_currentTrack(),playingInfo)){cydlib::copyText(playingInfo.title,"Track unavailable");playingInfo.artist[0]=0;}
+  playerText(playingInfo.title,r.x+L::MiniTextInset,r.y+L::MiniTitleY,L::MiniTitleH,r.w-2*L::MiniTextInset,p.text,p.band,false);
+  playerText(playingInfo.artist,r.x+L::MiniTextInset,r.y+L::MiniArtistY,L::MiniArtistH,r.w-2*L::MiniTextInset,p.dim,p.band,false);
+  miniProgress();
+}
 void footer(){
   if(page().mode==Mode::Player)return;
+  if(browse()&&(shownSerial!=audio_trackSerial()||shownPlaying!=audio_isPlaying()||miniQueued!=(audio_queueLen()>0)))miniPlayer();
   const Palette& p=theme();tft.fillRect(0,footerY(),tft.width(),L::FooterH,p.band);
   tft.drawFastHLine(0,footerY(),tft.width(),p.outline);
   if(page().mode==Mode::Keyboard){
@@ -187,6 +213,7 @@ void invalidate(){
   for(int i=0;i<6;++i)cache[i].valid=false;
   const Palette& p=theme();const int x=tft.width()-L::StripW,h=rows()*L::RowH;
   tft.fillRect(x,L::HeaderH,L::StripW,h,p.band);
+  if(count>rows())for(bool down:{false,true}){const Rect r=L::pageStrip<Rect>(tft.width(),tft.height(),down);ui_icon(down?ICON_DOWN:ICON_UP,r.cx(),r.cy(),L::FooterIconSize,p.text,p.band);}
   if(count>rows()){const int thumb=max(L::ThumbMin,h*rows()/count);const int y=L::HeaderH+(h-thumb)*page().top/max(1,count-rows());tft.fillRect(x+L::ThumbInset,y,L::ThumbW,thumb,p.dim);}
 }
 void setRow(Row& r,const char* label,const String& detail=String(),bool navigate=false,bool disabled=false){
@@ -271,7 +298,14 @@ void message(const char* value){
   if(navigation.depth==8)navigation.back();
   Page next{};next.mode=Mode::Message;navigation.push(next);ui_go(SCR_CLASSIC);
 }
+void openPlaying(){
+  if(page().mode==Mode::Player)return;
+  for(unsigned i=0;i<navigation.depth;++i)if(navigation.entries[i].mode==Mode::Player){navigation.depth=i+1;ui_go(SCR_CLASSIC);return;}
+  miniReturn=page();miniReturnDepth=navigation.depth;
+  page()=Page{};page().mode=Mode::Player;ui_go(SCR_CLASSIC);
+}
 void back(){
+  if(miniReturnDepth==navigation.depth){page()=miniReturn;miniReturnDepth=0;ui_go(SCR_CLASSIC);return;}
   if(page().mode==Mode::SourceSongs)freePreview();
   if(navigation.back())ui_go(SCR_CLASSIC);
 }
@@ -400,7 +434,7 @@ void enter(){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
   if(page().mode==Mode::Search)storage_searchStart(query);
-  count=rowCount();tft.fillScreen(theme().bg);header();footer();
+  count=rowCount();shownSerial=UINT32_MAX;tft.fillScreen(theme().bg);header();footer();
   shownVolume=shownConnection=-1;
   if(page().mode==Mode::Keyboard){keyboardPaint();searchShownCount=searchShownProgress=-1;}
   else if(page().mode==Mode::Player){playerTrack();playerTransport();playerBottom();lastPlayer=0;playerTick(millis());}
@@ -449,6 +483,11 @@ void tick(uint32_t now){
     if(page().mode==Mode::Keyboard)return;
   }
   if(page().mode==Mode::Player){playerTick(now);return;}
+  if(browse()){
+    if(playerPressed!=-1&&int32_t(now-miniPressUntil)>=0&&(!touch_isDown()||!L::mini<Rect>(tft.width(),tft.height(),playerPressed==Play?0:2).contains(gesture.x,gesture.y))){playerPressed=-1;miniPlayer();}
+    if(shownSerial!=audio_trackSerial()||shownPlaying!=audio_isPlaying()||miniQueued!=(audio_queueLen()>0))miniPlayer();
+    if(now-lastPlayer>=1000){lastPlayer=now;if(miniQueued)miniProgress();}
+  }
   if(page().mode==Mode::Volume&&shownVolume!=audio_volume()){shownVolume=audio_volume();volumePaint();}
   // A single row per loop bounds SD and drawing work; audio/Bluetooth run between rows.
   if(dirty&&(!audio_bufferLow()||now-lastPaint>=120)){
@@ -534,7 +573,7 @@ int targetAt(int x,int y){
     if(L::playerVolume<Rect>(tft.width(),tft.height()).contains(x,y))return Slider;
     if(L::output<Rect>(tft.width(),tft.height()).contains(x,y))return Output;return -1;
   }
-  if(y<L::HeaderH)return navigation.depth>1&&x<L::BackW?Back:-1;
+  if(y<L::HeaderH){if(browse()&&navigation.depth>=4&&L::deepHome<Rect>().contains(x,y))return Home;return navigation.depth>1&&x<L::BackW?Back:-1;}
   if(page().mode==Mode::Keyboard){
     if(y>=footerY())return x<L::ActionW?KeySpace:x<L::PlayingX?KeyClear:KeyDone;
     if(keyBackRect().contains(x,y))return KeyBack;
@@ -544,6 +583,11 @@ int targetAt(int x,int y){
     for(int i=0;keys[i];++i)if(keyRect(i).contains(x,y))return KeyBase+keys[i];
     return -1;
   }
+  if(browse()&&y>=L::miniY(tft.height())&&y<L::miniY(tft.height())+L::FooterH){
+    if(!audio_queueLen())return storage_trackCount()?Shuffle:-1;
+    return L::mini<Rect>(tft.width(),tft.height(),0).contains(x,y)?Play:L::mini<Rect>(tft.width(),tft.height(),2).contains(x,y)?Next:Now;
+  }
+  if(browse()&&L::strip<Rect>(tft.width(),tft.height()).contains(x,y))return count>rows()?(L::pageStrip<Rect>(tft.width(),tft.height(),false).contains(x,y)?Up:Down):-1;
   if(y>=footerY()){
     if(footerRect(Home).contains(x,y))return Home;
     if(footerRect(Up).contains(x,y))return count>rows()?Up:-1;
@@ -589,6 +633,7 @@ bool press(PressPhase phase,int x,int y){
       seekCancelled=!audio_canSeek();seekPreview=!seekCancelled;
       seekDuration=audio_durationMs();seekSerial=audio_trackSerial();seekPreviewAt(x);return true;
     }
+    if(browse()&&(hit==Play||hit==Next)){playerPressed=hit;miniPressUntil=screenNow+L::MiniPressMs;transportDown(hit);gesture.claimed=true;miniPlayer();return true;}
     if(page().mode==Mode::Player){playerPressed=hit;if(hit==Prev||hit==Play||hit==Next){transportDown(hit);gesture.claimed=true;}
       if(hit==Prev||hit==Play||hit==Next||hit==Shuffle||hit==Repeat)playerTransport();else if(hit==Output)playerOutput();else if(hit==Favourite||hit==Options||hit==Back)playerHeader();
       if(gesture.claimed)return true;
@@ -602,7 +647,7 @@ bool press(PressPhase phase,int x,int y){
       if(abs(y-gesture.y)>cydclassic::Gesture::SlopFar||seekSerial!=audio_trackSerial())seekCancelled=true;
       if(!seekCancelled)seekPreviewAt(x);return true;
     }
-    if(gesture.target==Prev||gesture.target==Play||gesture.target==Next)return true;
+    if(gesture.target==Prev||gesture.target==Play||gesture.target==Next){if(browse()&&!within(x,y,cydclassic::Gesture::SlopNear)&&playerPressed!=-1){playerPressed=-1;miniPlayer();}return true;}
     const bool claimed=gesture.move(x,y,!within(x,y,cydclassic::Gesture::SlopFar),gesture.target>=0&&gesture.target<KeyBase&&count>rows());
     if(gesture.claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
       if(top!=page().top){page().top=top;highlight=-1;invalidate();footer();}}
@@ -623,6 +668,7 @@ bool press(PressPhase phase,int x,int y){
       return true;
     }
     if(page().mode==Mode::Player){playerPressed=-1;if(gesture.target==Prev||gesture.target==Play||gesture.target==Next||gesture.target==Shuffle||gesture.target==Repeat)playerTransport();else if(gesture.target==Output)playerOutput();else if(gesture.target==Favourite||gesture.target==Options||gesture.target==Back)playerHeader();}
+    if(browse()&&(gesture.target==Play||gesture.target==Next)&&int32_t(screenNow-miniPressUntil)>=0){playerPressed=-1;miniPlayer();}
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next)return true; // already acted on touch-down
     const bool ok=gesture.activate(within(x,y,cydclassic::Gesture::SlopNear));
     ready=ok?gesture.target:-1;
@@ -644,11 +690,14 @@ void touch(TouchEvent ev,int,int){
     case Back:back();break;
     case Home:classic_home();ui_go(SCR_CLASSIC);break;
     case Up:case Down:page().top=cydclassic::clampTop(page().top+(target==Up?-1:1)*max(1,rows()-1),count,rows());invalidate();footer();break;
-    case Now:if(storage_trackCount())show(Mode::Player);break;
+    case Now:if(storage_trackCount())openPlaying();break;
     case Volume:show(Mode::Volume);break;
     case Options:show(Mode::Options);break;
     case Favourite:toggleFavourite();break;
-    case Shuffle:cycleShuffle();playerTransport();break;
+    case Shuffle:if(browse()&&!audio_queueLen()){
+      const int n=storage_trackCount();if(n){audio_setShuffle(true);g_settings.shuffle=true;
+        if(playlist_playView({CatalogKind::Songs,0},esp_random()%n))openPlaying();else message("Unable to start playback.");}
+    }else {cycleShuffle();playerTransport();}break;
     case Repeat:cycleRepeat();playerTransport();break;
     case Output:show(Mode::Output);break;
     case Minus:case Plus:audio_setVolume(constrain(int(audio_volume())+(target==Plus?5:-5),0,100));g_settings.volume=audio_volume();savePending=true;saveAt=millis()+1500;break;
@@ -657,7 +706,7 @@ void touch(TouchEvent ev,int,int){
 }
 } // namespace
 
-void classic_home(){flushSettings();freePreview();externalReturn=false;navigation.home();}
+void classic_home(){miniReturnDepth=0;flushSettings();freePreview();externalReturn=false;navigation.home();}
 void classic_preparePlayer(){if(externalReturn){externalReturn=false;return;}if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}}
 void classic_prepareLibrary(){classic_home();Page p{};p.mode=Mode::Music;navigation.push(p);}
 const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};
@@ -669,6 +718,8 @@ int classic_volumeSaveArms(){return volumeSaveArms;}
 uint32_t classic_volumeSaveAt(){return saveAt;}
 int classic_target(int x,int y){return targetAt(x,y);}
 uint32_t classic_seekPreviewMs(){return seekMs;}
+unsigned classic_depth(){return navigation.depth;}
+int classic_top(){return page().top;}
 std::string classic_geometry(){
   std::ostringstream out;
   auto rect=[&](Rect r){out<<r.x<<','<<r.y<<','<<r.w<<','<<r.h<<';';};

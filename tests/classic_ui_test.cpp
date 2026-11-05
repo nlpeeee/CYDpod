@@ -26,7 +26,7 @@
 TFT_eSPI tft;
 Settings g_settings;
 static int current=0,calls=0,volume=32,queueLength=0;
-static uint32_t serial=0,clockNow=0,lastSeek=0;
+static uint32_t serial=0,clockNow=0,lastSeek=0,positionMs=84000;
 static int seekCalls=0,relativeSeek=0,backlight=100,fadeGain=100;
 void audio_setSleepGain(uint8_t p){fadeGain=p;}
 static bool seekAllowed=true;
@@ -59,7 +59,7 @@ bool audio_isSeeking(){return false;}
 bool audio_seekTo(uint32_t ms){lastSeek=ms;++seekCalls;return seekAllowed;}
 void audio_seekRelative(int s){relativeSeek=s;++seekCalls;}
 uint32_t audio_durationMs(){return seekAllowed?240000:0;}
-uint32_t audio_positionMs(){return 84000;}
+uint32_t audio_positionMs(){return positionMs;}
 uint32_t audio_trackSerial(){return serial;}
 static int btCalls=0;static bool btConnected=true;
 bool bt_connected(){++btCalls;return btConnected;}
@@ -292,6 +292,49 @@ static void nowPlayingRegression(){
   tap(20,18);check(label("Audio Output"),"Back returns to the named Settings parent");home();
   std::cout<<"CY61_NOWPLAYING_OK: rotations 0/1/3, SVG geometry, slider/seek edges and monotonic drag, live shared volume, one deferred save, down-only transport, favourite, shuffle, repeat, Output and Options\n";
 }
+unsigned classic_depth();int classic_top();
+static void miniPlayerRegression(){
+  namespace L=cydclassic::layout;
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);toMusic();tap(80,L::row<Rect>(tft.width(),2).cy());
+    const int w=tft.width(),h=tft.height(),capacity=L::rows(h);
+    const Rect play=L::mini<Rect>(w,h,0),next=L::mini<Rect>(w,h,2),title=L::mini<Rect>(w,h,1);
+    check(play.w==52&&play.h==44&&next.x==w-52&&title.w==w-104,"mini-player rectangles match proposal D");
+    check(classic_target(play.x,play.y)==-21&&classic_target(next.x+next.w-1,next.y+next.h-1)==-22,"mini transport outer edges");
+    check(classic_target(title.x,title.y)==-14&&classic_target(title.x+title.w-1,title.y+title.h-1)==-14,"mini title outer edges");
+    for(auto button:{std::make_pair(play,&toggleCalls),std::make_pair(next,&nextCalls)}){
+      const int before=*button.second,faces=tft.colorCount(theme().pressed);
+      tx=button.first.cx();ty=button.first.cy();down=true;ui_tick(clockNow+=130);
+      check(*button.second==before+1&&tft.colorCount(theme().pressed)>faces,"mini transport acts and paints pressed face on down");
+      down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(*button.second==before+1,"mini release and hold never repeat");
+    }
+    const Rect up=L::pageStrip<Rect>(w,h,false),dn=L::pageStrip<Rect>(w,h,true);
+    check(up.w==30&&dn.w==30&&up.y+up.h==dn.y,"30 px paging halves meet");
+    for(int expected:{capacity-1,std::min(10-capacity,2*(capacity-1)),10-capacity,10-capacity}){tap(dn.cx(),dn.cy());check(classic_top()==expected,"page down advances rows minus one and stops at end");}
+    const int oldTop=classic_top();const unsigned depth=classic_depth();
+    for(int i=0;i<10;++i){tap(title.cx(),title.cy());check(classic_depth()==depth,"mini opens Playing without stack growth");tap(20,18);check(classic_depth()==depth&&classic_top()==oldTop,"Back restores exact list position and depth");}
+    // Return from Player Options to an existing Playing page instead of nesting it.
+    tap(title.cx(),title.cy());tap(L::options<Rect>(w).cx(),18);tap(title.cx(),title.cy());check(classic_depth()==depth,"mini returns to existing Playing through Options");tap(20,18);
+    for(int expected:{std::max(0,oldTop-capacity+1),0,0}){tap(up.cx(),up.cy());check(classic_top()==expected,"page up advances rows minus one and stops at start");}
+    ui_redraw();pump();snapshot(rotation==0?"cy79-mini-portrait.svg":rotation==1?"cy79-mini-landscape.svg":rotation==2?"cy79-mini-portrait2.svg":"cy79-mini-landscape3.svg");
+    // Count actual recorder calls; a settled 1 Hz tick can only fill the two progress rectangles.
+    SCREEN_CLASSIC.tick(clockNow+=1100);tft.resetDrawCounts();positionMs+=1000;SCREEN_CLASSIC.tick(clockNow+=1000);
+    check(tft.fillCalls==2&&tft.rowFillCalls==0&&tft.labels.size()==tft.labelsAtReset,"progress tick redraws only the 2 px line, no rows or text");
+    tft.resetDrawCounts();SCREEN_CLASSIC.tick(clockNow+=999);check(tft.fillCalls==0,"progress never draws faster than 1 Hz");
+    SCREEN_CLASSIC.tick(++clockNow);check(tft.fillCalls==2,"next progress line draws at one second");positionMs=84000;
+    // Home remains available beside Back on deep catalogue pages; release slop cannot retarget Back.
+    home();tap(80,56);tap(80,56);tap(80,56);check(classic_depth()==4,"artist albums reaches depth four");
+    const Rect homeHit=L::deepHome<Rect>();check(classic_target(homeHit.x,homeHit.y)==-11&&classic_target(homeHit.x+homeHit.w-1,homeHit.h-1)==-11,"deep Home outer edges");
+    SCREEN_CLASSIC.press(PRESS_DOWN,homeHit.x,homeHit.cy());check(classic_depth()==4,"Home waits for release");
+    SCREEN_CLASSIC.press(PRESS_UP,homeHit.x-7,homeHit.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,homeHit.x-7,homeHit.cy());pump();check(classic_depth()==1,"deep Home uses captured-target tolerant release");
+    const int savedLength=queueLength;queueLength=0;ui_redraw();pump();check(label("Shuffle all")&&classic_target(play.cx(),play.cy())==-30,"empty queue shows Shuffle all across mini strip");
+    snapshot(rotation==1?"cy79-mini-empty.svg":"cy79-mini-home.svg");const int commands=calls;
+    tx=title.cx();ty=title.cy();down=true;ui_tick(clockNow+=130);check(calls==commands,"Shuffle all waits for release");down=false;ui_touch(TOUCH_TAP,tx,ty);pump();
+    check(queueLength>0&&playing&&shuffle&&calls>commands,"empty-queue action shuffles full library through existing queue helper");
+    if(!queueLength)queueLength=savedLength;
+  }
+  tft.setRotation(0);home();std::cout<<"CY79_MINI_PLAYER_OK: down-only transport, pressed feedback, stack-free Playing return, paging clamps, empty queue, line-only 1 Hz progress, all rotations\n";
+}
 // Linear Rec.709 luminance, normalized to 0..1 after RGB565 expansion.
 static double luminance(uint16_t c){
   auto linear=[](double v){return v<=0.04045?v/12.92:std::pow((v+0.055)/1.055,2.4);};
@@ -504,6 +547,7 @@ int main(){try{
   compactChromeRegression();
   nowPlayingRegression();
   touchRegression();
+  miniPlayerRegression();
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;

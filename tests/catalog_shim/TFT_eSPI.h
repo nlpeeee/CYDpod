@@ -21,13 +21,15 @@ class TFT_eSPI {
   static std::string escape(const char* p){std::string s;for(;*p;++p){if(*p=='&')s+="&amp;";else if(*p=='<')s+="&lt;";else if(*p=='>')s+="&gt;";else s+=*p;}return s;}
  public:
   std::vector<std::string> labels;
+  int fillCalls=0,rowFillCalls=0;size_t labelsAtReset=0;
+  void resetDrawCounts(){fillCalls=rowFillCalls=0;labelsAtReset=labels.size();}
   int width()const{return w;}int height()const{return h;}
   void invertDisplay(bool){}
   unsigned getRotation()const{return rotation;}
   void setRotation(unsigned r){rotation=r;w=(r&1)?320:240;h=(r&1)?240:320;}
   void save(const char* file){std::ofstream f(file);f<<"<svg xmlns='http://www.w3.org/2000/svg' width='"<<w<<"' height='"<<h<<"' viewBox='0 0 "<<w<<" "<<h<<"'>"<<svg.str()<<"</svg>";}
   void fillScreen(uint16_t c){svg.str("");svg.clear();labels.clear();viewport=false;fillRect(0,0,w,h,c);}
-  void fillRect(int x,int y,int width,int height,uint16_t c){if(width>0&&height>0)svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width<<"' height='"<<height<<"' fill='"<<color(c)<<"'/>";}
+  void fillRect(int x,int y,int width,int height,uint16_t c){++fillCalls;if(y>=36&&height==40)++rowFillCalls;if(width>0&&height>0)svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width<<"' height='"<<height<<"' fill='"<<color(c)<<"'/>";}
   void drawRect(int x,int y,int width,int height,uint16_t c){fillRect(x,y,width,1,c);fillRect(x,y+height-1,width,1,c);fillRect(x,y,1,height,c);fillRect(x+width-1,y,1,height,c);}
   void fillRoundRect(int x,int y,int width,int height,int radius,uint16_t c){svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width<<"' height='"<<height<<"' rx='"<<radius<<"' fill='"<<color(c)<<"'/>";}
   void drawRoundRect(int x,int y,int width,int height,int radius,uint16_t c){svg<<"<rect x='"<<x<<"' y='"<<y<<"' width='"<<width-1<<"' height='"<<height-1<<"' rx='"<<radius<<"' fill='none' stroke='"<<color(c)<<"'/>";}

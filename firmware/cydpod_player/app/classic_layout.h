@@ -9,13 +9,22 @@ constexpr inline int rows(int h){return (h-HeaderH-FooterH)/RowH<MaxRows?(h-Head
 constexpr inline int footerY(int h){return h-FooterH;}
 // Browse pages: row width reserves 8 px; the painted strip is only 7 px wide.
 constexpr int RowTitleY=12,RowDetailY=30,RowTextInset=34,RowIconInset=12,RowIconSize=12;
-constexpr int RowInset=8,StripW=7,ThumbMin=12,ThumbInset=2,ThumbW=3;
+constexpr int RowInset=30,StripW=30,ThumbMin=12,ThumbInset=25,ThumbW=3;
 template<class R> constexpr inline R row(int w,int i){return {0,HeaderH+i*RowH,w-RowInset,RowH};}
 template<class R> constexpr inline R strip(int w,int h){return {w-StripW,HeaderH,StripW,rows(h)*RowH};}
 // Browse footer: Home, Up, Down, Playing; Player/Keyboard use 80 px cells.
 constexpr int HomeW=64,PageW=48,ActionW=80,PlayingX=160,FooterIconSize=14;
 template<class R> constexpr inline R footer(int w,int h,int cell){return {cell==0?0:cell==1?HomeW:cell==2?HomeW+PageW:PlayingX,footerY(h),cell==0?HomeW:cell<3?PageW:w-PlayingX,FooterH};}
 template<class R> constexpr inline R action(int w,int h,int cell,bool fixed=false){return {cell*ActionW,footerY(h),cell<2||fixed?ActionW:w-PlayingX,FooterH};}
+// CY-79a stages the mini-player above the old footer; CY-79b retires that footer.
+constexpr bool MiniAboveFooter=true;
+constexpr int MiniButtonW=52,MiniProgressH=2,MiniTitleY=13,MiniArtistY=31,MiniTitleH=13,MiniArtistH=10;
+constexpr int MiniTextInset=8,MiniIconSize=18,MiniPressMs=80,DeepHomeW=40;
+constexpr inline int miniY(int h){return footerY(h)-(MiniAboveFooter?FooterH:0);}
+template<class R> constexpr inline R mini(int w,int h,int cell){return {cell==0?0:cell==1?MiniButtonW:w-MiniButtonW,miniY(h),cell==1?w-2*MiniButtonW:MiniButtonW,FooterH};}
+template<class R> constexpr inline R miniProgress(int w,int h){return {0,miniY(h),w,MiniProgressH};}
+template<class R> constexpr inline R deepHome(){return {BackW,0,DeepHomeW,HeaderH};}
+template<class R> constexpr inline R pageStrip(int w,int h,bool down){return {w-StripW,HeaderH+(down?rows(h)*RowH/2:0),StripW,rows(h)*RowH/2};}
 // Proposal A: Player-only chrome and controls remain independent of browse rows.
 constexpr int PlayerHeaderH=36,PlayerHeaderY=18,PlayerHeaderHitH=40;
 constexpr int PlayerBackW=100,PlayerCountX=150,PlayerPortraitCountX=125,PlayerCountW=96,PlayerPortraitCountW=48,PlayerCountH=11,PlayerPortraitCountH=8,PlayerBackX=16,PlayerParentX=28;

@@ -14,7 +14,7 @@ using Bytes=std::vector<uint8_t>;
 Settings g_settings;
 static const uint16_t* liveQueue=nullptr;
 static int liveLength=0,currentTrack=0,audioCalls=0;
-void settings_save(){}
+bool settings_save(){return true;}
 bool audio_ready(){return true;}
 void audio_setQueue(const uint16_t* tracks,int n,int,bool){liveQueue=tracks;liveLength=n;++audioCalls;}
 void audio_playTrack(int i){currentTrack=i;++audioCalls;}

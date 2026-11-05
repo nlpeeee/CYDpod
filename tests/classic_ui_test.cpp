@@ -37,7 +37,7 @@ static int tx=0,ty=0;
 static int nextCalls=0,prevCalls=0,toggleCalls=0,shuffleCalls=0,recalCount=0;
 static cydtouch::PressTracker tracker;static bool useTracker=false;
 static int settingsSaves=0,volumeCalls=0;
-void settings_save(){++settingsSaves;}
+bool settings_save(){++settingsSaves;return true;}
 bool audio_ready(){return true;}
 uint32_t audio_error(char*,size_t,int*){return 0;}
 void audio_setQueue(const uint16_t* p,int n,int,bool){queueData=p;queueLength=n;++calls;}
@@ -91,6 +91,9 @@ static uint8_t liveRoute=OUT_BT;
 static bool savedParked=false;
 bool settings_saveOutputResume(uint8_t){++restartSaves;savedParked=liveRoute==OUT_NONE&&!playing;return saveAllowed;}
 bool speaker_setRoute(uint8_t r){if(!routeAllowed)return false;liveRoute=r;return true;}
+uint8_t speaker_route(){return liveRoute;}
+bool speaker_parkForRestart(){if(!routeAllowed)return false;liveRoute=OUT_NONE;return true;}
+void speaker_restoreAfterRestartPark(uint8_t r){liveRoute=r;}
 #if CYD_WIRED_OUTPUT
 bool wired_active(){return true;}
 #endif

@@ -1123,7 +1123,7 @@ static void viewportRegression(){
     classic_paintViewport(100000);check(classic_offset()==(10-capacity)*L::RowH,"offset clamps to last full viewport");
     classic_paintViewport(-10);check(classic_offset()==0,"offset clamps at zero");
     const Rect down=L::pageStrip<Rect>(w,h,true);tap(down.cx(),down.cy());
-    check(classic_offset()==(capacity-1)*L::RowH,"existing row step maps to pixel multiple");
+    check(classic_offset()==std::min(10-capacity,capacity-1)*L::RowH,"existing row step maps to pixel multiple");
   }
   std::cout<<"PASS CY-98a viewport: offsets/clamp, partial-edge clipping, cache-only placeholders/recovery, mini return, invalidation, row steps; 4/6 rows\n";
 }

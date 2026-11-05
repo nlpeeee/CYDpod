@@ -151,9 +151,12 @@ static void pressRun(uint32_t dur,uint32_t period,uint32_t phase,const Path& pat
 }
 static Path at(int x,int y){return [=](uint32_t,int& px,int& py){px=x;py=y;};}
 static void home(){classic_home();ui_go(SCR_CLASSIC);pump();}
-static void toPlayer(){home();tap(80,110);}
-static void toPlayback(){home();tap(80,176);tap(80,154);}
-static void toMusic(){home();tap(80,66);}
+// CY-80: Home is six tiles and the mini-player; tests reach pages through the real hit targets.
+static void tapTile(int i){const Rect r=cydclassic::layout::tile<Rect>(tft.width(),tft.height(),i);tap(r.cx(),r.cy());}
+static void tapMini(){const Rect r=cydclassic::layout::mini<Rect>(tft.width(),tft.height(),1);tap(r.cx(),r.cy());}
+static void toPlayer(){home();tapMini();}
+static void toPlayback(){home();tapTile(5);tap(80,154);}
+static void toSongs(){home();tapTile(0);}
 unsigned classic_depth();int classic_top();
 static void touchRegression(){
   const uint32_t durations[]={1,20,50,100,300,650,4000,4500},periods[]={10,80,150};
@@ -219,22 +222,22 @@ static void touchRegression(){
   pressRun(400,10,0,[](uint32_t t,int& x,int& y){x=80;y=(t>=100&&t<250)?115:72;});
   check(shuffleCalls==before,"a deliberate far exit cancels for good, even after returning");
   // Header Back retains its captured target when released just outside its right edge.
-  home();tap(80,176);   // Settings Back returns Home on release.
+  home();tapTile(5);   // Settings Back returns Home on release.
   pressRun(200,10,0,[](uint32_t t,int& x,int& y){x=t<60?99:106;y=18;});
-  check(label("Music")&&label("Search Songs"),"Back released 7 px beyond its edge still goes Home");
+  check(classic_depth()==1&&label("Playlists")&&label("Search"),"Back released 7 px beyond its edge still goes Home");
   std::cout<<"PASS CY-62 tolerant release: 1-8 px excursions return or end near, 14 px outside cancels and re-arms, 40 px exits for good, neighbour not retargeted\n";
 
   // Lists: row tap with horizontal jitter, sideways and vertical claims, true scrolling.
-  toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-10:10);y=66;});
-  check(classic_depth()==3&&label("Fixture Artist"),"horizontal jitter in a scrolling list does not suppress the row tap");
+  toSongs();int songCalls=calls;pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-10:10);y=66;});
+  check(classic_depth()==3&&calls>songCalls,"horizontal jitter in a scrolling list does not suppress the row tap");
   const uint32_t claimBefore=cydtouch::stats().claim;
-  toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-24:24);y=66;});
-  check(classic_depth()==2&&cydtouch::stats().claim==claimBefore+1,"a large sideways swing claims the press and is counted");
-  toMusic();pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+(t>=50?3:0);y=t>=50?52:66;});
-  check(classic_depth()==2,"a mostly vertical 14 px move claims the press");
-  toMusic();check(!label("Search Songs"),"Music page starts at the top");
+  toSongs();songCalls=calls;pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+((t/10)%2?-24:24);y=66;});
+  check(classic_depth()==2&&calls==songCalls&&cydtouch::stats().claim==claimBefore+1,"a large sideways swing claims the press and is counted");
+  toSongs();songCalls=calls;pressRun(150,10,0,[](uint32_t t,int& x,int& y){x=80+(t>=50?3:0);y=t>=50?52:66;});
+  check(classic_depth()==2&&calls==songCalls,"a mostly vertical 14 px move claims the press");
+  toSongs();check(classic_top()==0,"Songs page starts at the top");
   pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=int(150-std::min<uint32_t>(t,200)*120/200);});
-  check(label("Favourites")&&classic_depth()==2,"a true vertical drag scrolls the list instead of activating a row");
+  check(classic_top()==3&&classic_depth()==2,"a true vertical drag scrolls the list instead of activating a row");
   std::cout<<"PASS CY-62 lists: jitter under 16 px keeps the row tap, sideways/vertical drags claim, vertical drag scrolls\n";
 
   // Wake: the whole touch is swallowed, the next one works.
@@ -289,7 +292,7 @@ static void nowPlayingRegression(){
     tap(20,20);const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
     ui_redraw();pump();snapshot(rotation==0?"cy61-player-portrait.svg":rotation==1?"cy61-player-landscape.svg":"cy61-player-landscape3.svg");
   }
-  tft.setRotation(0);home();tap(80,176);tap(120,300); // Settings -> mini-player text
+  tft.setRotation(0);home();tapTile(5);tap(120,300); // Settings -> mini-player text
   ui_redraw();pump();check(label("Settings"),"Player Back label names a Settings parent, not Home");
   tap(20,18);check(label("Audio Output"),"Back returns to the named Settings parent");home();
   std::cout<<"CY61_NOWPLAYING_OK: rotations 0/1/3, SVG geometry, slider/seek edges and monotonic drag, live shared volume, one deferred save, down-only transport, favourite, shuffle, repeat, Output and Options\n";
@@ -298,7 +301,7 @@ unsigned classic_depth();int classic_top();
 static void miniPlayerRegression(){
   namespace L=cydclassic::layout;
   for(unsigned rotation:{0u,1u,2u,3u}){
-    tft.setRotation(rotation);toMusic();tap(80,L::row<Rect>(tft.width(),2).cy());
+    tft.setRotation(rotation);toSongs();
     const int w=tft.width(),h=tft.height(),capacity=L::rows(h);
     const Rect play=L::mini<Rect>(w,h,0),next=L::mini<Rect>(w,h,2),title=L::mini<Rect>(w,h,1);
     check(play.w==52&&play.h==44&&next.x==w-52&&title.w==w-104,"mini-player rectangles match proposal D");
@@ -325,7 +328,7 @@ static void miniPlayerRegression(){
     tft.resetDrawCounts();SCREEN_CLASSIC.tick(clockNow+=999);check(tft.fillCalls==0,"progress never draws faster than 1 Hz");
     SCREEN_CLASSIC.tick(++clockNow);check(tft.fillCalls==2,"next progress line draws at one second");positionMs=84000;
     // Home remains available beside Back on deep catalogue pages; release slop cannot retarget Back.
-    home();tap(80,56);tap(80,56);tap(80,56);check(classic_depth()==4,"artist albums reaches depth four");
+    home();tapTile(1);tap(80,56);tap(80,56);check(classic_depth()==4,"artist songs reaches depth four");
     const Rect homeHit=L::deepHome<Rect>();check(classic_target(homeHit.x,homeHit.y)==-11&&classic_target(homeHit.x+homeHit.w-1,homeHit.h-1)==-11,"deep Home outer edges");
     SCREEN_CLASSIC.press(PRESS_DOWN,homeHit.x,homeHit.cy());check(classic_depth()==4,"Home waits for release");
     SCREEN_CLASSIC.press(PRESS_UP,homeHit.x-7,homeHit.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,homeHit.x-7,homeHit.cy());pump();check(classic_depth()==1,"deep Home uses captured-target tolerant release");
@@ -336,6 +339,125 @@ static void miniPlayerRegression(){
     if(!queueLength)queueLength=savedLength;
   }
   tft.setRotation(0);home();std::cout<<"CY79_MINI_PLAYER_OK: down-only transport, pressed feedback, stack-free Playing return, paging clamps, empty queue, line-only 1 Hz progress, all rotations\n";
+}
+// CY-80: Home tiles, flatter navigation and swipe-back, driven through the real press hooks.
+static bool dragRun(int x0,int y0,std::initializer_list<std::pair<int,int>> moves){
+  bool claimed=SCREEN_CLASSIC.press(PRESS_DOWN,x0,y0);int ex=x0,ey=y0;
+  for(const auto& m:moves){claimed|=SCREEN_CLASSIC.press(PRESS_MOVE,m.first,m.second);ex=m.first;ey=m.second;}
+  SCREEN_CLASSIC.press(PRESS_UP,ex,ey);
+  if(!claimed)SCREEN_CLASSIC.touch(TOUCH_TAP,x0,y0); // the UI drops the classifier event of a claimed press
+  pump();return claimed;
+}
+static void homeTilesRegression(){
+  namespace L=cydclassic::layout;
+  const char* names[]={"Songs","Artists","Albums","Playlists","Search","Settings"};
+  const int depthAfter[]={2,2,2,2,3,2};
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);home();
+    const int w=tft.width(),h=tft.height(),cols=L::tileCols(h);
+    check((w==320)==(cols==3)&&L::TileCount==6,"3 x 2 tiles on landscape, 2 x 3 on portrait");
+    Rect t[6];for(int i=0;i<6;++i)t[i]=L::tile<Rect>(w,h,i);
+    if(w==320){const int ex[6][4]={{8,44,100,72},{112,44,100,72},{216,44,100,72},{8,120,100,72},{112,120,100,72},{216,120,100,72}};
+      for(int i=0;i<6;++i)check(t[i].x==ex[i][0]&&t[i].y==ex[i][1]&&t[i].w==ex[i][2]&&t[i].h==ex[i][3],"landscape tiles match proposal C");}
+    else{const int ex[6][4]={{8,44,112,73},{124,44,112,73},{8,121,112,73},{124,121,112,73},{8,198,112,73},{124,198,112,73}};
+      for(int i=0;i<6;++i)check(t[i].x==ex[i][0]&&t[i].y==ex[i][1]&&t[i].w==ex[i][2]&&t[i].h==ex[i][3],"portrait tiles are 2 x 3");}
+    const int miniTop=L::miniY(h);
+    for(int i=0;i<6;++i){
+      check(t[i].w>=80&&t[i].h>=64,"each tile is at least 80 x 64");
+      check(t[i].x>=0&&t[i].x+t[i].w<=w&&t[i].y>=L::HeaderH&&t[i].y+t[i].h<=miniTop,"tile lies between header and mini-player");
+      for(int j=i+1;j<6;++j)check(t[i].x+t[i].w+L::TileGap<=t[j].x||t[j].x+t[j].w+L::TileGap<=t[i].x||t[i].y+t[i].h+L::TileGap<=t[j].y||t[j].y+t[j].h+L::TileGap<=t[i].y,"tiles keep their gap");
+      const int id=-50-i;
+      check(classic_target(t[i].cx(),t[i].cy())==id,"tile centre");
+      check(classic_target(t[i].x,t[i].y)==id&&classic_target(t[i].x+t[i].w-1,t[i].y)==id&&classic_target(t[i].x,t[i].y+t[i].h-1)==id&&classic_target(t[i].x+t[i].w-1,t[i].y+t[i].h-1)==id,"tile outer corners");
+      check(classic_target(t[i].x-1,t[i].cy())!=id&&classic_target(t[i].x+t[i].w,t[i].cy())!=id&&classic_target(t[i].cx(),t[i].y-1)!=id&&classic_target(t[i].cx(),t[i].y+t[i].h)!=id,"one pixel outside a tile is not that tile");
+    }
+    for(int i=0;i<6;++i)for(int j=0;j<6;++j)if(i!=j){
+      const bool across=t[i].y==t[j].y&&t[j].x==t[i].x+t[i].w+L::TileGap,below=t[i].x==t[j].x&&t[j].y==t[i].y+t[i].h+L::TileGap;
+      if(across)for(int g=0;g<L::TileGap;++g)check(classic_target(t[i].x+t[i].w+g,t[i].cy())==-1,"gap between columns is ignored");
+      if(below)for(int g=0;g<L::TileGap;++g)check(classic_target(t[i].cx(),t[i].y+t[i].h+g)==-1,"gap between rows is ignored");
+    }
+    check(classic_target(w-1,t[cols-1].cy())==-1||classic_target(w-1,t[cols-1].cy())==-50-(cols-1),"Home has no paging strip over its right tiles");
+    check(classic_target(t[cols-1].cx(),t[cols-1].cy())==-50-(cols-1),"the right tile column is not swallowed by the list strip");
+    const Rect play=L::mini<Rect>(w,h,0);check(classic_target(play.cx(),play.cy())==-21||classic_target(play.cx(),play.cy())==-30,"mini-player stays below the tiles");
+
+    // Navigation depth after each tile and after Back; Music is gone.
+    for(int i=0;i<6;++i){
+      home();check(classic_depth()==1,"Home is the root");tapTile(i);
+      check(classic_depth()==depthAfter[i],"tile goes straight to its page");
+      if(i!=4)check(label(names[i]),"destination header names the tile");
+      check(!label("Music"),"the intermediate Music page is not shown");
+      for(int back=0;classic_depth()>1&&back<4;++back)tap(20,20);
+      check(classic_depth()==1&&label("Playlists")&&label("Settings"),"Back from each tile reaches Home");
+    }
+    home();tapTile(3);check(label("Favourites")&&label("Folders"),"Playlists lists Favourites and Folders");
+    const Rect row1=L::row<Rect>(w,1),row0=L::row<Rect>(w,0);
+    tap(row1.cx(),row1.cy());check(classic_depth()==3&&label("Folders"),"Playlists > Folders");tap(20,20);check(classic_depth()==2,"Back to Playlists");
+    if(!playlist_isFavourite(0))playlist_toggleFavourite(0);
+    tap(row0.cx(),row0.cy());check(classic_depth()==3&&label("Favourites"),"Playlists > Favourites");tap(20,20);tap(20,20);check(classic_depth()==1,"Back to Home");
+    // The old Library/Sources entry points land on Home instead of a Music list.
+    ui_go(SCR_LIBRARY);pump();check(classic_depth()==1&&label("Playlists")&&!label("Music"),"legacy Library route reaches Home");
+    ui_go(SCR_SOURCES);pump();check(classic_depth()==1&&!label("Music"),"legacy Sources route reaches Home");
+
+    // Pressed feedback on touch-down; the action waits for a tolerant release.
+    home();const Rect a=t[0];const int paints=tft.colorCount(theme().pressed);
+    SCREEN_CLASSIC.press(PRESS_DOWN,a.cx(),a.cy());
+    check(tft.colorCount(theme().pressed)>paints&&classic_depth()==1,"tile shows pressed ink on touch-down and does not act yet");
+    SCREEN_CLASSIC.press(PRESS_UP,a.x+a.w-1+7,a.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,a.cx(),a.cy());pump();
+    check(classic_depth()==2,"tile acts on release 7 px beyond its edge");
+    home();SCREEN_CLASSIC.press(PRESS_DOWN,a.cx(),a.cy());SCREEN_CLASSIC.press(PRESS_UP,a.cx(),a.y+a.h-1+14);SCREEN_CLASSIC.touch(TOUCH_TAP,a.cx(),a.cy());pump();
+    check(classic_depth()==1,"release 14 px outside cancels the tile");
+    home();SCREEN_CLASSIC.press(PRESS_DOWN,a.cx(),a.cy());SCREEN_CLASSIC.press(PRESS_MOVE,a.x+a.w+30,a.cy());SCREEN_CLASSIC.press(PRESS_MOVE,a.cx(),a.cy());SCREEN_CLASSIC.press(PRESS_UP,a.cx(),a.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,a.cx(),a.cy());pump();
+    check(classic_depth()==1,"a far excursion cancels the tile for good");
+    home();const Rect b=t[1];SCREEN_CLASSIC.press(PRESS_DOWN,a.x+a.w+1,a.cy());SCREEN_CLASSIC.press(PRESS_UP,b.cx(),b.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,a.x+a.w+1,a.cy());pump();
+    check(classic_depth()==1,"a press that lands in a gap never reaches a tile");
+    home();SCREEN_CLASSIC.press(PRESS_DOWN,a.x+a.w-1,a.cy());SCREEN_CLASSIC.press(PRESS_UP,b.x,a.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,a.x+a.w-1,a.cy());pump();
+    check(classic_depth()==2&&label("Songs"),"slop never retargets the neighbouring tile");
+    // Jittered finger inside the tile still activates exactly once (CY-62 harness).
+    home();int before=calls;
+    pressRun(200,10,0,[=](uint32_t tm,int& x,int& y){x=t[2].cx()+((tm/10)%2?-6:6);y=t[2].cy()+int((tm/10)%3)*3-3;});
+    check(classic_depth()==2&&label("Albums"),"jittered tile tap opens Albums once");
+
+    // Swipe-back: at least 40 px right, horizontal lead, from a list body. Exact boundary through the press hook.
+    toSongs();const Rect r0=L::row<Rect>(w,0);const int sy=r0.cy(),sx=60;before=calls;
+    dragRun(sx,sy,{{sx+20,sy},{sx+39,sy}});
+    check(classic_depth()==2&&calls==before,"39 px drag neither goes Back nor plays the row");
+    check(dragRun(sx,sy,{{sx+20,sy},{sx+40,sy}})&&classic_depth()==1&&calls==before,"40 px swipe right is Back and swallows the row tap");
+    toSongs();check(dragRun(sx,sy,{{sx+100,sy+30}})&&classic_depth()==1&&calls==before,"horizontal-dominant diagonal 100 x 30 is Back");
+    toSongs();dragRun(sx,sy,{{sx+60,sy+60}});check(classic_depth()==2&&calls==before,"45 degree drag is not a swipe");
+    toSongs();dragRun(sx,sy,{{sx-60,sy}});check(classic_depth()==2&&calls==before,"leftward swipe is not Back");
+    toSongs();dragRun(sx,sy,{{sx+8,sy-12},{sx+60,sy-12}});check(classic_depth()==2&&classic_top()==0,"a vertical lead latches list ownership: no swipe afterwards");
+    toSongs();dragRun(sx,sy+30,{{sx+10,sy-30}});check(classic_depth()==2&&classic_top()==1,"vertical drag scrolls the list");
+    toSongs();dragRun(sx,sy,{{sx+30,sy+9},{sx+70,sy-9}});check(classic_depth()==1,"9 px of vertical jitter does not block a swipe");
+    // Jittered harness inputs through the classifier: Back, scroll and tap each win in their own case.
+    for(uint32_t period:{10u,80u}){
+      toSongs();before=calls;
+      pressRun(300,period,0,[=](uint32_t tm,int& x,int& y){x=sx+int(std::min<uint32_t>(tm,200)*90/200);y=sy+((tm/10)%2?5:-5);});
+      check(classic_depth()==1&&calls==before,"swipe with 90 px travel and 5 px jitter goes Back once without playing");
+      toSongs();before=calls;
+      pressRun(300,period,0,[=](uint32_t tm,int& x,int& y){x=sx+((tm/10)%2?6:-6);y=int(sy+60-std::min<uint32_t>(tm,200)*100/200);});
+      check(classic_depth()==2&&classic_top()>0&&calls==before,"vertical scroll with sideways jitter stays on the list");
+      toSongs();before=calls;
+      pressRun(150,period,0,[=](uint32_t tm,int& x,int& y){x=sx+((tm/10)%2?-6:6);y=sy+((tm/10)%3?2:-2);});
+      check(classic_depth()==3&&calls>before,"small jitter is still a row tap");
+    }
+    // Pages that do not scroll still take the swipe, and the row under the finger does not fire.
+    toPlayback();const int shuffles=shuffleCalls;dragRun(sx,sy,{{sx+30,sy},{sx+80,sy}});
+    check(classic_depth()==2&&shuffleCalls==shuffles,"Playback swipes back to Settings without cycling Shuffle");
+    // Not started in a list body: header, mini-player and the paging strip are exempt; the Back button remains.
+    toSongs();dragRun(sx,L::HeaderH-10,{{sx+80,L::HeaderH-10}});check(classic_depth()==2,"a header drag is not a swipe");
+    const Rect mt=L::mini<Rect>(w,h,1);dragRun(mt.x+10,mt.cy(),{{mt.x+80,mt.cy()}});check(classic_depth()==2&&label("Songs"),"a mini-player drag is neither a swipe nor Now Playing");
+    toSongs();tap(20,20);check(classic_depth()==1,"the Back button still works");
+    // Seek bar: dragging across it seeks and never goes Back.
+    toPlayer();const int depth=classic_depth();const Rect bar=L::seek<Rect>(w,h);int seeks=seekCalls;
+    dragRun(bar.x+10,bar.cy(),{{bar.x+60,bar.cy()},{bar.x+160,bar.cy()}});
+    check(classic_depth()==depth&&seekCalls==seeks+1,"a horizontal drag on the seek bar seeks and is not Back");
+    // A tile swipe has no parent to go to and must not open anything.
+    home();dragRun(a.cx(),a.cy(),{{a.cx()+40,a.cy()},{a.cx()+90,a.cy()}});check(classic_depth()==1,"swiping a tile on Home opens nothing");
+    ui_redraw();pump();home();
+    snapshot(rotation==0?"cy80-home-portrait.svg":rotation==1?"cy80-home-landscape.svg":rotation==2?"cy80-home-portrait2.svg":"cy80-home-landscape3.svg");
+  }
+  tft.setRotation(0);home();
+  std::cout<<"CY80_HOME_TILES_OK: six tiles 3x2 / 2x3 with hit-tests (centre, corners, edges, gaps), depth after each tile and Back, Music removed, Playlists holds Favourites/Folders, pressed ink on down + tolerant release, swipe-back vs list scroll vs tile tap vs seek, jittered harness inputs, all rotations\n";
 }
 // Linear Rec.709 luminance, normalized to 0..1 after RGB565 expansion.
 static double luminance(uint16_t c){
@@ -356,8 +478,8 @@ static void compactChromeRegression(){
     check(L::HeaderH==36&&L::RowH==40&&L::rows(h)==(w==320?4:6),"compact header, four landscape / six portrait rows");
     const int right=w-L::HeaderTitleRight;
     check(L::HeaderParentX+(L::BackW-L::HeaderParentX)<=L::BackW&&right<=w-L::RouteInset-L::RouteSize/2,"parent, title and route have disjoint bounds");
-    home();tap(80,L::row<Rect>(w,0).cy());tap(80,L::row<Rect>(w,2).cy());
-    check(label("Music")&&!label("< Back"),"nested Songs header Back names Music");
+    home();tapTile(0);
+    check(label("Home")&&!label("< Back")&&classic_depth()==2,"Songs header Back names Home");
     for(int row=0;row<L::rows(h);++row){const Rect r=L::row<Rect>(w,row);
       check(classic_target(r.x,r.y)==row&&classic_target(r.x+r.w-1,r.y+r.h-1)==row,"row outer edges follow the 40 px hit grid");
     }
@@ -366,10 +488,10 @@ static void compactChromeRegression(){
     // Parent labels are release actions with existing CY-62 slop, including the enlarged right edge.
     const int commands=calls;
     SCREEN_CLASSIC.press(PRESS_DOWN,L::BackW-1,L::HeaderTextY);
-    check(label("Music")&&calls==commands,"Back does not navigate or play on down");
+    check(label("Home")&&classic_depth()==2&&calls==commands,"Back does not navigate or play on down");
     SCREEN_CLASSIC.press(PRESS_UP,L::BackW+6,L::HeaderTextY);SCREEN_CLASSIC.touch(TOUCH_TAP,L::BackW+6,L::HeaderTextY);pump();
-    check(label("Artists")&&label("Albums"),"Back releases within 7 px slop to the named Music parent");
-    home();tap(80,L::row<Rect>(w,3).cy());tap(80,L::row<Rect>(w,2).cy());
+    check(classic_depth()==1&&label("Artists")&&label("Albums"),"Back releases within 7 px slop to the named Home parent");
+    home();tapTile(5);tap(80,L::row<Rect>(w,2).cy());
     check(label("Settings")&&label("Shuffle"),"Playback header names its Settings parent");
     tap(L::HeaderBackX,L::HeaderTextY);check(label("Audio Output"),"Back returns to Settings");
   }
@@ -417,9 +539,8 @@ int main(){try{
   const std::string tag="Actual tagged fixture";auto found=std::search(original.begin(),original.end(),tag.begin(),tag.end());check(found!=original.end(),"locate fixture title");const size_t pos=size_t(found-original.begin());
   for(int i=0;i<10;++i){auto bytes=original;char name[32];snprintf(name,sizeof(name),"Song %02d",i);memset(bytes.data()+pos,0,tag.size());memcpy(bytes.data()+pos,name,strlen(name));
     std::ofstream out(SD.root/(std::string("music/Example/")+name+".m4a"),std::ios::binary);out.write(bytes.data(),bytes.size());}
-  check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Music"),"home menu");snapshot("ui-home.svg");
-  tap(80,66);check(label("Artists")&&label("Albums")&&label("Songs"),"music routes");snapshot("ui-music.svg");
-  tap(80,66);check(label("Fixture Artist"),"artist view");snapshot("ui-artists.svg");
+  check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
+  tapTile(1);check(label("Fixture Artist")&&classic_depth()==2,"artist view straight from the tile");snapshot("ui-artists.svg");
   tap(80,66);check(label("All Songs")&&label("Fixture Album"),"artist album view");snapshot("ui-albums.svg");
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");
   int before=calls;tx=80;ty=160;down=true;ui_tick(clockNow+=130);ty=60;ui_tick(clockNow+=5000);
@@ -446,7 +567,7 @@ int main(){try{
   tap(20,20);check(classic_top()==2&&label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");
-  home();tap(80,176);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
+  home();tapTile(5);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
   tap(225,220);tap(80,216);check(ui_current()==SCR_SETUP,"advanced settings bridge");ui_go(SCR_PLAYER);pump();check(label("Refresh Library"),"legacy Back returns to scrolled settings parent");tap(225,100);
   // CT-05: an unclaimed 0.6 to 4 s press activates the row like a tap.
   tx=80;ty=60;down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=900);down=false;ui_touch(TOUCH_LONG_PRESS,80,66);pump();
@@ -495,7 +616,7 @@ int main(){try{
   g_settings.skin=0;
   ui_go(SCR_BLUETOOTH);pump();tap(120,126);
   check(g_settings.outRoute==OUT_BT&&hostRestarts==restartsBefore+2,"Use Bluetooth saves Bluetooth then restarts");
-  home();tap(80,176);tap(80,66);
+  home();tapTile(5);tap(80,66);
   ui_redraw();pump();check(countLabel("Selected")==1&&!label("BT")&&!label("BT..."),"back on Bluetooth: one Selected and no text badge");
 #else
   check(!label("Headphones"),"a board without the module offers Bluetooth only");
@@ -503,7 +624,7 @@ int main(){try{
   ui_redraw();pump();check(countLabel("Selected")==1,"one Selected entry");
 #endif
   // Folder preview must be dropped above the source page, then rebuilt at its old scroll position.
-  home();tap(80,66);tap(80,216);tap(80,66);
+  home();tapTile(3);tap(80,96);tap(80,66);
   tap(225,220);tap(80,66);check(playing,"folder preview starts playback");
   before=calls;hostFreeHeap=10000;tap(20,20);
   check(label("Unable to reload list. Check SD card or try again."),"Back rebuild is gated after preview release");
@@ -512,7 +633,7 @@ int main(){try{
   tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable");
   std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
   classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
-  const int stopsBefore=bgStops;tap(80,216);check(bgStops>stopsBefore,"F-12 background .anim handle is released when Search opens");check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
+  const int stopsBefore=bgStops;tapTile(4);check(bgStops>stopsBefore,"F-12 background .anim handle is released when Search opens");check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
   tap(20,216);tap(100,176);tap(60,176);tap(20,136); // song
   tap(40,300);tap(200,256);check(label("0")&&label("9"),"digit keyboard page");
   tap(24,96);tap(168,96);tap(216,96);tap(120,256); // 034, backspace -> 03
@@ -528,10 +649,10 @@ int main(){try{
   tap(80,66);tft.setRotation(1);ui_redraw();pump();
   tap(150,176);check(label("q")&&label("z"),"landscape alphabet second page");snapshot("ui-search-landscape.svg");
   tft.setRotation(0);ui_redraw();pump();
-  classic_home();ui_go(SCR_CLASSIC);pump();tap(80,176);tap(80,154);check(label("Screen timeout")&&label("Sleep timer"),"Playback exposes both sleep settings");g_settings.screenTimeout=2;ui_redraw();pump();snapshot("ui-playback-sleep.svg");g_settings.screenTimeout=0;
+  classic_home();ui_go(SCR_CLASSIC);pump();tapTile(5);tap(80,154);check(label("Screen timeout")&&label("Sleep timer"),"Playback exposes both sleep settings");g_settings.screenTimeout=2;ui_redraw();pump();snapshot("ui-playback-sleep.svg");g_settings.screenTimeout=0;
   tap(80,154);check(g_settings.screenTimeout==1,"screen timeout cycles and persists setting");
   tap(80,176);check(g_settings.sleepTimer==1,"sleep timer cycles setting");sleep_setTimer(0,clockNow);
-  classic_home();ui_go(SCR_CLASSIC);pump();tap(80,110);playing=true;
+  classic_home();ui_go(SCR_CLASSIC);pump();tapMini();playing=true;
   g_settings.screenTimeout=2;sleep_begin(clockNow);
   g_settings.sleepTimer=2;sleep_begin(clockNow);check(g_settings.sleepTimer==2&&!sleep_remainingMinutes(clockNow),"F-10 boot does not re-arm the persisted sleep timer");sleep_tick(clockNow+31*60000,false);check(playing,"F-10 no sleep at boot+31 min");g_settings.sleepTimer=0;
   ui_tick(clockNow+=29999);check(backlight==100&&playing,"screen awake before default dim deadline");
@@ -550,6 +671,7 @@ int main(){try{
   nowPlayingRegression();
   touchRegression();
   miniPlayerRegression();
+  homeTilesRegression();
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;

@@ -287,7 +287,12 @@ void paintRow(int i,bool pressed){
 // Cache-only seam for part 2: no row loading or catalogue reads here.
 void paintViewport(int32_t offsetPx){
   page().offsetPx=cydclassic::clampOffset(offsetPx,count,rows());
-  for(int i=0;i<visibleRows();++i)paintRow(i,highlight==i);
+  dirty=0;
+  for(int i=0;i<visibleRows();++i){
+    const int absolute=topRow()+i;const Row& r=cachedRow(absolute);
+    if(r.absolute!=absolute||!r.valid)dirty|=uint8_t(1u<<i);
+    paintRow(i,highlight==i);
+  }
 }
 void invalidate(){
   page().offsetPx=cydclassic::clampOffset(page().offsetPx,count,rows());dirty=uint8_t((1u<<visibleRows())-1);

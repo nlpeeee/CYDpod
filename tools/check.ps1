@@ -115,7 +115,7 @@ try {
         # CY-71: the same player forced onto the wired I2S route at every boot (board.h CYD_DEFAULT_OUT_ROUTE, 2 = OUT_WIRED),
         # for testing before the Settings row exists. The saved route in NVS is not overwritten.
         $jobs += @{ Name = 'cydpod-player-wired'; Sketch = $jobs[0].Sketch; Flags = ($jobs[0].Flags + ' -DCYD_DEFAULT_OUT_ROUTE=2'); Library = $jobs[0].Library
-            ImageName = 'codec-pool-v30-wired-jc2432w328c' }
+            ImageName = 'codec-pool-v31-wired-jc2432w328c' }
         # CY-70: standalone I2S test tone (no TFT, SD, touch or Bluetooth). The second image is the
         # 32-bit-slot fallback (BCK = 64 x fS) in case the PCM5100A PLL does not lock at 32 x fS.
         $jobs += @{ Name = 'i2s-tone'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-tone-jc2432w328c' }
@@ -125,7 +125,7 @@ try {
     $results = @()
     foreach ($job in $jobs) {
         $imageName = $job.Name
-        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v30-jc2432w328c' }
+        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v31-jc2432w328c' }
         if ($job.ImageName) { $imageName = $job.ImageName }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.
@@ -238,6 +238,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'I2S test-tone host checks failed.' }
         & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_wired_fade.sh')
         if ($LASTEXITCODE -ne 0) { throw 'Wired-route host checks failed.' }
+        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_bt_policy.sh')
+        if ($LASTEXITCODE -ne 0) { throw 'Bluetooth connect-policy host checks failed.' }
         & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_i2s_diag.sh')
         if ($LASTEXITCODE -ne 0) { throw 'I2S diagnostic host checks failed.' }
         & python tools/media_check.py

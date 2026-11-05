@@ -214,7 +214,7 @@ static void touch(TouchEvent ev, int x, int y) {
   if (ev != TOUCH_TAP && ev != TOUCH_LONG_PRESS) return;
   if (UI_BACK_RECT.contains(x, y)) {
     // Cancel even while the former link is still disconnecting.
-    if (bt_pairing() && !bt_cancelPairing()){ui_toast("Unable to cancel pairing");return;}
+    if ((bt_pairing() || bt_pairingPhase() == cyd::PairingSession::Failed) && !bt_cancelPairing()){ui_toast("Unable to cancel pairing");return;}
     classic_return();
     return;
   }

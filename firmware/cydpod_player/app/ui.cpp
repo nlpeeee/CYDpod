@@ -209,13 +209,29 @@ void ui_iconToggle(const Rect& r, Icon icon, bool on, uint16_t surface, bool pre
 }
 
 
-// Chrome faces: body 2 and the 8 px caption face. Song titles come from strips (titles.h).
-static uint8_t ui_font(TypeRole role) { return role == TYPE_CAPTION ? 1 : 2; }
+// Chrome face: font 2 (16 px, hand-drawn bitmaps) for body and caption alike. The 6x8 font 1 it
+// replaces for captions is 7 px tall and ragged beside it; captions are told apart by colour.
+// Song titles in other scripts come from strips (titles.h).
+static uint8_t ui_font(TypeRole) { return 2; }
 
 static bool isAscii(const String& s) {
   for (unsigned i = 0; i < s.length(); i++)
     if ((uint8_t)s[i] >= 0x80) return false;
   return true;
+}
+
+// Longest prefix of whole characters (never half of a UTF-8 sequence) that fits with "..." in maxW.
+// Empty when not even the ellipsis fits.
+String ui_ellipsize(const String& text, uint8_t font, int maxW) {
+  String head = text;
+  while (head.length()) {
+    if (tft.textWidth(head + "...", font) <= maxW) return head + "...";
+    unsigned n = head.length() - 1;
+    while (n && ((uint8_t)head[n] & 0xC0) == 0x80) n--; // step back to the lead byte
+    head = head.substring(0, n);
+    while (head.length() && head[head.length() - 1] == ' ') head = head.substring(0, head.length() - 1);
+  }
+  return tft.textWidth(String("..."), font) <= maxW ? String("...") : String();
 }
 
 int ui_text(const String& text, int x, int y, uint8_t datum, uint16_t fg, uint16_t bg, int maxW,
@@ -236,13 +252,14 @@ int ui_text(const String& text, int x, int y, uint8_t datum, uint16_t fg, uint16
   tft.setTextDatum(datum);
   const int fh = tft.fontHeight(f);
   if (maxW > 0 && tft.textWidth(text, f) > maxW) {
-    const int left = x - (hAlign == 1 ? maxW / 2 : hAlign == 2 ? maxW : 0);
+    // Whole glyphs plus "...": a clipped half glyph reads as a rendering fault.
+    const String shown = ui_ellipsize(text, f, maxW);
+    const int w = tft.textWidth(shown, f);
+    const int left = x - (hAlign == 1 ? w / 2 : hAlign == 2 ? w : 0);
     const int top = y - (vAlign == 1 ? fh / 2 : 0);
-    tft.setViewport(left, top, maxW, fh);
     tft.setTextDatum(TL_DATUM);
-    tft.drawString(text, 0, 0, f);
-    tft.resetViewport();
-    return maxW;
+    tft.drawString(shown, left, top, f);
+    return w;
   }
   tft.drawString(text, x, y, f);
   return tft.textWidth(text, f);

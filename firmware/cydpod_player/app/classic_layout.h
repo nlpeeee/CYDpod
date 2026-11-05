@@ -3,7 +3,7 @@
 namespace cydclassic { namespace layout {
 // All Classic pages: chrome, list rows, text margins and Back hit width.
 constexpr int HeaderH=36,FooterH=44,RowH=40,MaxRows=6,BackW=100,TextMargin=10;
-constexpr int HeaderTextY=18,HeaderTitleRight=40,HeaderBackX=16,HeaderParentX=28,HeaderIconSize=16;
+constexpr int HeaderTextY=18,HeaderTitleRight=36,HeaderTitleGap=8,HeaderBackX=16,HeaderParentX=28,HeaderIconSize=16;
 constexpr int RouteInset=20,RouteSize=24;
 constexpr inline int rows(int h){return (h-HeaderH-FooterH)/RowH<MaxRows?(h-HeaderH-FooterH)/RowH:MaxRows;}
 constexpr inline int footerY(int h){return h-FooterH;}
@@ -14,7 +14,7 @@ template<class R> constexpr inline R row(int w,int i){return {0,HeaderH+i*RowH,w
 template<class R> constexpr inline R strip(int w,int h){return {w-StripW,HeaderH,StripW,rows(h)*RowH};}
 constexpr int FooterIconSize=14;
 // Browse mini-player and paging strip; the Player bottom row remains independent.
-constexpr int MiniButtonW=52,MiniProgressH=2,MiniTitleY=13,MiniArtistY=31,MiniTitleH=13,MiniArtistH=10;
+constexpr int MiniButtonW=52,MiniProgressH=2,MiniTitleY=12,MiniArtistY=31;
 constexpr int MiniTextInset=8,MiniIconSize=18,MiniPressMs=80,DeepHomeW=40,HomeGlyphHalf=7,HomeRoofH=6,HomeWallH=7;
 constexpr inline int miniY(int h){return footerY(h);}
 template<class R> constexpr inline R mini(int w,int h,int cell){return {cell==0?0:cell==1?MiniButtonW:w-MiniButtonW,miniY(h),cell==1?w-2*MiniButtonW:MiniButtonW,FooterH};}
@@ -23,18 +23,22 @@ template<class R> constexpr inline R deepHome(){return {BackW,0,DeepHomeW,Header
 template<class R> constexpr inline R pageStrip(int w,int h,bool down){return {w-StripW,HeaderH+(down?rows(h)*RowH/2:0),StripW,rows(h)*RowH/2};}
 // Proposal A: Player-only chrome and controls remain independent of browse rows.
 constexpr int PlayerHeaderH=36,PlayerHeaderY=18,PlayerHeaderHitH=40;
-constexpr int PlayerBackW=100,PlayerCountX=150,PlayerPortraitCountX=125,PlayerCountW=96,PlayerPortraitCountW=48,PlayerCountH=11,PlayerPortraitCountH=8,PlayerBackX=16,PlayerParentX=28;
+constexpr int PlayerBackW=100,PlayerCountX=150,PlayerPortraitCountX=125,PlayerCountW=96,PlayerPortraitCountW=48,PlayerBackX=16,PlayerParentX=28;
 constexpr int PlayerFavouriteInset=90,PlayerOptionsInset=48,PlayerHeaderIcon=16;
-constexpr int PlayerTitleY=54,PlayerArtistY=78,PlayerAlbumY=96,PlayerTitleH=22,PlayerArtistH=14,PlayerAlbumH=12;
-constexpr int PlayerTextH=66,PlayerTextTop=40,PlayerTextInset=14;
-constexpr int PlayerTimeH=11,PlayerTimeBottom=102,PlayerTimeClearBottom=110,PlayerTimeClearH=16;
-constexpr int ProgressInset=14,ProgressBottom=122,ProgressH=8,KnobR=8,KnobBorder=2;
+// Text rows are the vertical centre of capitals (classic_text.h); 12 pt bold title, 9 pt artist and album.
+constexpr int PlayerTitleY=52,PlayerArtistY=76,PlayerAlbumY=97;
+constexpr int PlayerTextH=70,PlayerTextTop=40,PlayerTextInset=14;
+constexpr int PlayerTimeBottom=105,PlayerTimeClearBottom=112,PlayerTimeClearH=18;
+constexpr int ProgressInset=14,ProgressBottom=124,ProgressH=8,KnobR=8,KnobBorder=2;
 constexpr int SeekInset=6,SeekBottom=140,SeekH=40,TransportBottom=92,ControlH=52;
-constexpr int PlayerBottomH=40,PlayerChipW=76,PlayerChipInset=6,PlayerChipH=30,PlayerChipRadius=6;
-constexpr int PlayerOutputHitW=88,PlayerVolumeX=44,PlayerVolumeReserve=170,PlayerVolumeBottom=24;
-constexpr int PlayerSpeakerX=20,PlayerSpeakerSize=16,PlayerNumberGap=12,PlayerNumberW=28;
-constexpr int PlayerDotsGap=6,PlayerDotR=2,PlayerChipTextInset=30,PlayerChipIconInset=16,PlayerChipTextH=10;
-constexpr int FontSourceH=16,FontFirst=32,FontLast=126,FontByteBits=8;
+// Output chip: 9 pt text needs 108 px (84 portrait) to show a Bluetooth peer name; the volume track takes the rest.
+constexpr int PlayerBottomH=40,PlayerChipWideW=108,PlayerChipNarrowW=84,PlayerChipInset=6,PlayerChipGap=4,PlayerChipH=30,PlayerChipRadius=6;
+constexpr int PlayerVolumeX=44,PlayerVolumeBottom=24;
+constexpr int WideMinW=300; // the 320 px landscapes
+constexpr inline int chipW(int w){return w>=WideMinW?PlayerChipWideW:PlayerChipNarrowW;}
+constexpr inline int outputHitW(int w){return chipW(w)+2*PlayerChipInset;}
+constexpr int PlayerSpeakerX=20,PlayerSpeakerSize=16,PlayerNumberGap=10,PlayerNumberW=30,PlayerNumberClearH=20;
+constexpr int PlayerDotsGap=6,PlayerDotR=2,PlayerChipTextInset=28,PlayerChipIconInset=14,PlayerChipPlainTextInset=8;
 constexpr inline int playerTextOffset(int h){return (h-240)/2;}
 template<class R> constexpr inline R playerBack(){return {0,0,PlayerBackW,PlayerHeaderHitH};}
 template<class R> constexpr inline R favourite(int w){return {w-PlayerFavouriteInset,0,40,PlayerHeaderHitH};}
@@ -47,10 +51,10 @@ template<class R> constexpr inline R transport(int w,int h,int cell){
 template<class R> constexpr inline R playerToggle(int w,int h,bool repeat){return {repeat?w-36:0,h-TransportBottom,w>=300?(repeat?36:52):36,48};}
 template<class R> constexpr inline R seek(int w,int h){return {SeekInset,h-SeekBottom,w-2*SeekInset,SeekH};}
 template<class R> constexpr inline R progress(int w,int h){return {ProgressInset,h-ProgressBottom,w-2*ProgressInset,ProgressH};}
-template<class R> constexpr inline R playerVolume(int w,int h){return {0,h-PlayerBottomH,w-PlayerOutputHitW,PlayerBottomH};}
-template<class R> constexpr inline R playerVolumeTrack(int w,int h){return {PlayerVolumeX,h-PlayerVolumeBottom,w-PlayerVolumeReserve,ProgressH};}
-template<class R> constexpr inline R output(int w,int h){return {w-PlayerOutputHitW,h-PlayerBottomH,PlayerOutputHitW,PlayerBottomH};}
-template<class R> constexpr inline R outputFace(int w,int h){return {w-PlayerChipInset-PlayerChipW,h-PlayerBottomH+(PlayerBottomH-PlayerChipH)/2,PlayerChipW,PlayerChipH};}
+template<class R> constexpr inline R playerVolume(int w,int h){return {0,h-PlayerBottomH,w-outputHitW(w),PlayerBottomH};}
+template<class R> constexpr inline R playerVolumeTrack(int w,int h){return {PlayerVolumeX,h-PlayerVolumeBottom,w-PlayerChipInset-chipW(w)-PlayerChipGap-PlayerNumberW-PlayerNumberGap-PlayerVolumeX,ProgressH};}
+template<class R> constexpr inline R output(int w,int h){return {w-outputHitW(w),h-PlayerBottomH,outputHitW(w),PlayerBottomH};}
+template<class R> constexpr inline R outputFace(int w,int h){return {w-PlayerChipInset-chipW(w),h-PlayerBottomH+(PlayerBottomH-PlayerChipH)/2,chipW(w),PlayerChipH};}
 // Shared endpoint math: paint and input use the same inclusive endpoints.
 constexpr inline int sliderValue(int x,int left,int width,int maximum){return x<=left?0:x>=left+width?maximum:int(int64_t(x-left)*maximum/width);}
 // Search: full-width ten-key rows in every orientation. Hit cells are half-open,

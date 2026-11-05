@@ -17,12 +17,8 @@
 #include "calibrate.h"
 #include "titles.h"
 #include "firmware.h"
+#include "classic_text.h"
 #include <esp_system.h>
-#ifndef CYDPOD_CATALOG_HOST
-// Reuse TFT_eSPI font 2 in flash; no font copy, bitmap cache or heap.
-extern const unsigned char widtbl_f16[96];
-extern const unsigned char* const chrtbl_f16[96];
-#endif
 
 namespace {
 namespace L=cydclassic::layout;
@@ -60,6 +56,7 @@ bool seekPreview=false,seekCancelled=false,volumeChanged=false;
 int playerPressed=-1,tilePressed=-1;
 #ifdef CYDPOD_CATALOG_HOST
 int volumeSaveArms=0;
+const cydlib::Record* hostTrackInfo=nullptr; // CY-85 previews: exact labels through the real screens
 #endif
 uint32_t seekMs=0,seekDuration=0,seekSerial=0;
 char notice[128]={};
@@ -125,35 +122,25 @@ const char* pageTitle(const Page& value){
   }
 }
 const char* title(){return pageTitle(page());}
-// Pixel-height text reuses the pinned TFT font bitmap at 22/14/12 px.
-// Non-ASCII retains the existing UTF-8 strip path, with its native strip height.
-int playerGlyphWidth(unsigned char c,int height){
-#ifdef CYDPOD_CATALOG_HOST
-  const char glyph[2]={char(c),0};return tft.textWidth(String(glyph),2)*height/L::FontSourceH;
-#else
-  return widtbl_f16[c-L::FontFirst]*height/L::FontSourceH;
-#endif
-}
-void playerText(const char* value,int x,int y,int height,int width,uint16_t fg,uint16_t bg,bool centre=true){
-  for(const unsigned char* c=(const unsigned char*)value;*c;++c)if(*c>L::FontLast){ui_text(String(value),x,y,centre?MC_DATUM:ML_DATUM,fg,bg,width);return;}
+// Player and mini-player labels: ASCII is drawn 1:1 from the sized faces in classic_text.h
+// (whole-glyph "..." when too wide). Non-ASCII keeps the existing UTF-8 strip path, with its
+// native strip height. `y` is the vertical centre of capitals for the sized faces.
+using cydtext::Face;
+void playerText(const char* value,int x,int y,Face face,int width,uint16_t fg,uint16_t bg,int align=cydtext::HAlignCentre){
+  if(!cydtext::ascii(value)){ui_text(String(value),x,y,uint8_t(3+align),fg,bg,width);return;}
   titles_release(); // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip.
-  char label[128];cydlib::copyText(label,value);int used=0,n=0;
-  for(;label[n];++n){if((unsigned char)label[n]<L::FontFirst)label[n]=' ';used+=playerGlyphWidth(label[n],height);}
-  if(used>width){const int dots=3*playerGlyphWidth('.',height);while(n&&used+dots>width)used-=playerGlyphWidth(label[--n],height);memcpy(label+n,"...",4);used+=dots;}
-  int left=centre?x-used/2:x;
-#ifdef CYDPOD_CATALOG_HOST
-  tft.classicText(label,left,y,height,fg,bg);
-#else
-  tft.startWrite();
-  for(const unsigned char* c=(const unsigned char*)label;*c;++c){
-    const int sourceW=widtbl_f16[*c-L::FontFirst],destW=playerGlyphWidth(*c,height),stride=(sourceW+6)/L::FontByteBits;
-    const unsigned char* glyph=chrtbl_f16[*c-L::FontFirst];
-    for(int dy=0;dy<height;++dy){int run=-1;for(int dx=0;dx<=destW;++dx){const int sx=dx*L::FontSourceH/height;
-      const bool on=dx<destW&&sx<min(sourceW,stride*L::FontByteBits)&&((glyph[(dy*L::FontSourceH/height)*stride+sx/L::FontByteBits]>>(7-sx%L::FontByteBits))&1);
-      if(on&&run<0)run=dx;else if(!on&&run>=0){tft.drawFastHLine(left+run,y-height/2+dy,dx-run,fg);run=-1;}}
-    }left+=destW;
-  }tft.endWrite();
-#endif
+  char label[128],fitted[128];cydlib::copyText(label,value);
+  for(char* c=label;*c;++c)if((unsigned char)*c<32)*c=' ';
+  cydtext::fit(face,label,fitted,sizeof(fitted),width);
+  cydtext::draw(face,fitted,x,y,align,fg);
+}
+// "24 / 85", degrading to "24/85" and then "24" rather than ever cutting a number in half.
+void queuePosition(int pos,int length,int x,int y,int width,uint16_t fg,uint16_t bg){
+  char label[24];
+  snprintf(label,sizeof(label),"%d / %d",pos,length);
+  if(cydtext::width(Face::Label,label)>width)snprintf(label,sizeof(label),"%d/%d",pos,length);
+  if(cydtext::width(Face::Label,label)>width)snprintf(label,sizeof(label),"%d",pos);
+  playerText(label,x,y,Face::Label,width,fg,bg);
 }
 void playerHeader(){
   const Palette& p=theme();tft.fillRect(0,0,tft.width(),L::PlayerHeaderH,p.band);tft.drawFastHLine(0,L::PlayerHeaderH,tft.width(),p.outline);
@@ -163,8 +150,8 @@ void playerHeader(){
   const char* name=parent.mode==Mode::Home?"Home":pageTitle(parent);
   ui_text(String(name),L::PlayerParentX,L::PlayerHeaderY,ML_DATUM,p.text,p.band,L::PlayerBackW-L::PlayerParentX,TYPE_CAPTION);
   const int pos=audio_queuePos(audio_currentTrack());
-  const String position=String(pos<0?0:pos+1)+" / "+String(audio_queueLen());const bool portrait=tft.height()>=L::PortraitMinH;
-  playerText(position.c_str(),portrait?L::PlayerPortraitCountX:L::PlayerCountX,L::PlayerHeaderY,portrait?L::PlayerPortraitCountH:L::PlayerCountH,portrait?L::PlayerPortraitCountW:L::PlayerCountW,p.dim,p.band);
+  const bool portrait=tft.height()>=L::PortraitMinH;
+  queuePosition(pos<0?0:pos+1,audio_queueLen(),portrait?L::PlayerPortraitCountX:L::PlayerCountX,L::PlayerHeaderY,portrait?L::PlayerPortraitCountW:L::PlayerCountW,p.dim,p.band);
   Rect f=L::favourite<Rect>(tft.width());f.h=L::PlayerHeaderH;ui_iconToggle(f,ICON_STAR,storage_trackCount()&&playlist_isFavourite(audio_currentTrack()),p.band,playerPressed==Favourite);
   Rect o=L::options<Rect>(tft.width());if(playerPressed==Options)tft.fillRect(o.x,o.y,o.w,L::PlayerHeaderH,p.pressed);
   for(int i=-1;i<=1;++i)tft.fillCircle(o.cx()+i*L::PlayerDotsGap,L::PlayerHeaderY,L::PlayerDotR,p.text);
@@ -174,13 +161,16 @@ void header(){
   const Palette& p=theme();
   tft.fillRect(0,0,tft.width(),L::HeaderH,p.band);
   tft.drawFastHLine(0,L::HeaderH-1,tft.width(),p.outline);
+  int parentEnd=0;
   if(navigation.depth>1){
     const Page& parent=navigation.entries[navigation.depth-2];
     ui_icon(ICON_BACK,L::HeaderBackX,L::HeaderTextY,L::HeaderIconSize,p.text,p.band);
-    ui_text(String(parent.mode==Mode::Home?"Home":pageTitle(parent)),L::HeaderParentX,L::HeaderTextY,ML_DATUM,p.text,p.band,L::BackW-L::HeaderParentX,TYPE_CAPTION);
+    parentEnd=L::HeaderParentX+ui_text(String(parent.mode==Mode::Home?"Home":pageTitle(parent)),L::HeaderParentX,L::HeaderTextY,ML_DATUM,p.text,p.band,L::BackW-L::HeaderParentX,TYPE_CAPTION);
   }
   if(navigation.depth>=4&&browse()){const Rect h=L::deepHome<Rect>();tft.drawLine(h.cx()-L::HomeGlyphHalf,h.cy(),h.cx(),h.cy()-L::HomeRoofH,p.text);tft.drawLine(h.cx(),h.cy()-L::HomeRoofH,h.cx()+L::HomeGlyphHalf,h.cy(),p.text);tft.drawRect(h.cx()-L::HomeGlyphHalf,h.cy(),2*L::HomeGlyphHalf,L::HomeWallH,p.text);}
-  const int left=navigation.depth>=4&&browse()?L::BackW+L::DeepHomeW:navigation.depth>1?L::BackW:0,right=tft.width()-L::HeaderTitleRight;
+  int left=navigation.depth>=4&&browse()?L::BackW+L::DeepHomeW:navigation.depth>1?L::BackW:0;const int right=tft.width()-L::HeaderTitleRight;
+  // A short parent label leaves room: let a long ASCII title borrow it rather than lose glyphs (portrait).
+  if(navigation.depth>1&&left==L::BackW&&tft.textWidth(String(title()),2)>right-left)left=max(parentEnd+L::HeaderTitleGap,L::HeaderParentX);
   ui_text(String(title()),(left+right)/2,L::HeaderTextY,MC_DATUM,p.text,p.band,right-left);
   const bool wired=g_settings.outRoute==OUT_WIRED;
   const bool connected=wired?wired_active():bt_connected();
@@ -204,8 +194,11 @@ void miniPlayer(){
   const Rect r=L::mini<Rect>(w,h,1);
   // Reuse the existing Player record: one bounded metadata read only on state/track changes.
   if(!storage_trackInfo(audio_currentTrack(),playingInfo)){cydlib::copyText(playingInfo.title,"Track unavailable");playingInfo.artist[0]=0;}
-  playerText(playingInfo.title,r.x+L::MiniTextInset,r.y+L::MiniTitleY,L::MiniTitleH,r.w-2*L::MiniTextInset,p.text,p.band,false);
-  playerText(playingInfo.artist,r.x+L::MiniTextInset,r.y+L::MiniArtistY,L::MiniArtistH,r.w-2*L::MiniTextInset,p.dim,p.band,false);
+#ifdef CYDPOD_CATALOG_HOST
+  if(hostTrackInfo)playingInfo=*hostTrackInfo;
+#endif
+  playerText(playingInfo.title,r.x+L::MiniTextInset,r.y+L::MiniTitleY,Face::Label,r.w-2*L::MiniTextInset,p.text,p.band,cydtext::HAlignLeft);
+  playerText(playingInfo.artist,r.x+L::MiniTextInset,r.y+L::MiniArtistY,Face::Label,r.w-2*L::MiniTextInset,p.dim,p.band,cydtext::HAlignLeft);
   miniProgress();
 }
 void keyboardActions();
@@ -397,8 +390,8 @@ void playerBar(const Rect& r,int value,int maximum){
 void playerVolume(){
   const int level=audio_volume();
   const Rect r=L::playerVolumeTrack<Rect>(tft.width(),tft.height());playerBar(r,level,100);
-  tft.fillRect(r.x+r.w+L::PlayerNumberGap,r.cy()-L::PlayerArtistH/2,L::PlayerNumberW,L::PlayerArtistH,theme().bg);
-  playerText(String(level).c_str(),r.x+r.w+L::PlayerNumberGap,r.cy(),L::PlayerAlbumH,L::PlayerNumberW,theme().dim,theme().bg,false);
+  tft.fillRect(r.x+r.w+L::PlayerNumberGap,r.cy()-L::PlayerNumberClearH/2,L::PlayerNumberW,L::PlayerNumberClearH,theme().bg);
+  playerText(String(level).c_str(),r.x+r.w+L::PlayerNumberGap,r.cy(),Face::Label,L::PlayerNumberW,theme().dim,theme().bg,cydtext::HAlignLeft);
   shownVolume=level;
 }
 void playerOutput(){
@@ -406,10 +399,12 @@ void playerOutput(){
   const uint16_t bg=playerPressed==Output?p.pressed:p.band;
   tft.fillRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,bg);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,p.outline);
   const bool wired=g_settings.outRoute==OUT_WIRED;
-  if(wired){playerText("Headphones",r.cx(),r.cy(),L::PlayerChipTextH,r.w-2*L::PlayerChipInset,p.text,bg);return;}
-  ui_icon(ICON_BLUETOOTH,r.x+L::PlayerChipIconInset,r.cy(),L::PlayerHeaderIcon,p.text,bg);
-  const String name=wired?String("Headphones"):bt_speakerName();
-  playerText(name.isEmpty()?"Bluetooth":name.c_str(),r.x+L::PlayerChipTextInset,r.cy(),L::PlayerChipTextH,r.w-L::PlayerChipTextInset-L::PlayerChipInset,p.text,bg,false);
+  if(wired){playerText("Headphones",r.cx(),r.cy(),Face::Label,r.w-2*L::PlayerChipInset,p.text,bg);return;}
+  // The 84 px portrait chip drops the icon (the name says what it is) to keep the peer name legible.
+  const bool icon=tft.width()>=L::WideMinW;const int inset=icon?L::PlayerChipTextInset:L::PlayerChipPlainTextInset;
+  if(icon)ui_icon(ICON_BLUETOOTH,r.x+L::PlayerChipIconInset,r.cy(),L::PlayerHeaderIcon,p.text,bg);
+  const String name=bt_speakerName();
+  playerText(name.isEmpty()?"Bluetooth":name.c_str(),r.x+inset,r.cy(),Face::Label,r.w-inset-L::PlayerChipInset,p.text,bg,cydtext::HAlignLeft);
 }
 void playerBottom(){
   const Palette& p=theme();const Rect r=L::playerVolume<Rect>(tft.width(),tft.height());
@@ -418,11 +413,14 @@ void playerBottom(){
 void playerTrack(){
   const Palette& p=theme();memset(&playingInfo,0,sizeof(playingInfo));
   if(!storage_trackInfo(audio_currentTrack(),playingInfo)){cydlib::copyText(playingInfo.title,"No songs");cydlib::copyText(playingInfo.artist,"Add M4A files to /music");}
+#ifdef CYDPOD_CATALOG_HOST
+  if(hostTrackInfo)playingInfo=*hostTrackInfo;
+#endif
   const int dy=L::playerTextOffset(tft.height()),width=tft.width()-2*L::PlayerTextInset;
   tft.fillRect(0,L::PlayerTextTop,tft.width(),L::PlayerTextH+dy,p.bg);
-  playerText(playingInfo.title,tft.width()/2,L::PlayerTitleY+dy,L::PlayerTitleH,width,p.text,p.bg);
-  playerText(playingInfo.artist,tft.width()/2,L::PlayerArtistY+dy,L::PlayerArtistH,width,p.dim,p.bg);
-  playerText(playingInfo.album,tft.width()/2,L::PlayerAlbumY+dy,L::PlayerAlbumH,width,p.dim,p.bg);
+  playerText(playingInfo.title,tft.width()/2,L::PlayerTitleY+dy,Face::Title,width,p.text,p.bg);
+  playerText(playingInfo.artist,tft.width()/2,L::PlayerArtistY+dy,Face::Label,width,p.dim,p.bg);
+  playerText(playingInfo.album,tft.width()/2,L::PlayerAlbumY+dy,Face::Label,width,p.dim,p.bg);
   shownProgress=shownSecond=-1;shownSerial=audio_trackSerial();playerHeader();
 }
 void playerTick(uint32_t now){
@@ -437,10 +435,9 @@ void playerTick(uint32_t now){
   if(int(pos/1000)!=shownSecond||busy!=shownSeeking||waiting!=shownWaiting){shownSecond=pos/1000;shownSeeking=busy;shownWaiting=waiting;
     tft.fillRect(0,tft.height()-L::PlayerTimeClearBottom,tft.width(),L::PlayerTimeClearH,p.bg);
     const String elapsed=busy?String("Seeking..."):waiting?String("Waiting for BT"):ui_time(pos);
-    playerText(elapsed.c_str(),L::ProgressInset,tft.height()-L::PlayerTimeBottom,L::PlayerTimeH,tft.width()/2-L::ProgressInset,p.dim,p.bg,false);
+    playerText(elapsed.c_str(),L::ProgressInset,tft.height()-L::PlayerTimeBottom,Face::Label,tft.width()/2-L::ProgressInset,p.dim,p.bg,cydtext::HAlignLeft);
     const String remain=String("-")+ui_time(duration>pos?duration-pos:0,duration>0);
-    int remainWidth=0;for(const char* c=remain.c_str();*c;++c)remainWidth+=playerGlyphWidth(*c,L::PlayerTimeH);
-    playerText(remain.c_str(),tft.width()-L::ProgressInset-remainWidth,tft.height()-L::PlayerTimeBottom,L::PlayerTimeH,tft.width()/2-L::ProgressInset,p.dim,p.bg,false);
+    playerText(remain.c_str(),tft.width()-L::ProgressInset,tft.height()-L::PlayerTimeBottom,Face::Label,tft.width()/2-L::ProgressInset,p.dim,p.bg,cydtext::HAlignRight);
   }
 }
 // Bounded read-only tables; no per-key state or allocation. Same QWERTY in all rotations.
@@ -797,6 +794,9 @@ const char* classic_modeName(unsigned m){
   return m<sizeof(names)/sizeof(names[0])?names[m]:"?";
 }
 int classic_top(){return page().top;}
+#ifdef CYDPOD_CATALOG_HOST
+void classic_hostTrackInfo(const cydlib::Record* record){hostTrackInfo=record;}
+#endif
 std::string classic_geometry(){
   std::ostringstream out;
   auto rect=[&](Rect r){out<<r.x<<','<<r.y<<','<<r.w<<','<<r.h<<';';};

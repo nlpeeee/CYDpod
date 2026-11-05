@@ -118,8 +118,14 @@ static void check(bool value,const char* message){if(!value)throw std::runtime_e
 static void pump(){for(int i=0;i<10;++i)ui_tick(clockNow+=130);}
 static void tap(int x,int y){tx=x;ty=y;down=true;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,x,y);pump();}
 static bool label(const char* s){return std::find(tft.labels.begin(),tft.labels.end(),s)!=tft.labels.end();}
+// A drawn title is either whole or whole glyphs plus "..." (never a half-clipped glyph): CY-85.
+static bool shown(const char* full){
+  if(label(full))return true;const std::string want=full;
+  for(const auto& l:tft.labels)if(l.size()>3&&l.compare(l.size()-3,3,"...")==0&&want.compare(0,l.size()-3,l,0,l.size()-3)==0)return true;
+  return false;
+}
 static int countLabel(const char* s){return int(std::count(tft.labels.begin(),tft.labels.end(),s));}
-static void snapshot(const char* path){tft.save(path);}
+static void snapshot(const char* path){tft.save(path);std::string png=path;png.replace(png.size()-4,4,".png");tft.savePng(png.c_str(),1);}
 
 // ---------------------------------------------------------------------------
 // CY-62: the real press classifier (touch_gesture.h) -> UI hook -> command path.
@@ -257,8 +263,8 @@ static void nowPlayingRegression(){
     for(Rect r:{hit,seek,bar,L::output<Rect>(w,h),L::transport<Rect>(w,h,0),L::transport<Rect>(w,h,1),L::transport<Rect>(w,h,2)})check(r.x>=0&&r.y>=0&&r.x+r.w<=w&&r.y+r.h<=h,"Player rectangles fit each orientation");
     if(w==320){const Rect prev=L::transport<Rect>(w,h,0),play=L::transport<Rect>(w,h,1),next=L::transport<Rect>(w,h,2),chip=L::outputFace<Rect>(w,h);
       check(prev.x==56&&prev.y==148&&prev.w==70&&prev.h==48&&play.x==130&&play.y==146&&play.w==80&&play.h==52&&next.x==214,"transport matches proposal A SVG");
-      check(track.x==44&&track.y==216&&track.w==150&&chip.x==238&&chip.y==205&&chip.w==76&&chip.h==30,"bottom row matches proposal A SVG");
-      check(bar.x==14&&bar.y==118&&bar.w==292,"seek track matches proposal A SVG");
+      check(track.x==44&&track.y==216&&track.w==118&&chip.x==206&&chip.y==205&&chip.w==108&&chip.h==30,"bottom row: CY-85 widened the output chip to 108 px (was 76) for 9 pt peer names; the volume track is 118 px (was 150)");
+      check(bar.x==14&&bar.y==116&&bar.w==292,"seek track matches proposal A SVG (CY-85 moved it up 2 px so the 9 pt time labels clear the knob)");
     }
     check(classic_target(hit.x,hit.y)==-25&&classic_target(hit.x+hit.w-1,hit.y+hit.h-1)==-25,"volume hit target includes outer edges");
     check(classic_target(-1,hit.cy())==-1&&classic_target(w,hit.cy())==-1&&classic_target(track.x,h)==-1,"outside screen never hits volume");
@@ -532,7 +538,7 @@ static std::vector<RenderEntry> renderLog;
 static void shot(const char* page,const char* state,const char* expect,bool fresh=true){
   if(fresh){ui_redraw();pump();}  // a full repaint, so the SVG and the label list describe exactly this page
   const std::string tag=std::string(page)+"/"+state+" r"+std::to_string(tft.getRotation());
-  if(expect&&!label(expect)){std::string seen;for(const auto& l:tft.labels)seen+="["+l+"]";check(false,("render inventory marker '"+std::string(expect)+"' missing in "+tag+"; labels: "+seen).c_str());}
+  if(expect&&!shown(expect)){std::string seen;for(const auto& l:tft.labels)seen+="["+l+"]";check(false,("render inventory marker '"+std::string(expect)+"' missing in "+tag+"; labels: "+seen).c_str());}
   const std::string file=std::string("render/")+page+"-"+state+"-r"+std::to_string(tft.getRotation())+".svg";
   tft.save(file.c_str());
   std::string labels;int n=0;for(const auto& l:tft.labels){if(n++)labels+="|";labels+=l;if(n>=16)break;}
@@ -739,7 +745,7 @@ static void settingsRegression(){
     tft.setRotation(rotation);g_settings.rotation=uint8_t(rotation);g_settings.outRoute=OUT_BT;
     home();tapTile(5);
     check(label("Audio Output")&&label("Bluetooth")&&label("Playback")&&label("Display"),"Settings shows Output, Bluetooth, Playback and Display");
-    tapSettingsRow(4);check(label("Library & System"),"Library & System page title");
+    tapSettingsRow(4);check(shown("Library & System"),"Library & System page title");
     for(const char* kept:{"Refresh Library","Upload music","Web passcode","Language"})check(label(kept),(std::string("System row kept: ")+kept).c_str());
     for(const char* retired:{"Style","Layout","Background","Invert colours","Panel type","Panel / Advanced","Upload / Advanced","Theme","Flip portrait"})
       check(!label(retired),(std::string("retired row absent: ")+retired).c_str());
@@ -986,12 +992,12 @@ int main(){try{
   tft.setRotation(1);ui_redraw();pump();tap(160,110);check(lastSeek>119000&&lastSeek<121000,"landscape progress geometry");
   tap(12,110);check(lastSeek==0,"progress start clamp");tap(306,110);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
   std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, Next on touch-down and recalibration claim\n";
-  tap(70,300);check(volume>30&&volume<40,"Player volume slider action");snapshot("ui-player-volume.svg");
+  tap(66,300);check(volume>30&&volume<40,"Player volume slider action (portrait track is 62 px after CY-85: x=66 is 35 %)");snapshot("ui-player-volume.svg");
   tap(20,20);check(classic_top()==2&&label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");
   home();tapTile(5);check(label("Audio Output"),"settings navigation");snapshot("ui-settings.svg");
-  tap(80,216);check(classic_depth()==3&&label("Library & System")&&label("Web passcode")&&label("Refresh Library")&&label("Upload music"),"Library & System opens from Settings");tap(20,20);check(label("Audio Output")&&classic_depth()==2,"Back returns to Settings");
+  tap(80,216);check(classic_depth()==3&&shown("Library & System")&&label("Web passcode")&&label("Refresh Library")&&label("Upload music"),"Library & System opens from Settings");tap(20,20);check(label("Audio Output")&&classic_depth()==2,"Back returns to Settings");
   // CT-05: an unclaimed 0.6 to 4 s press activates the row like a tap.
   tx=80;ty=60;down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=900);down=false;ui_touch(TOUCH_LONG_PRESS,80,66);pump();
   check(label("Bluetooth")&&label("Selected"),"long press activates the row (CT-05)");

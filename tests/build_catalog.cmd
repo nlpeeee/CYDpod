@@ -20,7 +20,7 @@ cl /nologo /O2 /EHsc /W4 /std:c++17 /I..\speaker_shim /Fe:speaker_lifecycle_test
 if errorlevel 1 exit /b 1
 .\speaker_lifecycle_test.exe
 if errorlevel 1 exit /b 1
-cl /nologo /O2 /EHsc /W4 /std:c++17 /DCYDPOD_CATALOG_HOST /I..\catalog_shim /I..\..\firmware\cydpod_player\app /Fe:catalog_test.exe ..\catalog_test.cpp ..\..\firmware\cydpod_player\app\storage.cpp ..\..\firmware\cydpod_player\app\playlist.cpp
+cl /nologo /O2 /EHsc /W4 /std:c++17 /DCYDPOD_CATALOG_HOST /I..\catalog_shim /I..\..\.deps\sketchbook\libraries\TFT_eSPI /I..\..\firmware\cydpod_player\app /Fe:catalog_test.exe ..\catalog_test.cpp ..\..\firmware\cydpod_player\app\storage.cpp ..\..\firmware\cydpod_player\app\playlist.cpp
 if errorlevel 1 exit /b 1
 .\catalog_test.exe
 if errorlevel 1 exit /b 1
@@ -32,12 +32,12 @@ cl /nologo /O2 /EHsc /W4 /std:c++17 /I..\..\firmware\cydpod_player\app /Fe:cst82
 if errorlevel 1 exit /b 1
 .\cst820_report_test.exe
 if errorlevel 1 exit /b 1
-cl /nologo /O2 /EHsc /W4 /std:c++17 /DCYDPOD_CATALOG_HOST /I..\catalog_shim /I..\..\firmware\cydpod_player\app /Fe:classic_ui_test.exe ..\classic_ui_test.cpp ..\..\firmware\cydpod_player\app\storage.cpp ..\..\firmware\cydpod_player\app\playlist.cpp ..\..\firmware\cydpod_player\app\ui.cpp ..\..\firmware\cydpod_player\app\classic_screen.cpp ..\..\firmware\cydpod_player\app\screen_bt.cpp ..\..\firmware\cydpod_player\app\output_switch.cpp ..\..\firmware\cydpod_player\app\sleep_mode.cpp ..\..\firmware\cydpod_player\app\theme.cpp ..\..\firmware\cydpod_player\app\i18n.cpp
+cl /nologo /O2 /EHsc /W4 /std:c++17 /DCYDPOD_CATALOG_HOST /I..\catalog_shim /I..\..\.deps\sketchbook\libraries\TFT_eSPI /I..\..\firmware\cydpod_player\app /Fe:classic_ui_test.exe ..\classic_ui_test.cpp ..\..\firmware\cydpod_player\app\storage.cpp ..\..\firmware\cydpod_player\app\playlist.cpp ..\..\firmware\cydpod_player\app\ui.cpp ..\..\firmware\cydpod_player\app\classic_screen.cpp ..\..\firmware\cydpod_player\app\classic_text.cpp ..\..\firmware\cydpod_player\app\screen_bt.cpp ..\..\firmware\cydpod_player\app\output_switch.cpp ..\..\firmware\cydpod_player\app\sleep_mode.cpp ..\..\firmware\cydpod_player\app\theme.cpp ..\..\firmware\cydpod_player\app\i18n.cpp
 if errorlevel 1 exit /b 1
 .\classic_ui_test.exe
 if errorlevel 1 exit /b 1
 rem CY-71: the same UI with the wired route compiled in (Bluetooth + Headphones).
-cl /nologo /O2 /EHsc /W4 /std:c++17 /DCYDPOD_CATALOG_HOST /I..\catalog_shim /I..\..\firmware\cydpod_player\app /DCYD_I2S_BCK_PIN=16 /DCYD_I2S_DOUT_PIN=4 /DCYD_I2S_WS_PIN=17 /Fe:classic_ui_test_wired.exe ..\classic_ui_test.cpp ..\..\firmware\cydpod_player\app\storage.cpp ..\..\firmware\cydpod_player\app\playlist.cpp ..\..\firmware\cydpod_player\app\ui.cpp ..\..\firmware\cydpod_player\app\classic_screen.cpp ..\..\firmware\cydpod_player\app\screen_bt.cpp ..\..\firmware\cydpod_player\app\output_switch.cpp ..\..\firmware\cydpod_player\app\sleep_mode.cpp ..\..\firmware\cydpod_player\app\theme.cpp ..\..\firmware\cydpod_player\app\i18n.cpp
+cl /nologo /O2 /EHsc /W4 /std:c++17 /DCYDPOD_CATALOG_HOST /I..\catalog_shim /I..\..\.deps\sketchbook\libraries\TFT_eSPI /I..\..\firmware\cydpod_player\app /DCYD_I2S_BCK_PIN=16 /DCYD_I2S_DOUT_PIN=4 /DCYD_I2S_WS_PIN=17 /Fe:classic_ui_test_wired.exe ..\classic_ui_test.cpp ..\..\firmware\cydpod_player\app\storage.cpp ..\..\firmware\cydpod_player\app\playlist.cpp ..\..\firmware\cydpod_player\app\ui.cpp ..\..\firmware\cydpod_player\app\classic_screen.cpp ..\..\firmware\cydpod_player\app\classic_text.cpp ..\..\firmware\cydpod_player\app\screen_bt.cpp ..\..\firmware\cydpod_player\app\output_switch.cpp ..\..\firmware\cydpod_player\app\sleep_mode.cpp ..\..\firmware\cydpod_player\app\theme.cpp ..\..\firmware\cydpod_player\app\i18n.cpp
 if errorlevel 1 exit /b 1
 .\classic_ui_test_wired.exe
 exit /b %errorlevel%

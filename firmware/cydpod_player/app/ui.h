@@ -45,9 +45,13 @@ void ui_iconToggle(const Rect& r, Icon icon, bool on, uint16_t surface, bool pre
 // Text in any script. Pure ASCII is drawn with the built-in font; anything
 // else from its pre-rendered strip (titles.h), falling back to the built-in
 // font (which drops non-ASCII) when no strip exists. `datum` is a TFT_eSPI
-// datum (TL/TC/TR/ML/MC/MR). maxW > 0 clips. Returns the width drawn.
+// datum (TL/TC/TR/ML/MC/MR). maxW > 0 shortens to whole characters plus "...".
+// Returns the width drawn.
 int ui_text(const String& text, int x, int y, uint8_t datum, uint16_t fg, uint16_t bg,
             int maxW = 0, TypeRole role = TYPE_BODY);
+// The longest whole-character prefix of `text` that fits maxW together with "...";
+// empty when not even the ellipsis fits. `font` is a TFT_eSPI font number.
+String ui_ellipsize(const String& text, uint8_t font, int maxW);
 
 // A UI string in the current language -- English when no Chinese strip exists.
 int ui_label(Txt id, int x, int y, uint8_t datum, uint16_t fg, uint16_t bg, int maxW = 0,

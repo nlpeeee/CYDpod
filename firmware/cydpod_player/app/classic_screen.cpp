@@ -14,7 +14,6 @@
 #include "output_switch.h"
 #include "speaker.h"
 #include "wired.h"
-#include "background.h"
 #include "calibrate.h"
 #include "titles.h"
 #include "firmware.h"
@@ -349,7 +348,7 @@ void volumePaint(){
 // ui_button normally insets its face. Clip an expanded cell so the painted
 // Player face, as well as its hit target, matches the proposal's rectangle.
 void playerButton(const Rect& r,Icon icon,bool active,bool pressed){
-  const int inset=style().inset;tft.setViewport(r.x,r.y,r.w,r.h);
+  const int inset=STYLE_INSET;tft.setViewport(r.x,r.y,r.w,r.h);
   ui_button({-inset,-inset,r.w+2*inset,r.h+2*inset},icon,active,pressed);tft.resetViewport();
 }
 void playerTransport(){
@@ -450,7 +449,7 @@ void editQuery(int target){
   if(changed){storage_searchStart(query);queryPaint();}
 }
 void enter(){
-  bg_stop();seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
+  seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
@@ -747,8 +746,8 @@ void touch(TouchEvent ev,int,int){
 } // namespace
 
 void classic_home(){miniReturnDepth=0;flushSettings();freePreview();externalReturn=false;navigation.home();}
-void classic_preparePlayer(){if(externalReturn){externalReturn=false;return;}if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}}
-void classic_prepareLibrary(){classic_home();}
+// Back from a page outside Classic (the Bluetooth page): the page it was opened from when Settings opened it, otherwise Now Playing.
+void classic_return(){if(externalReturn)externalReturn=false;else if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}ui_go(SCR_CLASSIC);}
 const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};
 #ifdef CYDPOD_CATALOG_HOST
 // Exercise the original private geometry/hit test, without adding firmware state.

@@ -10,14 +10,6 @@
 #include <Arduino.h>
 #include "board.h"
 
-// What the time readout under the progress bar shows. Tapping it cycles.
-enum TimeMode : uint8_t {
-  TIME_ELAPSED   = 0,   // 1:23 / 4:05
-  TIME_REMAINING = 1,   // -2:42
-  TIME_BOTH      = 2,   // 1:23 ........ -2:42
-  TIME_MODE_COUNT
-};
-
 enum Language : uint8_t { LANG_EN = 0, LANG_ZH = 1, LANG_COUNT };
 
 enum RepeatMode : uint8_t {
@@ -35,16 +27,15 @@ struct BtKnown {
 };
 
 struct Settings {
-  // Panel -- defaults come from the board profile, the stored values win.
+  // Panel -- defaults come from the board profile, the stored values win. These describe the
+  // glass, not a look: the Setup rows that edited them are retired (CY-81), but the stored
+  // values still apply, and the 8 s boot hold (display.h) still switches the controller.
   uint16_t panel      = CYD_PANEL_DRIVER;   // CYD_PANEL_ST7789 / CYD_PANEL_ILI9341
   bool     invert     = CYD_TFT_INVERT;
   uint8_t  rotation   = CYD_ROTATION;       // 0/2 portrait, 1/3 landscape
   uint8_t  brightness = 100;                // backlight %, 10-100
 
-  // Appearance
-  uint8_t  theme      = 0;                  // index into theme.cpp's palettes
-  uint8_t  skin       = 0;                  // SKIN_* in layouts.h
-  uint8_t  style      = 0;                  // index into style.cpp's table
+  // Language of the fixed strings on the Bluetooth, calibration and uploader pages.
   uint8_t  lang       = LANG_EN;
 
   // Player
@@ -57,7 +48,6 @@ struct Settings {
   uint16_t lastTrack  = 0;                  // resume point: track index...
   uint32_t lastPosMs  = 0;                  // ...and position in it
   String lastPath;                         // stable identity across catalogue rebuilds
-  uint8_t  timeMode   = TIME_ELAPSED;
   bool     shuffle    = false;
   uint8_t  repeat     = REPEAT_ALL;
   // What is being played from (playlist.h): SourceKind, and a checksum of the
@@ -69,8 +59,6 @@ struct Settings {
   uint16_t catalogGroup = 0;
   uint32_t catalogCrc = 0;
 
-  // Background: 0 = off, N = /bg/bgN.gif
-  uint8_t  bgIndex    = 1;
 
   // Bluetooth. The library keeps its own copy of the address for paging at
   // boot; this one lets the discovery fallback recognise the speaker too, and

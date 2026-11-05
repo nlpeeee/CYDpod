@@ -4,7 +4,6 @@
 #include "storage.h"
 #include "i18n.h"
 #include "theme.h"
-#include "style.h"
 #ifndef CYD_UPLOADER
 #include "playlist.h"
 #endif
@@ -84,8 +83,6 @@ static void crcOne(const char* text) {
 static String doneStamp() {
   uiCrc = 0;
   i18n_forEachChinese(crcOne);
-  for (int i = 0; i < theme_count(); i++) crcOne(theme_at(i).nameZh);
-  for (int i = 0; i < style_count(); i++) crcOne(style_at(i).nameZh);
   uint32_t listCrc = 0;
 #ifndef CYD_UPLOADER
   listCrc = playlist_namesCrc();
@@ -112,8 +109,6 @@ static void markDone() {
 static void eachLabel(void (*fn)(const char*)) {
   storage_forEachText(fn);
   i18n_forEachChinese(fn);
-  for (int i=0;i<theme_count();++i) fn(theme_at(i).nameZh);
-  for (int i=0;i<style_count();++i) fn(style_at(i).nameZh);
 #ifndef CYD_UPLOADER
   playlist_forEachName(fn);
 #endif

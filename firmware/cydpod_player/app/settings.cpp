@@ -19,9 +19,6 @@ void settings_begin() {
   s.invert     = prefs.getBool  ("invert", s.invert);
   s.rotation   = prefs.getUChar ("rot",    s.rotation) & 3;
   s.brightness = constrain(prefs.getUChar("bright", s.brightness), 10, 100);
-  s.theme      = prefs.getUChar ("theme",  s.theme);
-  s.skin       = prefs.getUChar ("skin",   s.skin);
-  s.style      = prefs.getUChar ("style",  s.style);
   s.lang       = prefs.getUChar ("lang",   s.lang) % LANG_COUNT;
   s.screenTimeout = min<uint8_t>(prefs.getUChar("screenTime",s.screenTimeout),3);
   s.sleepTimer = min<uint8_t>(prefs.getUChar("sleepTime",s.sleepTimer),4);
@@ -33,7 +30,6 @@ void settings_begin() {
   s.lastTrack  = prefs.getUShort("track",  s.lastTrack);
   s.lastPosMs  = prefs.getULong ("pos",    s.lastPosMs);
   s.lastPath   = prefs.getString("lastPath", s.lastPath);
-  s.timeMode   = prefs.getUChar ("timeMode", s.timeMode) % TIME_MODE_COUNT;
   s.shuffle    = prefs.getBool  ("shuffle", s.shuffle);
   s.repeat     = prefs.getUChar ("repeat", s.repeat) % REPEAT_MODE_COUNT;
   s.srcKind    = prefs.getUChar ("srcKind", s.srcKind);
@@ -41,7 +37,6 @@ void settings_begin() {
   s.catalogKind = prefs.getUChar("catKind", s.catalogKind);
   s.catalogGroup = prefs.getUShort("catGroup", s.catalogGroup);
   s.catalogCrc = prefs.getULong("catCrc", s.catalogCrc);
-  s.bgIndex    = prefs.getUChar ("bg",     s.bgIndex);
   s.btName     = prefs.getString("btName", s.btName);
   prefs.getBytes("btAddr", s.btAddr, sizeof(s.btAddr));
   // One blob for the lot. A blob of another size is from another version of
@@ -55,7 +50,10 @@ void settings_begin() {
   s.webPin     = prefs.getString("webPin", s.webPin);
   const bool migrateClassic = prefs.getUChar("uiRev", 0) < 1;
   prefs.end();
-  // One deliberate UI migration; calibration, bonds, output and volume survive.
+  // One deliberate UI migration; calibration, bonds, output and volume survive. The retired
+  // Style, Layout (skin), Background, Theme and time-mode keys are not read, not written and
+  // not erased: whatever an older release left under them is simply ignored, and stays put
+  // so that flashing an older image back still finds its own values.
   if (migrateClassic) {
 #if CYD_TOUCH_CAPACITIVE
     s.rotation = CYD_ROTATION; // W328C first boot: 320x240 landscape
@@ -63,7 +61,6 @@ void settings_begin() {
 #else
     s.rotation = 0;
 #endif
-    s.theme = 8; s.style = 7; s.bgIndex = 0;
     settings_save();
   }
 
@@ -78,12 +75,11 @@ void settings_begin() {
                 s.outRoute, storedOutRoute);
 #endif
   // The WiFi password is never printed: serial logs end up in bug reports.
-  Serial.printf("settings: theme %u skin %u style %u lang %u  wifi \"%s\"\n", s.theme, s.skin,
-                s.style, s.lang, s.wifiSsid.c_str());
+  Serial.printf("settings: lang %u  wifi \"%s\"\n", s.lang, s.wifiSsid.c_str());
   Serial.printf("settings: panel %u invert %d rot %u bright %u%%  vol %u resume %u@%lus "
-                "shuffle %d repeat %u time %u bg %u  out %u  speaker \"%s\"\n",
+                "shuffle %d repeat %u  out %u  speaker \"%s\"\n",
                 s.panel, s.invert, s.rotation, s.brightness, s.volume, s.lastTrack,
-                s.lastPosMs / 1000, s.shuffle, s.repeat, s.timeMode, s.bgIndex, s.outRoute,
+                s.lastPosMs / 1000, s.shuffle, s.repeat, s.outRoute,
                 s.btName.c_str());
   // The address as well as the name: the library keeps its OWN record of the
   // last device for its boot reconnect, and when the two disagree the player
@@ -108,9 +104,6 @@ void settings_save() {
   prefs.putBool  ("invert",   s.invert);
   prefs.putUChar ("rot",      s.rotation);
   prefs.putUChar ("bright",   s.brightness);
-  prefs.putUChar ("theme",    s.theme);
-  prefs.putUChar ("skin",     s.skin);
-  prefs.putUChar ("style",    s.style);
   prefs.putUChar ("lang",     s.lang);
   prefs.putUChar ("screenTime",s.screenTimeout);
   prefs.putUChar ("sleepTime",s.sleepTimer);
@@ -126,12 +119,10 @@ void settings_save() {
   prefs.putUShort("track",    s.lastTrack);
   prefs.putULong ("pos",      s.lastPosMs);
   prefs.putString("lastPath", s.lastPath);
-  prefs.putUChar ("timeMode", s.timeMode);
   prefs.putBool  ("shuffle",  s.shuffle);
   prefs.putUChar ("repeat",   s.repeat);
   prefs.putUChar ("srcKind",  s.srcKind);
   prefs.putULong ("srcKey",   s.srcKey);
-  prefs.putUChar ("bg",       s.bgIndex);
   prefs.putString("btName",   s.btName);
   prefs.putBytes ("btAddr",   s.btAddr, sizeof(s.btAddr));
   prefs.putBytes ("known",    s.btKnown, sizeof(s.btKnown));

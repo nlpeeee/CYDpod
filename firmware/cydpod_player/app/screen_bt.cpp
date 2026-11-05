@@ -14,6 +14,7 @@
 #include "theme.h"
 #include "bt.h"
 #include "output_switch.h"
+#include "classic_screen.h"
 
 static const int STATUS_Y = UI_HEADER_H + 4;
 static const int LIST_Y   = UI_HEADER_H + 34;
@@ -184,7 +185,7 @@ static void tick(uint32_t) {
     drawStatus();
     if (shownState == 2 && waitingToPair) {
       waitingToPair = false;
-      ui_go(SCR_PLAYER);
+      classic_return();
       return;
     }
     drawList();                            // connected or not changes what it says
@@ -205,7 +206,7 @@ static void dropConfirmed() {
 static void touch(TouchEvent ev, int x, int y) {
   if (!output_usesBluetooth()) {
     if (ev == TOUCH_TAP) {
-      if (UI_BACK_RECT.contains(x,y)) ui_go(SCR_PLAYER);
+      if (UI_BACK_RECT.contains(x,y)) classic_return();
       else if (useBluetoothRect().contains(x,y)) output_switch(OUT_BT);
     }
     return;
@@ -214,7 +215,7 @@ static void touch(TouchEvent ev, int x, int y) {
   if (UI_BACK_RECT.contains(x, y)) {
     // Cancel even while the former link is still disconnecting.
     if (bt_pairing() && !bt_cancelPairing()){ui_toast("Unable to cancel pairing");return;}
-    ui_go(SCR_PLAYER);
+    classic_return();
     return;
   }
   if (pairRect().contains(x, y)) {

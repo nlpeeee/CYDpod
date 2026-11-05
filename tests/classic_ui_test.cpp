@@ -7,12 +7,10 @@
 #include "playlist.h"
 #include "storage.h"
 #include "titles.h"
-#include "background.h"
 #include "bt.h"
 #include "speaker.h"
 #include "output_switch.h"
 #include "audio.h"
-#include "layouts.h"
 #include "calibrate.h"
 #include <fstream>
 #include <iostream>
@@ -21,6 +19,8 @@
 #include <thread>
 #include <functional>
 #include <cmath>
+#include <map>
+#include <set>
 #include "touch_gesture.h"
 #include "classic_layout.h"
 TFT_eSPI tft;
@@ -64,7 +64,8 @@ uint32_t audio_trackSerial(){return serial;}
 static int btCalls=0;static bool btConnected=true;
 bool bt_connected(){++btCalls;return btConnected;}
 bool bt_connecting(){++btCalls;return false;}
-bool bt_pairing(){++btCalls;return false;}
+static bool btPairingNow=false,btCancelOk=true;
+bool bt_pairing(){++btCalls;return btPairingNow;}
 bool bt_choosing(){++btCalls;return false;}
 String bt_speakerName(){++btCalls;return "Speaker";}
 cyd::PairingSession::Phase bt_pairingPhase(){++btCalls;return cyd::PairingSession::Normal;}
@@ -72,7 +73,7 @@ BtFailure bt_failure(){++btCalls;return BT_FAIL_NONE;}
 uint32_t bt_passkey(){++btCalls;return 0;}
 uint32_t bt_listSerial(){++btCalls;return 0;}
 bool bt_requestPairing(){++btCalls;return true;}
-bool bt_cancelPairing(){++btCalls;return true;}
+bool bt_cancelPairing(){++btCalls;if(btCancelOk)btPairingNow=false;return btCancelOk;}
 int bt_deviceCount(){++btCalls;return 0;}
 bool bt_device(int,BtDevice&){++btCalls;return false;}
 bool bt_isConnectedTo(const uint8_t*){++btCalls;return false;}
@@ -96,12 +97,6 @@ bool wired_active(){return true;}
 bool calibrate_run(){return true;}
 void display_setRotation(uint8_t r){tft.setRotation(r);}
 void display_setBacklight(uint8_t p){backlight=p;}
-int bgStops=0;void bg_stop(){++bgStops;}
-int bg_count(){return 0;}
-void bg_setView(const Rect&,const Rect*,int){}
-bool bg_start(int){return false;}
-bool bg_active(){return false;}
-void bg_tick(uint32_t){}
 int audio_queueLen(){return queueLength;}
 int audio_queueTrack(int n){return n>=0&&n<queueLength?(queueData?queueData[n]:n):-1;}
 int audio_queuePos(int track){for(int i=0;i<queueLength;++i)if(audio_queueTrack(i)==track)return i;return -1;}
@@ -116,9 +111,6 @@ bool titles_load(const String&){return false;}
 void titles_release(){}
 int titles_width(){return 0;}
 void titles_draw(const Rect&,int,int,uint16_t,uint16_t){}
-static void empty(){}
-const Screen SCREEN_LIBRARY={empty,nullptr,nullptr,nullptr,nullptr};
-const Screen SCREEN_SOURCES={empty,nullptr,nullptr,nullptr,nullptr};
 static void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 static void pump(){for(int i=0;i<10;++i)ui_tick(clockNow+=130);}
 static void tap(int x,int y){tx=x;ty=y;down=true;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,x,y);pump();}
@@ -395,8 +387,6 @@ static void homeTilesRegression(){
     if(!playlist_isFavourite(0))playlist_toggleFavourite(0);
     tap(row0.cx(),row0.cy());check(classic_depth()==3&&label("Favourites"),"Playlists > Favourites");tap(20,20);tap(20,20);check(classic_depth()==1,"Back to Home");
     // The old Library/Sources entry points land on Home instead of a Music list.
-    ui_go(SCR_LIBRARY);pump();check(classic_depth()==1&&label("Playlists")&&!label("Music"),"legacy Library route reaches Home");
-    ui_go(SCR_SOURCES);pump();check(classic_depth()==1&&!label("Music"),"legacy Sources route reaches Home");
 
     // Pressed feedback on touch-down; the action waits for a tolerant release.
     home();const Rect a=t[0];const int paints=tft.colorCount(theme().pressed);
@@ -497,14 +487,13 @@ static void compactChromeRegression(){
   }
   tft.setRotation(1);g_settings.outRoute=OUT_BT;
   double minimum=1;
-  for(int i=0;i<theme_count();++i){
-    g_settings.theme=i;const Palette& p=theme();const double difference=std::abs(luminance(p.text)-luminance(p.band));minimum=std::min(minimum,difference);
+  {
+    const Palette& p=theme();const double difference=std::abs(luminance(p.text)-luminance(p.band));minimum=std::min(minimum,difference);
     check(difference>0.25,"every theme header text has linear luminance difference > 0.25 from band");
     check(std::abs(luminance(p.dim)-luminance(p.band))>0.08,"every theme dimmed route has luminance difference > 0.08 from band");
     btConnected=true;const auto connected=routeDrawing(ICON_BLUETOOTH,p.text);home();
     check(tft.drawing().find(connected)!=std::string::npos&&!label("BT")&&!label("BT..."),"connected route uses the Bluetooth icon in header text ink");
     check(tft.drawing().find("x='0' y='0' width='320' height='36'")!=std::string::npos,"header paints one flat 36 px band");
-    if(i==0)snapshot("cy78-dark-home.svg");
     btConnected=false;const auto reconnecting=routeDrawing(ICON_BLUETOOTH,p.dim);home();
     check(tft.drawing().find(reconnecting)!=std::string::npos,"reconnecting Bluetooth icon is dimmed");
     btConnected=true;ui_tick(clockNow+=1100);
@@ -512,12 +501,12 @@ static void compactChromeRegression(){
 #if CYD_WIRED_OUTPUT
     g_settings.outRoute=OUT_WIRED;const auto headphones=routeDrawing(ICON_HEADPHONES,p.text);const int radio=btCalls;home();
     check(tft.drawing().find(headphones)!=std::string::npos&&btCalls==radio,"Headphones icon swaps without touching Bluetooth");
-    if(i==8)snapshot("cy78-headphones-home.svg");g_settings.outRoute=OUT_BT;
+    snapshot("cy78-headphones-home.svg");g_settings.outRoute=OUT_BT;
 #endif
-    std::cout<<"CY78_HEADER_CONTRAST "<<p.nameEn<<" luminance_difference="<<difference<<"\n";
+    std::cout<<"CY78_HEADER_CONTRAST Classic Touch luminance_difference="<<difference<<"\n";
   }
-  std::cout<<"CY78_COMPACT_CHROME_OK: all rotations, 4/6 rows, parent Back on release, both route icons, reconnect dimming, flat band; "<<theme_count()<<" themes, minimum text luminance difference="<<minimum<<" (>0.25)\n";
-  g_settings.theme=8;tft.setRotation(0);home();
+  std::cout<<"CY78_COMPACT_CHROME_OK: all rotations, 4/6 rows, parent Back on release, both route icons, reconnect dimming, flat band; the one theme, text luminance difference="<<minimum<<" (>0.25)\n";
+  tft.setRotation(0);home();
 }
 std::string classic_geometry();std::string classic_dialog_geometry();
 static void geometryGolden(){
@@ -621,6 +610,45 @@ static void settingsRegression(){
   tft.setRotation(0);g_settings.rotation=0;g_settings.lang=LANG_EN;
   std::cout<<"PASS CY-81 Settings: live rows kept, retired rows absent in all rotations, Orientation visits all four rotations, brightness, Library & System rows (refresh, upload, passcode reset, language)\n";
 }
+// CY-81: the Bluetooth page used to return with ui_go(SCR_PLAYER), which redirected into Classic.
+// It now calls classic_return(); every way out must land where it did before: Settings when
+// Settings opened the page, Now Playing when the page was shown at boot.
+unsigned classic_mode();const char* classic_modeName(unsigned);
+static void bluetoothReturns(){
+  const auto mode=[]{return std::string(classic_modeName(classic_mode()));};
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);g_settings.rotation=uint8_t(rotation);g_settings.outRoute=OUT_BT;btConnected=true;btPairingNow=false;btCancelOk=true;
+    // Opened from Settings: Back returns to Settings.
+    home();tapTile(5);tapRow(1);check(ui_current()==SCR_BLUETOOTH,"Settings opens the Bluetooth page");
+    tap(10,10);check(ui_current()==SCR_CLASSIC&&mode()=="Settings"&&classic_depth()==2,"Back from Bluetooth returns to Settings");
+    // Opened from Settings while pairing: success leaves the page by itself, to Settings.
+    btConnected=false;btPairingNow=true;
+    tapRow(1);check(ui_current()==SCR_BLUETOOTH,"Settings opens the Bluetooth page while pairing");
+    btConnected=true;btPairingNow=false;ui_tick(clockNow+=1000);pump();
+    check(ui_current()==SCR_CLASSIC&&mode()=="Settings"&&classic_depth()==2,"successful pairing returns to Settings");
+    // Back while pairing cancels the session and returns; a refused cancel keeps the page.
+    btConnected=false;btPairingNow=true;btCancelOk=false;
+    tapRow(1);tap(10,10);check(ui_current()==SCR_BLUETOOTH&&label("Unable to cancel pairing"),"a refused cancel stays on the Bluetooth page");
+    tap(10,10);btCancelOk=true;tap(10,10);   // the first tap only dismisses the toast
+    check(ui_current()==SCR_CLASSIC&&mode()=="Settings"&&classic_depth()==2,"Back cancels pairing and returns to Settings");
+    btConnected=true;btPairingNow=false;
+    // Shown at boot (no speaker known), with Home as the only Classic page: Back opens Now Playing.
+    classic_home();ui_go(SCR_BLUETOOTH);pump();check(ui_current()==SCR_BLUETOOTH,"boot shows the Bluetooth page");
+    tap(10,10);check(ui_current()==SCR_CLASSIC&&mode()=="Player"&&classic_depth()==2,"Back from the boot Bluetooth page opens Now Playing");
+    // Shown at boot, pairing succeeds: Now Playing as well.
+    btConnected=false;btPairingNow=true;classic_home();ui_go(SCR_BLUETOOTH);pump();
+    btConnected=true;btPairingNow=false;ui_tick(clockNow+=1000);pump();
+    check(ui_current()==SCR_CLASSIC&&mode()=="Player"&&classic_depth()==2,"successful pairing at boot opens Now Playing");
+#if CYD_WIRED_OUTPUT
+    // Bluetooth off (Headphones): Back returns the same way.
+    g_settings.outRoute=OUT_WIRED;home();tapTile(5);tapRow(1);check(ui_current()==SCR_BLUETOOTH,"Settings opens the Bluetooth-off page");
+    tap(10,10);check(ui_current()==SCR_CLASSIC&&mode()=="Settings","Back from the Bluetooth-off page returns to Settings");
+    g_settings.outRoute=OUT_BT;
+#endif
+  }
+  tft.setRotation(0);g_settings.rotation=0;home();
+  std::cout<<"PASS CY-81 Bluetooth returns: Back, successful pairing, refused and accepted cancel, boot page and Bluetooth-off page, all rotations\n";
+}
 static void renderInventory(){
   namespace L=cydclassic::layout;
   std::filesystem::create_directories("render");
@@ -702,10 +730,68 @@ static void renderInventory(){
   for(const auto& e:renderLog)tsv<<e.file<<'\t'<<e.rotation<<'\t'<<e.w<<'x'<<e.h<<'\t'<<e.page<<'\t'<<e.state<<'\t'<<e.labels<<'\n';
   std::cout<<"RENDER_INVENTORY_OK: "<<renderLog.size()<<" SVG renders, rotations 0/1/2/3, see render/inventory.tsv\n";
 }
+// ---------------------------------------------------------------------------
+// CY-81: navigation graph. Breadth-first search from Home over every hit target the real hit map
+// exposes (classic_target scanned on a 4 px grid, including each scroll position of a long list;
+// the Bluetooth page, which has its own touch handler, on a 16 px grid). A page class is the
+// screen plus the Classic mode. Every probe replays its tap path from Home, so none sees leftover
+// state. Fails if any page outside the expected set is reachable (Classic.Volume, the Setup screen
+// and the old Player/Library/Sources screens are not in it), or any expected page is not,
+// or a screen id outside Classic and Bluetooth ever becomes current.
+// ---------------------------------------------------------------------------
+unsigned classic_mode();const char* classic_modeName(unsigned);
+struct NavPoint{int x,y;};
+static std::string navPage(){
+  switch(ui_current()){
+    case SCR_CLASSIC:return std::string("Classic.")+classic_modeName(classic_mode());
+    case SCR_BLUETOOTH:return "Bluetooth";
+    default:return "UNKNOWN";
+  }
+}
+static std::string navNode(){return navPage()+(ui_current()==SCR_CLASSIC?"@"+std::to_string(classic_top()):std::string());}
+static unsigned navRotation=0;
+static void navReset(){
+  g_settings.rotation=uint8_t(navRotation);tft.setRotation(navRotation);
+  queueLength=0;queueData=nullptr;playing=false;current=0;g_settings.outRoute=OUT_BT;routeAllowed=true;saveAllowed=true;btConnected=true;
+  g_settings.screenTimeout=0;sleep_begin(clockNow);   // no dim or swallowed wake touch left over from a previous probe
+}
+static void navReplay(const std::vector<NavPoint>& path){navReset();home();for(const NavPoint& p:path)tap(p.x,p.y);}
+static std::vector<NavPoint> navTargets(){
+  std::vector<NavPoint> out;std::vector<int> seen;
+  if(ui_current()==SCR_BLUETOOTH){for(int y=0;y<tft.height();y+=16)for(int x=0;x<tft.width();x+=16)out.push_back({x+4,y+4});return out;}
+  for(int y=0;y<tft.height();y+=4)for(int x=0;x<tft.width();x+=4){
+    const int t=classic_target(x,y);if(t==-1||std::find(seen.begin(),seen.end(),t)!=seen.end())continue;
+    seen.push_back(t);out.push_back({x,y});
+  }
+  return out;
+}
+static void navigationGraph(){
+  std::set<std::string> nodes,classes;std::map<std::string,std::set<std::string>> edges;std::set<std::string> unknown;
+  std::vector<std::vector<NavPoint>> queue{{}};
+  navReplay({});nodes.insert(navNode());classes.insert(navPage());
+  for(size_t head=0;head<queue.size();++head){
+    const std::vector<NavPoint> path=queue[head];navReplay(path);const std::string fromNode=navNode(),from=navPage();
+    for(const NavPoint& t:navTargets()){
+      navReplay(path);check(navNode()==fromNode,("replay of a tap path reaches a different page: "+fromNode+" vs "+navNode()).c_str());
+      tap(t.x,t.y);const std::string to=navPage(),toNode=navNode();
+      if(to.rfind("Legacy.",0)==0||to=="UNKNOWN")unknown.insert(to);
+      if(to!=from)edges[from].insert(to);
+      classes.insert(to);
+      if(toNode!=fromNode&&nodes.insert(toNode).second){auto next=path;next.push_back(t);queue.push_back(next);}
+    }
+  }
+  std::cout<<"NAV_GRAPH rotation "<<navRotation<<": "<<classes.size()<<" pages, "<<nodes.size()<<" page/scroll states\n";
+  for(const auto& e:edges){std::cout<<"  "<<e.first<<" ->";for(const auto& to:e.second)std::cout<<' '<<to;std::cout<<'\n';}
+  check(unknown.empty(),"a screen outside Classic and Bluetooth became current");
+  const std::set<std::string> expected{"Bluetooth","Classic.About","Classic.Catalog","Classic.Display","Classic.Home","Classic.Keyboard","Classic.Options","Classic.Output","Classic.Playback","Classic.Player","Classic.Playlists","Classic.Refresh","Classic.Search","Classic.Settings","Classic.SourceSongs","Classic.Sources","Classic.System"};
+  for(const auto& want:expected)check(classes.count(want)>0,("page not reachable from Home: "+want).c_str());
+  for(const auto& got:classes)check(expected.count(got)>0,("unexpected page reachable from Home: "+got).c_str());
+}
 int main(){try{
   geometryGolden();
-  g_settings.screenTimeout=0;g_settings.theme=8;g_settings.style=7;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
+  g_settings.screenTimeout=0;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
   SD.root=std::filesystem::current_path()/("ui-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const std::filesystem::path uiCardRoot=SD.root;
   std::filesystem::create_directories(SD.root/"music/Example");
   std::ifstream input("metadata-real.m4a",std::ios::binary);std::vector<char> original((std::istreambuf_iterator<char>(input)),{});
   check(!original.empty(),"real metadata fixture required");
@@ -772,21 +858,11 @@ int main(){try{
   check(label("Bluetooth is off (output: Headphones)"),"off status is complete in portrait too");
   tft.setRotation(0);tap(20,20);pump();tap(120,246);tap(182,246);tap(40,246);pump();
   check(btCalls==0,"Headphones header, connected state, transport and sleep have zero bt_* calls");
-  // Legacy screens are still reachable through saved skins/advanced settings.
-  SCREEN_SETUP.enter();SCREEN_SETUP.tick(clockNow+=2500);
-  SCREEN_SETUP.touch(TOUCH_TAP,100,UI_HEADER_H+UI_ROW_H+10);pump();
-  check(btCalls==0,"legacy Setup status and Bluetooth navigation are radio-free");
-  for(uint8_t skin=0;skin<SKIN_COUNT;++skin){
-    g_settings.skin=skin;SCREEN_PLAYER.enter();SCREEN_PLAYER.tick(clockNow+=2500);
-    const auto& l=layout_player();
-    SCREEN_PLAYER.press(PRESS_DOWN,l.status.cx(),l.status.cy());
-    SCREEN_PLAYER.press(PRESS_UP,l.status.cx(),l.status.cy());
-    SCREEN_PLAYER.touch(TOUCH_TAP,l.buttons[PB_VOL_UP].cx(),l.buttons[PB_VOL_UP].cy());
-    SCREEN_PLAYER.leave();
-  }
-  check(btCalls==0,"all legacy output chips, connected-state polling and volume hooks are radio-free");
-  std::cout<<"HEADPHONES_UI_OK: zero bt_* calls across Bluetooth page, Classic, Setup and all legacy player skins\n";
-  g_settings.skin=0;
+  // CY-81: the Settings tree that replaced Setup is radio-free on Headphones too.
+  btCalls=0;tft.setRotation(0);home();tapTile(5);
+  for(int row:{2,3,4,5}){tapSettingsRow(row);pump();check(classic_depth()==3,"Settings child page opened");tap(20,20);}
+  check(btCalls==0,"Playback, Display, Library & System and About make zero bt_* calls on Headphones");
+  std::cout<<"HEADPHONES_UI_OK: zero bt_* calls across Bluetooth page, Classic and the Settings tree\n";
   ui_go(SCR_BLUETOOTH);pump();tap(120,126);
   check(g_settings.outRoute==OUT_BT&&hostRestarts==restartsBefore+2,"Use Bluetooth saves Bluetooth then restarts");
   home();tapTile(5);tap(80,66);
@@ -806,7 +882,7 @@ int main(){try{
   tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable");
   std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
   classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
-  const int stopsBefore=bgStops;tapTile(4);check(bgStops>stopsBefore,"F-12 background .anim handle is released when Search opens");check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
+  tapTile(4);check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
   tap(20,216);tap(100,176);tap(60,176);tap(20,136); // song
   tap(40,300);tap(200,256);check(label("0")&&label("9"),"digit keyboard page");
   tap(24,96);tap(168,96);tap(216,96);tap(120,256); // 034, backspace -> 03
@@ -846,7 +922,10 @@ int main(){try{
   miniPlayerRegression();
   homeTilesRegression();
   settingsRegression();
+  bluetoothReturns();
   renderInventory();
+  SD.root=uiCardRoot;check(storage_begin(nullptr),"navigation card catalogue");playlist_begin();
+  for(unsigned r:{0u,1u,2u,3u}){navRotation=r;navigationGraph();}navRotation=0;tft.setRotation(0);g_settings.rotation=0;
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;

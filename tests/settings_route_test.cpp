@@ -108,6 +108,57 @@ int main() {
   CHECK(!prefs.isKey("lastPath"),"old track identity removed");
   CHECK(settings_saveOutputResume(OUT_BT),"already absent identity is valid");
   reboot();CHECK(g_settings.lastPath.isEmpty(),"empty-library identity remains empty at boot");
+  // CY-81: a blob written by the previous release, which still saved the Style, Layout (skin),
+  // Background, Theme and time-mode keys, loads cleanly. Those keys are never read, written or
+  // erased (an older image flashed back still finds its own values); every live key, and the
+  // hardware panel/invert configuration whose Setup rows were retired, still loads.
+  {
+    Preferences::erase();
+    Preferences w;
+    w.begin("mp3cfg", false);
+    w.putUChar("uiRev", 1);
+    w.putUChar("style", 7); w.putUChar("skin", 2); w.putUChar("theme", 8); w.putUChar("bg", 3); w.putUChar("timeMode", 2);
+    w.putUChar("bright", 60); w.putUChar("vol", 33); w.putUChar("screenTime", 1); w.putUChar("sleepTime", 2);
+    w.putUChar("rot", 3); w.putUChar("lang", LANG_ZH); w.putBool("shuffle", true); w.putUChar("repeat", REPEAT_ONE);
+    w.putBool("invert", true); w.putUShort("panel", CYD_PANEL_ILI9341);
+    w.putUChar("srcKind", 1); w.putULong("srcKey", 777); w.putString("btName", "Pocket"); w.putString("webPin", "424242");
+    w.putString("futureKey", "from a release that does not exist yet");
+    const uint8_t junk[7] = {1, 2, 3, 4, 5, 6, 7};
+    w.putBytes("known", junk, sizeof(junk));          // a blob of another size: ignored
+    w.end();
+    reboot();
+    CHECK(g_settings.brightness == 60 && g_settings.volume == 33 && g_settings.screenTimeout == 1 && g_settings.sleepTimer == 2, "live settings load from the previous release's blob");
+    CHECK(g_settings.rotation == 3 && g_settings.lang == LANG_ZH && g_settings.shuffle && g_settings.repeat == REPEAT_ONE, "rotation, language and playback settings load");
+    CHECK(g_settings.srcKind == 1 && g_settings.srcKey == 777 && !strcmp(g_settings.btName.c_str(), "Pocket") && !strcmp(g_settings.webPin.c_str(), "424242"), "queue source, speaker name and web passcode load");
+    CHECK(g_settings.invert, "the saved invert value (display hardware) still applies");
+#if CYD_TOUCH_CAPACITIVE
+    CHECK(g_settings.panel == CYD_PANEL_ST7789, "the fixed controller on the capacitive board ignores a stale panel value");
+#else
+    CHECK(g_settings.panel == CYD_PANEL_ILI9341, "the saved panel controller still applies");
+#endif
+    CHECK(g_settings.btKnownCount == 0, "a known-devices blob of another size is skipped");
+    settings_save();
+    CHECK(Preferences::peek("style") == 7 && Preferences::peek("skin") == 2 && Preferences::peek("theme") == 8 &&
+          Preferences::peek("bg") == 3 && Preferences::peek("timeMode") == 2, "saving does not touch the retired keys");
+    CHECK(Preferences::store().count("futureKey") == 1, "an unknown key is left alone");
+    reboot();
+    CHECK(g_settings.brightness == 60 && g_settings.volume == 33 && g_settings.invert, "a second boot after saving reads the same values");
+    // A very old blob that never ran the Classic migration: the migration still applies, and the
+    // retired keys beside it change nothing.
+    Preferences::erase();
+    Preferences::poke("style", 3); Preferences::poke("skin", 1); Preferences::poke("theme", 2); Preferences::poke("bg", 9);
+    reboot();
+#if CYD_TOUCH_CAPACITIVE
+    CHECK(g_settings.rotation == CYD_ROTATION, "first Classic boot on the capacitive board selects landscape");
+#if CYD_DEFAULT_OUT_ROUTE < 0
+    CHECK(g_settings.outRoute == OUT_BT, "first Classic boot on the capacitive board selects Bluetooth");
+#endif
+#else
+    CHECK(g_settings.rotation == 0, "first Classic boot selects portrait on the resistive board");
+#endif
+    CHECK(Preferences::peek("uiRev") == 1, "the migration is recorded");
+    printf("settings_route: previous-release blob and retired keys OK\n");
+  }
   if (failures) {
     printf("SETTINGS_ROUTE_FAILED %d\n", failures);
     return 1;

@@ -1,8 +1,8 @@
 // ===========================================================================
-// theme.h -- colour palettes, chosen in Setup
+// theme.h -- the colour palette
 // ===========================================================================
-// Screens never use a colour literal; they ask theme(), which follows
-// Settings::theme. Adding a theme is adding a row to the table in theme.cpp.
+// Screens never use a colour literal; they ask theme(). There is one palette (Classic
+// Touch, theme.cpp); a second theme would add a table and a setting back.
 //
 // The roles below are named for what they mean, not what they look like, so a
 // palette can invert without a screen knowing. Read the surfaces as a stack:
@@ -11,15 +11,12 @@
 //   band           surface 1 -- a panel, the header, an alternate row
 //   surfaceRaised  surface 2 -- a face that has to read as lifted off the panel
 //
-// A style (style.h) decides which of them a given control is painted with.
+// The control shape (style.h) decides which of them a given control is painted with.
 #pragma once
 
 #include <Arduino.h>
 
 struct Palette {
-  const char* nameEn;
-  const char* nameZh;
-
   // Surfaces, lowest first.
   uint16_t bg, band, surfaceRaised;
 
@@ -46,5 +43,3 @@ struct Palette {
 };
 
 const Palette& theme();
-int  theme_count();
-const Palette& theme_at(int i);

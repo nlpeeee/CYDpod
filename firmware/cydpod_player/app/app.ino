@@ -1,17 +1,17 @@
 // ===========================================================================
 // CYD Bluetooth MP3 Player -- application (ESP32-2432S028R, 2.8")
 // ===========================================================================
-// MP3s from the SD card, played to a Bluetooth speaker, with a touch UI and an
-// animated background. Every piece of hardware behaviour this relies on was
+// Music from the SD card, played to a Bluetooth speaker or the I2S module, with a touch UI.
+// Every piece of hardware behaviour this relies on was
 // proven first in stage0/ -- see docs/stage0_results.md for the numbers.
 //
 //   Display  HSPI      TFT_eSPI, ST7789 or ILI9341 (runtime switch, display.h)
-//   SD card  VSPI      music, backgrounds, converted frames
+//   SD card  VSPI      music
 //   Touch    bit-bang  XPT2046 (touch.h)
 //   Audio    Bluetooth A2DP source (bt.h) fed by the decode task (audio.h)
 //
 // Boot order matters for memory: rendering song titles (~100 KB of font
-// metrics) and converting backgrounds (~30 KB of GIF decoder) both run BEFORE
+// metrics) runs BEFORE
 // Bluetooth takes its ~80 KB.
 //
 // This sketch builds TWO firmware images (firmware.h): the player, and with
@@ -28,7 +28,6 @@
 #include "calibrate.h"
 #include "theme.h"
 #include "storage.h"
-#include "background.h"
 #include "audio.h"
 #include "bt.h"
 #include "boot_plan.h"
@@ -142,20 +141,6 @@ static void titleProgress(int done, int total) {
   tft.drawString(String(done) + " / " + String(total), tft.width() / 2, tft.height() / 2 + 44, 2);
 }
 
-static void conversionProgress(int n, int total, int frame) {
-  const Palette& p = theme();
-  if (frame == 0) {
-    char b[40];
-    snprintf(b, sizeof(b), "Preparing background %d of %d", n, total);
-    centreMessage("CYD MP3", b, p.accent);
-  }
-  tft.fillRect(0, tft.height() / 2 + 34, tft.width(), 20, p.bg);
-  tft.setTextColor(p.dim, p.bg);
-  tft.setTextDatum(MC_DATUM);
-  tft.drawString(frame ? "frame " + String(frame) : String("reading GIF..."),
-                 tft.width() / 2, tft.height() / 2 + 44, 2);
-}
-
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -220,7 +205,6 @@ void loop() {}
   Serial.printf("heap: after playlist %u\n", ESP.getFreeHeap());
   // Both need RAM only available before Bluetooth starts: see the header.
   titles_prepareAll(titleProgress);
-  // Classic Touch uses direct, bounded drawing; GIFs do not consume audio SD bandwidth.
   Serial.printf("heap before audio + bt: %u  largest %u\n",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
@@ -311,19 +295,14 @@ void loop() {
 
   static uint32_t lastStat = 0;
   if (now - lastStat >= 10000) {
-    uint32_t frames, avgMs, maxMs, maxBytes;
-    bg_takeStats(frames, avgMs);
-    bg_takeMax(maxMs, maxBytes);
-    Serial.printf("diag: sd read max %u ms  bg frame max %u ms %u KB  dac stalls %u\n",
-                  audio_takeMaxReadMs(), maxMs, maxBytes / 1024, speaker_stalls());
+    Serial.printf("diag: sd read max %u ms  dac stalls %u\n",
+                  audio_takeMaxReadMs(), speaker_stalls());
     const AudioCommands commands=audio_commands();
     Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u pullMax %d pendingTrack %d pendingSeek %ld cmdSerial %lu starting %d seeking %d blocked %d  "
-                  "bg %d %u.%u fps %u ms  %s  %s  pulls %u frames %u\n",
+                  "%s  %s  pulls %u frames %u\n",
                   ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(),
                   audio_decodeStackFree(), (unsigned)uxTaskGetStackHighWaterMark(nullptr),
                   audio_bufferPct(), audio_underruns(), audio_maxRequest(),commands.track,(long)commands.seekMs,(unsigned long)commands.serial,commands.opening,commands.seeking,commands.blocked,
-                  bg_current(), frames * 1000 / (now - lastStat),
-                  (frames * 10000 / (now - lastStat)) % 10, avgMs,
                   STAT_ROUTE_LABEL,
                   audio_isPlaying() ? "playing" : "paused", audio_pullCalls(), audio_pullFrames());
 #if CYD_WIRED_OUTPUT

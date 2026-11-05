@@ -4,7 +4,6 @@
 #include "speaker.h"
 #include "storage.h"
 #include "catalog.h"
-#include "background.h"
 #include "ui.h"
 
 namespace {
@@ -42,7 +41,6 @@ struct SwitchOps {
     // Search is the only incremental SD writer; all other UI writes close
     // synchronously. Decode reads only. Finish the pending search write/close.
     storage_searchCancel();
-    bg_stop();
     ui_toast("Restarting...");
     Serial.println("cmd: output saved; restarting paused at resume point");
     Serial.flush();

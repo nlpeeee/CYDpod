@@ -31,7 +31,9 @@
 //
 // CEILING. The wired module's headphone amplifier runs from 3.3 V on this
 // board and clips near full scale, so the stage scales everything by
-// kCeilingQ15 (-6 dBFS) AFTER the user volume (applied inside audio_pull).
+// the selected digital ceiling AFTER user volume (applied inside audio_pull).
+// On is -18 dBFS, Off retains -6 dBFS analogue headroom. This is a gain
+// limit, not a peak compressor or a calibrated listening-level guarantee.
 // It is folded into the same multiply as the ramp.
 //
 // DITHER. Optional TPDF (+-1 LSB) before the final rounding, off by default.
@@ -51,6 +53,9 @@ static_assert(kRampFrames * 1000 >= 5 * kSampleRate && kRampFrames * 1000 <= 10 
               "ramp must be 5..10 ms");
 // -6.0 dBFS peak into the DAC: round(32768 * 10^(-6/20)) = 16423.
 constexpr int32_t kCeilingQ15 = 16423;
+// round(32768 * 10^(-18/20)). The 12298-Q15 gap slews in 278.87 ms.
+constexpr int32_t kLimitedCeilingQ15 = 4125;
+constexpr int32_t limitCeilingQ15(bool on) { return on ? kLimitedCeilingQ15 : kCeilingQ15; }
 constexpr int32_t kUnityQ15 = 32768;
 
 struct Inputs {
@@ -64,7 +69,7 @@ struct Inputs {
 class Fade {
  public:
   explicit Fade(int32_t ceilingQ15 = kCeilingQ15, bool dither = false)
-      : ceiling_(ceilingQ15), dither_(dither) {
+      : ceiling_(ceilingQ15), targetCeiling_(ceilingQ15), dither_(dither) {
     for (int32_t p = 0; p <= kRampFrames; ++p) {
       const float c = 0.5f * (1.0f - cosf(3.14159265358979f * (float)p / (float)kRampFrames));
       int32_t q = (int32_t)(c * (float)kUnityQ15 + 0.5f);
@@ -83,6 +88,15 @@ class Fade {
     holdL_ = holdR_ = 0;
     rng_ = 0x2545F491u;
   }
+
+  // Writer only. A new stream starts at the chosen ceiling, never slews from Off.
+  void resetLimit(bool on) {
+    reset();
+    ceiling_ = targetCeiling_ = limitCeilingQ15(on);
+  }
+  // Latest request replaces the target; reversals continue from the current gain.
+  void requestLimit(bool on) { targetCeiling_ = limitCeilingQ15(on); }
+  int32_t ceilingQ15() const { return ceiling_; }
 
   void setDither(bool on) { dither_ = on; }
 
@@ -123,6 +137,11 @@ class Fade {
       } else if (pos_ > 0) {
         --pos_;
       }
+      // One Q15 unit/frame, common to L/R, including held-sample drains.
+      // Downward changes reach the lower bound only after settling. No extra
+      // sample multiply: this updates the ceiling in the existing ramp product.
+      if (ceiling_ < targetCeiling_) ++ceiling_;
+      else if (ceiling_ > targetCeiling_) --ceiling_;
       const int32_t g = (int32_t)(((int64_t)table_[pos_] * ceiling_ + (1 << 14)) >> 15);
       st[i * 2] = scale(holdL_, g);
       st[i * 2 + 1] = scale(holdR_, g);
@@ -155,6 +174,7 @@ class Fade {
 
   uint16_t table_[kRampFrames + 1];
   int32_t ceiling_;
+  int32_t targetCeiling_;
   bool dither_;
   int32_t pos_ = 0;
   bool drain_ = false;

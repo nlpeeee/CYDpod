@@ -6,6 +6,8 @@
 #include "audio.h"
 #include "speaker.h"
 #include "wired_pump.h"
+#include "settings.h"
+#include <atomic>
 #include <driver/i2s_std.h>
 #include <new>
 
@@ -64,9 +66,13 @@ const BaseType_t kTaskCore = 0;
 
 struct Work {
   int16_t chunk[cydwired::kChunkFrames * 2];
-  cydwired::Fade fade;
+  cydwired::Fade fade{cydwired::kLimitedCeilingQ15};
 };
 
+// Lock-free single-word mailbox: UI publishes only after saving. Loaded once
+// per chunk by the writer, so rapid UI requests coalesce without per-sample locks.
+static_assert(ATOMIC_INT_LOCK_FREE == 2, "limit mailbox must be lock-free");
+std::atomic<unsigned> requestedLimit{1};
 Work* work = nullptr;
 i2s_chan_handle_t tx = nullptr;
 bool enabled = false;
@@ -155,7 +161,7 @@ bool startStream() {
     return false;
   }
   enabled = true;
-  work->fade.reset();
+  work->fade.resetLimit(requestedLimit.load(std::memory_order_acquire) != 0);
   ++sessions;
   // Clocks run on zeros before any signal: >= 16 LRCK for the PLL and the DAC's
   // 104-sample un-mute, with margin.
@@ -212,6 +218,7 @@ void writerTask(void*) {
       speaker_routeFailed(OUT_WIRED);
       continue;
     }
+    work->fade.requestLimit(requestedLimit.load(std::memory_order_acquire) != 0);
     if (!cydwired::pumpOnce(audio, work->fade, work->chunk, sink, counters, true, muted))
       vTaskDelay(kBackoffTicks);
     logWriteErrors(errorsSeen);
@@ -233,6 +240,8 @@ bool wired_reserve() {
   void* mem = malloc(sizeof(Work));
   if (!mem) return false;
   work = new (mem) Work();
+  // settings_begin precedes speaker_begin/reserve, including forced-wired boot.
+  wired_setHeadphoneLimit(g_settings.headphoneLimit);
   return true;
 }
 
@@ -274,6 +283,9 @@ void wired_deleteTask() {
 bool wired_active() { return enabled; }
 
 void wired_setMuted(bool m) { muted = m; }
+void wired_setHeadphoneLimit(bool on) {
+  requestedLimit.store(on ? 1u : 0u, std::memory_order_release);
+}
 
 WiredStats wired_stats() {
   WiredStats s = {};

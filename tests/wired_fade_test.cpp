@@ -338,6 +338,54 @@ int main() {
     CHECK(c.out == d2.out, "dither is deterministic from reset");
   }
 
+  // CY-92: same production reset/target methods used by startStream/writerTask.
+  {
+    CHECK(kLimitedCeilingQ15 == lround(32768.0 * pow(10.0, -18.0 / 20.0)), "-18 dB Q15 constant");
+    CHECK(kCeilingQ15 == lround(32768.0 * pow(10.0, -6.0 / 20.0)), "-6 dB Q15 constant");
+    Fade f; Inputs in; in.playing = true;
+    for (bool on : {true, false}) {
+      f.resetLimit(on);
+      const int cap = limitCeilingQ15(on);
+      bool nonzero = false;
+      for (int i = 0; i < kRampFrames + 4; ++i) {
+        int16_t b[] = {32767, -32768}; f.process(b, 1, 1, in);
+        nonzero = nonzero || b[0] != 0;
+        CHECK(f.ceilingQ15() == cap && abs(int(b[0])) <= cap && abs(int(b[1])) <= cap,
+              "first stream/restart respects selected ceiling at frame %d", i);
+      }
+      CHECK(nonzero, "first stream contains nonzero PCM");
+      for (int16_t x : {int16_t(32767), int16_t(-32768), int16_t(12345), int16_t(-12345), int16_t(0)}) {
+        int16_t b[] = {x, x}; f.process(b, 1, 1, in);
+        const int expected = (int32_t(x) * cap + (1 << 14)) >> 15;
+        CHECK(b[0] == expected && b[1] == expected, "settled signed/full-scale/silence PCM, shared stereo gain");
+      }
+    }
+    // Fully open ramp, constant PCM: ceiling-only gain/sample steps <=1.
+    auto leg = [&](bool on, int frames) {
+      f.requestLimit(on); const int target = limitCeilingQ15(on);
+      for (int i = 0; i < frames; ++i) {
+        const int before = f.ceilingQ15();
+        int16_t b[] = {32767, -32768}; f.process(b, 1, 1, in);
+        const int after = f.ceilingQ15();
+        CHECK(abs(after - before) <= 1 && abs(target - after) <= abs(target - before), "bounded monotone ceiling step");
+        CHECK(abs(int(b[0]) - after) <= 1 && b[1] == -after, "bounded full-scale PCM step, common L/R gain");
+      }
+    };
+    const int gap = kCeilingQ15 - kLimitedCeilingQ15;
+    leg(true, gap - 1);
+    CHECK(f.ceilingQ15() == kLimitedCeilingQ15 + 1, "downward slew takes full interval");
+    leg(true, 1); CHECK(f.ceilingQ15() == kLimitedCeilingQ15, "downward settles at On");
+    leg(false, gap); CHECK(f.ceilingQ15() == kCeilingQ15, "upward settles at Off, never unity");
+    leg(true, 1000); leg(false, 1000); CHECK(f.ceilingQ15() == kCeilingQ15, "reversal resumes continuously");
+    f.requestLimit(true); f.requestLimit(false); leg(false, 1);
+    CHECK(f.ceilingQ15() == kCeilingQ15, "latest request coalesces before processing");
+    f.resetLimit(true); f.requestLimit(false);
+    int16_t z[2] = {}; f.process(z, 1, 1, in);
+    CHECK(z[0] == 0 && z[1] == 0, "slew preserves digital silence");
+    struct WorkSize { int16_t chunk[256 * 2]; Fade fade; };
+    printf("PASS CY-92 ceiling: Q15 On=%d Off=%d, %d frames, 1 Q15/frame, startup, PCM, both legs and reversal; Fade=%zu Work=%zu (+4 B each)\n",
+           kLimitedCeilingQ15, kCeilingQ15, gap, sizeof(Fade), sizeof(WorkSize));
+  }
   if (failures) { printf("WIRED_FADE_FAILED %d\n", failures); return 1; }
   printf("WIRED_FADE_OK\n");
   return 0;

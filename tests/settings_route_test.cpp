@@ -197,6 +197,33 @@ int main() {
     CHECK(g_settings.colorTheme == THEME_BLACK && Preferences::peek("theme") == 8, "legacy theme=8 changes nothing");
     printf("settings_route: colorTheme key OK\n");
   }
+  // CY-92: raw boolean byte defaults On; a dedicated save cannot disturb route
+  // (including forced-wired builds), and a failed save never publishes a value.
+  Preferences::erase(); reboot();
+  CHECK(g_settings.headphoneLimit, "missing hpLimit defaults On");
+  for (uint8_t bad : {2, 200, 255}) {
+    Preferences::poke("hpLimit", bad); reboot();
+    CHECK(g_settings.headphoneLimit, "invalid hpLimit %d defaults On", bad);
+  }
+  Preferences::store()["hpLimit"] = std::vector<uint8_t>{0, 0}; reboot();
+  CHECK(g_settings.headphoneLimit, "wrong-sized hpLimit defaults On");
+  const uint8_t savedRoute = Preferences::peek("out");
+  for (bool on : {false, true}) {
+    CHECK(settings_setHeadphoneLimit(on), "single-key limit save");
+    CHECK(Preferences::peek("hpLimit") == on, "boolean hpLimit persisted");
+    CHECK(Preferences::peek("out") == savedRoute, "limit save leaves saved route alone");
+    reboot(); CHECK(g_settings.headphoneLimit == on, "limit survives reboot");
+    CHECK(settings_save(), "whole settings save");
+    reboot(); CHECK(g_settings.headphoneLimit == on, "whole save retains limit");
+  }
+  Preferences::failOpen = true;
+  CHECK(!settings_setHeadphoneLimit(false) && g_settings.headphoneLimit, "open failure retains On");
+  Preferences::failOpen = false; Preferences::failKey = "hpLimit";
+  CHECK(!settings_setHeadphoneLimit(false) && g_settings.headphoneLimit && Preferences::peek("hpLimit") == 1,
+        "key failure retains displayed and saved On");
+  Preferences::failKey.clear(); reboot();
+  CHECK(g_settings.headphoneLimit, "failed change remains On after reboot");
+  printf("PASS CY-92 hpLimit: default/invalid On, boolean persistence, forced route isolation, failed save coherent\n");
   if (failures) {
     printf("SETTINGS_ROUTE_FAILED %d\n", failures);
     return 1;

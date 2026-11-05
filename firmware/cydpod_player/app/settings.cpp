@@ -24,6 +24,8 @@ void settings_begin() {
   s.screenTimeout = min<uint8_t>(prefs.getUChar("screenTime",s.screenTimeout),3);
   s.sleepTimer = min<uint8_t>(prefs.getUChar("sleepTime",s.sleepTimer),4);
   s.volume     = min<uint8_t>(prefs.getUChar("vol", s.volume), 100);
+  // Read the raw boolean byte: absent, wrong type/size or values >1 default On.
+  s.headphoneLimit = prefs.getUChar("hpLimit", 1) != 0;
   s.outRoute   = outRouteSanitize(prefs.getUChar("out", s.outRoute));
 #if CYD_DEFAULT_OUT_ROUTE >= 0
   storedOutRoute = s.outRoute;
@@ -116,6 +118,7 @@ bool settings_save() {
   ok = (prefs.putUChar("colorTheme", themeSanitize(s.colorTheme)) == 1) && ok;
   ok = (prefs.putUChar("screenTime",s.screenTimeout) == 1) && ok;
   ok = (prefs.putUChar("sleepTime",s.sleepTimer) == 1) && ok;
+  ok = (prefs.putBool("hpLimit", s.headphoneLimit) == 1) && ok;
   ok = (prefs.putUChar("vol",      s.volume) == 1) && ok;
 #if CYD_DEFAULT_OUT_ROUTE >= 0
   // Writing the forced route would clobber the saved choice; only a route the user
@@ -140,6 +143,18 @@ bool settings_save() {
   ok = saveString("pass", s.wifiPass) && ok;
   ok = saveString("webPin", s.webPin) && ok;
   prefs.end();
+  return ok;
+}
+
+bool settings_setHeadphoneLimit(bool on) {
+  if (!prefs.begin(NVS_NS, false)) {
+    Serial.println("headphone-limit: failed nvs=open");
+    return false;
+  }
+  const bool ok = prefs.putBool("hpLimit", on) == 1;
+  prefs.end();
+  if (!ok) Serial.println("headphone-limit: failed nvs=hpLimit");
+  else g_settings.headphoneLimit = on;
   return ok;
 }
 

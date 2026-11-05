@@ -45,6 +45,7 @@ struct Settings {
   // Player
   uint8_t  screenTimeout = 2;             // Off / 30 s / 1 min / 5 min; dim halfway
   uint8_t  sleepTimer = 0;                  // Off / 15 / 30 / 60 / 90 minutes
+  bool     headphoneLimit = true;          // wired digital output limit; NVS hpLimit
   uint8_t  volume     = 40;                 // 0-100
   // Where the sound comes out: OUT_BT or OUT_WIRED (out_route.h). Bluetooth by default; a
   // stored speaker choice from an older build is read back as Bluetooth.
@@ -91,6 +92,8 @@ extern Settings g_settings;
 
 void settings_begin();
 bool settings_save();
+// Single-key commit: publish the new preference only after NVS succeeds.
+bool settings_setHeadphoneLimit(bool on);
 // Commit resume first and output last; false means no restart is allowed.
 bool settings_saveOutputResume(uint8_t next);
 

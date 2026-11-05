@@ -274,7 +274,7 @@ int rowCount(){
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
-    case Mode::Settings:return 6;case Mode::System:return 4;case Mode::Playback:return 4;case Mode::Display:return DisplayRows;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 1 : 0);
+    case Mode::Settings:return 6;case Mode::System:return 4;case Mode::Playback:return 4;case Mode::Display:return DisplayRows;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 2 : 0);
     case Mode::Options:return 4;case Mode::Refresh:return 2;
     default:return 0;
   }
@@ -306,7 +306,11 @@ void loadRow(int i){
       else setRow(r,at==2?"Screen timeout":"Sleep timer",at==2?String(sleep_timeoutLabel(g_settings.screenTimeout)):String(sleep_timerLabel(g_settings.sleepTimer)));break;
     case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Orientation","Theme","Calibrate touch"};
       setRow(r,names[at],at<2?String(g_settings.brightness)+"%":at==2?String(RotationName[g_settings.rotation&3]):at==3?String(themeName(g_settings.colorTheme)):String(),at==4);break;}
-    case Mode::Output:{if(at==OUT_SELECTABLE_COUNT){setRow(r,"Switch back to Bluetooth if there is no sound",String(),false,true);break;}const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
+    case Mode::Output:{
+#if CYD_WIRED_OUTPUT
+      if(at==OUT_SELECTABLE_COUNT){setRow(r,g_settings.headphoneLimit?"Headphone limit: On":"Headphone limit: Off",String("Digital output limit (wired only)"));break;}
+#endif
+      if(at==OUT_SELECTABLE_COUNT+1){setRow(r,"Switch back to Bluetooth if there is no sound",String(),false,true);break;}const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
     case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):String(),at==3);break;}
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
     default:break;
@@ -626,6 +630,12 @@ void activate(int at){
       else if(at==3){g_settings.colorTheme=themeNext(g_settings.colorTheme);settings_save();enter();}
       else{calibrate_run();enter();}break;
     case Mode::Output:
+#if CYD_WIRED_OUTPUT
+      if(at==OUT_SELECTABLE_COUNT){
+        if(!settings_setHeadphoneLimit(!g_settings.headphoneLimit)){message("Unable to save headphone limit. Try again.");break;}
+        wired_setHeadphoneLimit(g_settings.headphoneLimit);invalidate();break;
+      }
+#endif
       if(at<OUT_SELECTABLE_COUNT){const uint8_t next=outRouteSelectable(at);
         if(next==g_settings.outRoute)break;
         if(!output_switch(next)){message("Unable to change output. Try again.");break;}

@@ -30,6 +30,8 @@ bool wired_active();         // the I2S channel is enabled right now
 
 // Silences the output with the same ramp as a pause. Not used by the UI yet.
 void wired_setMuted(bool muted);
+// Atomic latest-value mailbox; only the writer touches Fade.
+void wired_setHeadphoneLimit(bool on);
 
 struct WiredStats {
   bool     active;

@@ -87,7 +87,10 @@ void audio_setPlaying(bool on){playing=on;}
 bool audio_startupComplete(){return true;}
 AudioCommands audio_commands(){return {-1,-1,0,false,false,false};}
 static bool saveAllowed=true;
-static int restartSaves=0;
+static int restartSaves=0,limitSaves=0,limitRequests=0;
+static bool limitSaveAllowed=true,appliedLimit=true;
+bool settings_setHeadphoneLimit(bool on){++limitSaves;if(!limitSaveAllowed)return false;g_settings.headphoneLimit=on;return true;}
+void wired_setHeadphoneLimit(bool on){++limitRequests;appliedLimit=on;}
 static uint8_t liveRoute=OUT_BT;
 static bool savedParked=false;
 bool settings_saveOutputResume(uint8_t){++restartSaves;savedParked=liveRoute==OUT_NONE&&!playing;return saveAllowed;}
@@ -1065,7 +1068,39 @@ static void navigationGraph(){
 unsigned classic_mode();
 #include "text_quality_test.h"
 #include "quiet_outline_test.h"
+// Focused entry in the existing UI target: no media/pixel regression matrix.
+static void headphoneLimitRegression(const char* preview){
+  namespace L=cydclassic::layout;
+  tft.setRotation(1);g_settings.rotation=1;g_settings.screenTimeout=0;
+  g_settings.outRoute=OUT_BT;liveRoute=OUT_BT;g_settings.headphoneLimit=true;
+  home();tapTile(5);tapRow(0);
+#if CYD_WIRED_OUTPUT
+  check(label("Headphone limit: On")&&label("Bluetooth")&&label("Headphones"),"limit row distinct from route choices");
+  const int saves=limitSaves,requests=limitRequests,restarts=hostRestarts,routes=restartSaves;
+  const Rect row=L::row<Rect>(tft.width(),OUT_SELECTABLE_COUNT);
+  SCREEN_CLASSIC.press(PRESS_DOWN,row.cx(),row.cy());
+  SCREEN_CLASSIC.press(PRESS_UP,row.cx(),row.cy()+60);SCREEN_CLASSIC.touch(TOUCH_TAP,row.cx(),row.cy()+60);pump();
+  check(limitSaves==saves&&g_settings.headphoneLimit,"cancelled release does nothing");
+  SCREEN_CLASSIC.press(PRESS_DOWN,row.x,row.cy());check(g_settings.headphoneLimit,"limit waits for release");
+  SCREEN_CLASSIC.press(PRESS_UP,row.x-6,row.cy());SCREEN_CLASSIC.touch(TOUCH_TAP,row.x-6,row.cy());pump();
+  check(!g_settings.headphoneLimit&&!appliedLimit&&limitSaves==saves+1&&limitRequests==requests+1&&label("Headphone limit: Off"),"tolerant release toggles once and publishes saved Off");
+  check(g_settings.outRoute==OUT_BT&&liveRoute==OUT_BT&&hostRestarts==restarts&&restartSaves==routes,"limit under Bluetooth never switches route or restarts");
+  limitSaveAllowed=false;tapRow(OUT_SELECTABLE_COUNT);
+  check(!g_settings.headphoneLimit&&!appliedLimit&&limitRequests==requests+1&&label("Unable to save headphone limit. Try again."),"save failure reports and retains applied/displayed/saved choice");
+  tapBackButton();limitSaveAllowed=true;tapRow(OUT_SELECTABLE_COUNT);
+  check(g_settings.headphoneLimit&&appliedLimit&&label("Headphone limit: On"),"successful enable shows On");
+  if(preview&&*preview)check(tft.savePng(preview,1),"production Audio Output preview");
+#else
+  check(!label("Headphone limit: On")&&!label("Headphone limit: Off"),"no wired limit row without wired module");
+  (void)preview;
+#endif
+  home();tapTile(5);tapSettingsRow(3);tapRow(3);
+  check(g_settings.colorTheme==THEME_BLACK&&label("Black"),"CY-91 Theme selection spot check");
+  std::cout<<"PASS CY-92 UI: distinct row, tolerant release once, cancel, BT route unchanged, failed save coherent, production preview; CY-91 Theme spot check\n";
+}
 int main(){try{
+  if(const char* preview=std::getenv("CYDPOD_HP_LIMIT_ONLY")){headphoneLimitRegression(preview);return 0;}
+
   geometryGolden();
   g_settings.screenTimeout=0;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
   SD.root=std::filesystem::current_path()/("ui-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

@@ -193,16 +193,16 @@ int main(int argc, char** argv) {
       uint32_t rng = 12345;
       float worstL = 0, worstI = 0;
       for (const Case& c : cases) {
-        Tracker tl(ScrollCfg(), Strategy::Lsq2), ti(ScrollCfg(), Strategy::Impulse);
+        Velocity tl, ti;  // CY-107: Tracker uses FlickEstimator; LSQ2/Impulse are still checked directly
         const uint32_t dt = (uint32_t)(1000.0f / c.rate + 0.5f);
         uint32_t tEnd = 0;
         for (uint32_t ms = 0; ms <= (uint32_t)(c.endS * 1000); ms += dt) {
           float y = std::floor(c.y(ms * 0.001f) + 0.5f);
           if (c.jit) { rng = rng * 1664525u + 1013904223u; y += (float)((int)((rng >> 16) % 3) - 1); }
-          if (ms == 0) { tl.down(ms, y); ti.down(ms, y); } else { tl.move(ms, y); ti.move(ms, y); }
+          tl.add(ms, y); ti.add(ms, y);
           tEnd = ms;
         }
-        const float want = c.v(tEnd * 0.001f), gl = tl.velocity(), gi = ti.velocity();
+        const float want = c.v(tEnd * 0.001f), gl = tl.get(Strategy::Lsq2), gi = ti.get(Strategy::Impulse);
         const float tol = 0.08f * std::fabs(want) + 25.0f;
         worstL = std::fmax(worstL, std::fabs(gl - want) / (std::fabs(want) + 1)); worstI = std::fmax(worstI, std::fabs(gi - want) / (std::fabs(want) + 1));
         std::printf("  vel %-20s true %8.1f  LSQ2 %8.1f (%+6.1f)  Impulse %8.1f (%+6.1f)\n", c.name, want, gl, gl - want, gi, gi - want);
@@ -265,7 +265,10 @@ int main(int argc, char** argv) {
       check(late2.up(139, f4, 50, 0, 100000) && !late2.isTap(), "up 39 ms after the last sample still flings");
       Tracker late3; late3.down(0, 400);
       for (uint32_t ms = 10; ms <= 100; ms += 10) late3.move(ms, 400 + 2.0f * ms);
-      Fling f5; check(!late3.up(141, f5, 50, 0, 100000) && f5.finished(141), "up 41 ms after the last sample: no fling");
+      Fling f5; check(late3.up(141, f5, 50, 0, 100000) && !f5.finished(141), "CY-107: up 41 ms after the last sample still flings (gap allowance 100 ms)");
+      Tracker late4; late4.down(0, 400);
+      for (uint32_t ms = 10; ms <= 100; ms += 10) late4.move(ms, 400 + 2.0f * ms);
+      Fling f6; check(!late4.up(201, f6, 50, 0, 100000) && f6.finished(201), "CY-107: up 101 ms after the last movement: rest, no fling");
       // Tap-to-stop: a running fling is stopped in place and the touch is a drag, not a tap.
       Fling run; run.start(0, 3000, -1e7f, 1e7f, 1000);
       const float at = run.position(1200);
@@ -276,8 +279,87 @@ int main(int argc, char** argv) {
       check(!tn.stoppedFling() && tn.isTap(), "down with no running fling: plain tap candidate");
       Fling done; done.start(0, 3000, -1e7f, 1e7f, 0); Tracker td; td.down(100000, 5, &done);
       check(!td.stoppedFling(), "down after the fling finished: not a stop");
-      std::printf("PASS tracker (slop/claim no-jump, tap vs drag, fling start, hold-then-lift, tap-to-stop)\n");
+      std::printf("PASS tracker (slop/claim no-jump, tap vs drag, fling start, hold-then-lift, late up, tap-to-stop)\n");
       (void)cfg;
+    }
+
+    {  // CY-107 FlickEstimator: raw positions, time-normalised smoothing, gap allowance, reversal, travel/velocity minimums.
+      FlickEstimator e;  // 1000 px/s then 500 px/s: v follows 1-exp(-dt/50ms) toward the new segment speed
+      e.add(0, 0); e.add(20, 20); e.add(40, 40);
+      check(near(e.smoothed(), 1000, 1e-2f), "constant segments: v = segment speed");
+      e.add(60, 50);  // 500 px/s for 20 ms
+      check(near(e.smoothed(), 1000 + (1 - std::exp(-0.4f)) * (500 - 1000), 0.01f), "smoothing weight 1-exp(-dt/0.050)");
+      FlickEstimator g1, g2;  // gap allowance: 100 ms bridged, 101 ms restarts
+      g1.add(0, 0); g1.add(30, 30); g1.add(130, 80);
+      check(g1.windowCount() == 3 && g1.release(130) > 0, "100 ms gap tolerated");
+      g2.add(0, 0); g2.add(30, 30); g2.add(131, 80);
+      check(g2.windowCount() == 1 && g2.release(131) == 0, "101 ms gap restarts the estimate");
+      FlickEstimator a;  // dt < 20 ms aggregates into the next segment; duplicates and stale timestamps are ignored
+      a.add(0, 0); a.add(10, 10); check(a.smoothed() == 0, "10 ms sample is aggregated, no segment yet");
+      a.add(20, 20); check(near(a.smoothed(), 1000, 1e-2f), "aggregated segment spans anchor to newest sample");
+      a.add(20, 99); a.add(15, 99); check(near(a.smoothed(), 1000, 1e-2f), "duplicate/stale timestamps ignored");
+      FlickEstimator r;  // reversal resets v and the travel origin
+      r.add(0, 0); r.add(20, 20); r.add(40, 40); r.add(60, 36); r.add(80, 32);
+      check(near(r.smoothed(), -200, 1e-2f) && r.release(80) == 0, "reversal: v is the new direction, travel since the turn < 12 px");
+      r.add(100, 24); r.add(120, 16);
+      check(r.release(120) < -200 && r.release(120) > -1000, "after enough travel the new direction flings");
+      FlickEstimator m;  // minimum travel 12 px, minimum velocity 80 px/s
+      m.add(0, 0); m.add(20, 11); check(m.release(20) == 0, "11 px of travel: no fling");
+      m.add(40, 22); check(m.release(40) > 0, "22 px: fling");
+      FlickEstimator slowE; slowE.add(0, 0); slowE.add(100, 7); slowE.add(200, 14);
+      check(slowE.release(200) == 0, "70 px/s: below the 80 px/s minimum");
+      FlickEstimator rest;  // rest: > 100 ms since the last > 2 px movement
+      rest.add(0, 0); rest.add(20, 20); rest.add(40, 40); rest.add(60, 41);
+      check(rest.release(140) > 0 && rest.release(141) == 0, "rest timer runs from the last > 2 px movement (1 px jitter does not restart it)");
+      check(rest.release(140, 100) > 0 && rest.release(140, 141) == 0, "optional rest clock (poll that noticed the lift)");
+      // Tracker: claim and velocity use RAW positions; delta() uses the filtered ones with no jump at the claim.
+      Tracker t; t.down(0, 300, 300.0f);
+      check(!t.move(20, 300, 306) && !t.claimed(), "raw 6 px: inside the slop (filtered unmoved)");
+      check(t.move(40, 300, 312) && t.claimed() && t.delta() == 0, "raw 12 px claims; filtered lags: delta 0 at the claim, no jump");
+      t.move(60, 310, 330);
+      check(near(t.delta(), 10.0f, 1e-4f), "delta keeps following the filtered y");
+      Fling fl; check(t.up(70, fl, 0, 0, 1e6f) && t.releaseVelocity() > 400, "raw velocity (300..900 px/s segments) releases, not the lagging filtered one");
+      Tracker nf; nf.down(0, 300, 300.0f); nf.move(20, 300, 312);
+      Coast cc; check(nf.claimed() && nf.up(30, cc, 100, 0, 1e6f) && !cc.finished(30) && cc.finalY() < 100 + 1e-3f, "Coast overload of up(): content moves opposite to the finger");
+    }
+
+    {  // CY-107 Coast: closed form, speed-dependent friction, cap, clamps, minimum animation, stop.
+      Coast slow; slow.start(1000, 300, 0, 1e7f, 0);  // 300 px/s < 10 rows/s: tau = 0.32 s, stops at 40 px/s
+      check(near(slow.finalY() - 1000, 0.32f * (300 - 40), 0.01f) && near(slow.durationMs(), 320 * std::log(300.0f / 40), 1.0f), "slow region: x = tau (v0 - vStop), t = tau ln(v0/vStop)");
+      Coast mid; mid.start(0, 1200, -1e7f, 1e7f, 0);  // 30 rows/s: crosses into the slow region
+      Coast fast; fast.start(0, 4800, -1e7f, 1e7f, 0);  // the 120 rows/s cap
+      Coast over; over.start(0, 90000, -1e7f, 1e7f, 0);
+      check(near(over.finalY(), fast.finalY(), 1e-2f) && near(over.durationMs(), fast.durationMs(), 1e-2f), "release speed capped at 120 rows/s");
+      check(slow.finalY() - 1000 < mid.finalY() && mid.finalY() < fast.finalY(), "distance rises with speed");
+      std::printf("  coast rows/duration: 300 px/s %.1f/%.2f s, 1200 px/s %.1f/%.2f s, cap 4800 px/s %.1f/%.2f s\n",
+                  (slow.finalY() - 1000) / 40, slow.durationMs() / 1000, mid.finalY() / 40, mid.durationMs() / 1000, fast.finalY() / 40, fast.durationMs() / 1000);
+      float prev = -1, prevV = 1e9f;  // monotone position, non-increasing speed, velocity is the slope, ends at finalY
+      for (uint32_t t = 0; t <= (uint32_t)fast.durationMs() + 20; t += 9) {
+        const float p = fast.position(t), v = fast.velocity(t);
+        check(p >= prev && v <= prevV + 1e-3f && v >= 0, "coast monotone, decelerating");
+        if (t > 20 && t + 20 < (uint32_t)fast.durationMs()) check(near((fast.position(t + 1) - fast.position(t - 1)) * 500.0f, v, 0.01f * v + 3.0f), "velocity is d(position)/dt");
+        prev = p; prevV = v;
+      }
+      check(fast.finished((uint32_t)fast.durationMs() + 1) && fast.position(1000000) == fast.finalY() && fast.velocity(1000000) == 0, "coast ends at finalY");
+      static float rec[3][3300];  // frame-rate independence: positions are a pure function of time
+      const uint32_t periods[] = {16, 33, 50};
+      for (int k = 0; k < 3; ++k) for (uint32_t t = 0; t < 3300; t += periods[k]) rec[k][t] = mid.position(t);
+      for (uint32_t t = 0; t < 3300; t += 33 * 50) check(rec[1][t] == rec[2][t], "33 ms and 50 ms loops agree at common instants");
+      Coast dn; dn.start(1000, -2400, 0, 1e7f, 0);
+      check(dn.finalY() < 1000 && dn.position(50) < 1000, "negative velocity moves down");
+      Coast hi; hi.start(900, 3000, 0, 1000, 0);  // list end inside the throw: hard clamp, no overfling, ends there
+      float maxP = 0; for (uint32_t t = 0; t < 8000; t += 3) maxP = std::fmax(maxP, hi.position(t));
+      check(maxP <= 1000 && hi.finalY() == 1000 && hi.position(100000) == 1000 && hi.finished((uint32_t)hi.durationMs() + 1) && hi.durationMs() < 2000, "stops at the list end");
+      Coast lo; lo.start(10, -3000, 0, 1000, 0);
+      check(lo.finalY() == 0 && lo.position(100000) == 0, "stops at the list start");
+      Coast edge; edge.start(1000, 3000, 0, 1000, 0);
+      check(edge.finished(0) && edge.position(50) == 1000, "already at the end: no motion");
+      Coast tiny; tiny.start(500, 42, 0, 1e6f, 100);  // just over the stop speed: a sub-pixel throw still lasts one frame
+      check(!tiny.finished(100) && !tiny.finished(120) && tiny.finished(133) && tiny.durationMs() >= 33 && tiny.position(120) >= 500, "minimum animation: one frame");
+      Coast z; z.start(500, 40, 0, 1e6f, 0); check(z.finished(0) && z.position(10) == 500, "at or below the stop speed: no motion");
+      Coast st; st.start(0, 2000, -1e7f, 1e7f, 0); const float at = st.position(300); st.stop(300);
+      check(st.finished(300) && near(st.position(5000), at, 1e-3f), "stop() freezes in place");
+      std::printf("PASS estimator and coast (closed form, cap, clamps, rest, raw claim)\n");
     }
     std::printf("PASS all\n");
     return 0;

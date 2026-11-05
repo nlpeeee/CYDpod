@@ -22,7 +22,27 @@ struct ScrollCfg {
   float settlePx = 0.5f;            // Edge spring is finished when its envelope falls below this
   float slopPx = 7.0f;              // touch slop: finger travel before a touch becomes a drag (7 px at 143 ppi)
   uint32_t horizonMs = 100;         // velocity window (VelocityTracker HORIZON)
-  uint32_t stopMs = 40;             // ASSUME_POINTER_STOPPED_TIME: older last sample = finger stopped
+  uint32_t stopMs = 40;             // ASSUME_POINTER_STOPPED_TIME (Velocity class only; Tracker uses the CY-107 knobs below)
+  // CY-107 flick estimator (raw positions). Segment speed s = dy/dt, v += (1-exp(-dt/tauSmooth))*(s-v).
+  uint32_t gapMs = 100;             // sample gap tolerated; a longer gap restarts the estimate
+  float tauSmooth = 0.050f;         // s, time constant of the velocity smoothing
+  uint32_t aggMs = 20;              // samples closer than this to the last used one are aggregated into the next segment
+  float minTravelPx = 12.0f;        // net travel since the last reset needed to fling
+  float minVelPxS = 80.0f;          // slower releases do not fling
+  float reverseMinPx = 2.0f;        // a segment against v of at least this many px resets the estimate
+  // Rest detection (separate from sample gaps): no fling when the finger sat still this long after moving > restMovePx.
+  uint32_t restMs = 100;            // KNOWN AMBIGUITY: rests of ~80-100 ms look like a sparse sample gap and may still coast
+  float restMovePx = 2.0f;          // movement smaller than this does not restart the rest timer (jitter)
+  // CY-107 coast. Speeds in rows/s (rowPx per row). Friction time constant tau(v): tauSlow at and below slowRows/s,
+  // rising linearly in speed to tauFast at fastRows/s and above. Position is a closed form of time (no integrator).
+  float rowPx = 40.0f;              // list row height the row-based knobs refer to
+  float capRowsPerSec = 120.0f;     // release speed cap
+  float slowRows = 10.0f;           // tau = tauSlow at and below this speed
+  float fastRows = 60.0f;           // tau = tauFast at and above this speed
+  float tauSlow = 0.32f;            // s
+  float tauFast = 4.0f;             // s
+  float stopPxS = 40.0f;            // the coast ends when its speed falls to this
+  uint32_t minAnimMs = 33;          // a started coast is never finished sooner than one frame after release
 };
 
 namespace detail {
@@ -148,6 +168,75 @@ class Fling {
   float dist_ = 0, durS_ = 0, tSpl_ = 0, tBal_ = 0, cubS_ = 0, over_ = 0, vb_ = 0;
 };
 
+// CY-107 coast: speed-dependent friction, closed form of time, hard clamp at the list ends (no overfling), ends when
+// the speed falls to stopPxS. dv/dt = -v/tau(v) with tau = a + b v between slowRows and fastRows, so
+//   time(vh->vl) = a ln(vh/vl) + b (vh-vl),  distance = a (vh-vl) + b/2 (vh^2-vl^2),
+// and plain exponentials (b = 0) in the two end regions. Starts at the release time and animates forward (no backdating).
+class Coast {
+ public:
+  explicit Coast(const ScrollCfg& c = ScrollCfg()) : c_(c) {}
+  const ScrollCfg& cfg() const { return c_; }
+  // v: content velocity in px/s (sign = direction of position change). |v| <= stopPxS or no room: no motion.
+  void start(float y0, float v, float minY, float maxY, uint32_t nowMs) {
+    t0_ = nowMs; y0_ = y0; dur_ = dist_ = 0; moving_ = false;
+    const float cap = c_.capRowsPerSec * c_.rowPx;
+    float av = fabsf(v);
+    if (av > cap) av = cap;
+    dir_ = v < 0 ? -1.0f : 1.0f;
+    const float room = dir_ > 0 ? maxY - y0 : y0 - minY;
+    if (av <= c_.stopPxS || room <= 0) return;
+    v0_ = av; moving_ = true;
+    span(v0_, c_.stopPxS, &dur_, &dist_);
+    if (dist_ > room) {  // reaches the list end first: find when
+      float lo = c_.stopPxS, hi = v0_, t, x;
+      for (int i = 0; i < 24; ++i) { const float m = 0.5f * (lo + hi); span(v0_, m, &t, &x); if (x > room) lo = m; else hi = m; }
+      span(v0_, 0.5f * (lo + hi), &dur_, &x);
+      dist_ = room;
+    }
+  }
+  float position(uint32_t nowMs) const {
+    if (!moving_) return y0_;
+    const float e = elapsed(nowMs);
+    if (e >= dur_) return y0_ + dir_ * dist_;
+    float x; speedAt(e, &x);
+    return y0_ + dir_ * (x < dist_ ? x : dist_);
+  }
+  float velocity(uint32_t nowMs) const {  // px/s, signed
+    if (!moving_ || elapsed(nowMs) >= dur_) return 0;
+    return dir_ * speedAt(elapsed(nowMs), nullptr);
+  }
+  bool finished(uint32_t nowMs) const { return !moving_ || elapsed(nowMs) * 1000.0f >= durationMs(); }
+  float finalY() const { return y0_ + dir_ * dist_; }
+  float durationMs() const { const float d = dur_ * 1000.0f; return moving_ && d < (float)c_.minAnimMs ? (float)c_.minAnimMs : d; }
+  void stop(uint32_t nowMs) { const float p = position(nowMs); start(p, 0, p, p, nowMs); }  // freeze here
+
+ private:
+  float elapsed(uint32_t nowMs) const { return (float)(int32_t)(nowMs - t0_) * 0.001f; }
+  // Time and distance to decelerate from vh to vl (vh >= vl), summed over the three friction regions.
+  void span(float vh, float vl, float* t, float* x) const {
+    const float v1 = c_.slowRows * c_.rowPx, v2 = c_.fastRows * c_.rowPx;
+    const float b = (c_.tauFast - c_.tauSlow) / (v2 - v1), a = c_.tauSlow - b * v1;
+    *t = *x = 0;
+    if (vh > v2) { const float lo = vl > v2 ? vl : v2; *t += c_.tauFast * logf(vh / lo); *x += c_.tauFast * (vh - lo); }
+    const float mh = vh < v2 ? vh : v2, ml = vl > v1 ? vl : v1;
+    if (mh > ml) { *t += a * logf(mh / ml) + b * (mh - ml); *x += a * (mh - ml) + 0.5f * b * (mh * mh - ml * ml); }
+    const float lh = vh < v1 ? vh : v1;
+    if (lh > vl) { *t += c_.tauSlow * logf(lh / vl); *x += c_.tauSlow * (lh - vl); }
+  }
+  // Speed after e seconds (time is monotone decreasing in speed, so bisect); optionally the distance covered.
+  float speedAt(float e, float* x) const {
+    float lo = c_.stopPxS, hi = v0_, t, d;
+    for (int i = 0; i < 24; ++i) { const float m = 0.5f * (lo + hi); span(v0_, m, &t, &d); if (t > e) lo = m; else hi = m; }
+    const float v = 0.5f * (lo + hi);
+    if (x) { span(v0_, v, &t, &d); *x = d; }
+    return v;
+  }
+  ScrollCfg c_;
+  uint32_t t0_ = 0;
+  float y0_ = 0, dir_ = 1, v0_ = 0, dur_ = 0, dist_ = 0;
+  bool moving_ = false;
+};
+
 // Edge spring: overscroll offset (px past the bound) released with a velocity; underdamped spring in closed
 // form (EdgeEffect-like, no integrator, any frame rate).
 class Edge {
@@ -254,55 +343,115 @@ class Velocity {
   int n_ = 0, head_ = 0;
 };
 
-// Touch gesture: down / move / up. A touch becomes a drag after |dy| > slopPx; the slop is subtracted so delta() is
-// 0 at the claim (no jump). Samples enter the velocity ring only when y changed. Touch-down on a running Fling stops
-// it and marks the touch as a drag, never a tap.
+// CY-107 release-velocity estimator on RAW positions. Samples may be sparse (changed positions only): gaps up to gapMs
+// are bridged by a time-normalised smoothing, longer gaps restart. Rest is detected separately from gaps (release()).
+class FlickEstimator {
+ public:
+  explicit FlickEstimator(const ScrollCfg& c = ScrollCfg()) : c_(c) {}
+  void clear() { n_ = 0; segs_ = 0; v_ = 0; }
+  int windowCount() const { return n_; }                // samples since the last restart/reversal-free run
+  uint32_t lastMs() const { return n_ ? lastMs_ : 0; }  // newest accepted sample
+  float smoothed() const { return segs_ ? v_ : 0.0f; }  // px/s, signed, before the release gates
+  void add(uint32_t ms, float y) {
+    if (n_ && (int32_t)(ms - lastMs_) <= 0) return;     // stale or duplicate report
+    if (!n_ || ms - lastMs_ > c_.gapMs) { restart(ms, y); return; }
+    ++n_; lastMs_ = ms; lastY_ = y;
+    if (fabsf(y - restY_) > c_.restMovePx) { restY_ = y; restMs_ = ms; }
+    const uint32_t dt = ms - aMs_;
+    if (dt < c_.aggMs) return;                          // aggregate into the next segment
+    const float dy = y - aY_, s = dy / ((float)dt * 0.001f);
+    if (!segs_) v_ = s;
+    else if (dy * v_ < 0 && fabsf(dy) >= c_.reverseMinPx) { v_ = s; resetY_ = aY_; }  // reversal: start over
+    else v_ += (1.0f - expf(-(float)dt * 0.001f / c_.tauSmooth)) * (s - v_);
+    ++segs_; aMs_ = ms; aY_ = y;
+  }
+  // Release at time ms (last time the finger was seen): signed px/s, or 0 = no fling (rest, stale, short travel,
+  // slow). restNowMs (>= ms, 0 = ms) is the rest clock: sparse polls can see a long rest for only a poll or two, so
+  // the caller may pass the poll time that noticed the lift minus the press grace.
+  float release(uint32_t ms, uint32_t restNowMs = 0) const {
+    const uint32_t rn = (int32_t)(restNowMs - ms) > 0 ? restNowMs : ms;
+    if (!segs_ || rn - restMs_ > c_.restMs || ms - lastMs_ > c_.gapMs) return 0;
+    if (fabsf(lastY_ - resetY_) < c_.minTravelPx) return 0;
+    const float v = v_ > c_.maxFling ? c_.maxFling : (v_ < -c_.maxFling ? -c_.maxFling : v_);
+    return fabsf(v) < c_.minVelPxS ? 0.0f : v;
+  }
+
+ private:
+  void restart(uint32_t ms, float y) {
+    n_ = 1; segs_ = 0; v_ = 0; lastMs_ = aMs_ = restMs_ = ms; lastY_ = aY_ = restY_ = resetY_ = y;
+  }
+  ScrollCfg c_;
+  uint32_t lastMs_ = 0, aMs_ = 0, restMs_ = 0;
+  float lastY_ = 0, aY_ = 0, restY_ = 0, resetY_ = 0, v_ = 0;
+  int n_ = 0, segs_ = 0;
+};
+
+// Touch gesture: down / move / up. A touch becomes a drag after RAW |dy| > slopPx; the slop is subtracted so delta()
+// is 0 at the claim (no jump). Velocity comes from the raw positions (FlickEstimator); delta() uses the filtered
+// positions that are painted and hit-tested. move(ms, y) means filtered == raw. Samples enter the estimator only when
+// the raw y changed. Touch-down on a running Fling/Coast stops it and marks the touch as a drag, never a tap.
 class Tracker {
  public:
-  explicit Tracker(const ScrollCfg& c = ScrollCfg(), Strategy s = Strategy::Lsq2) : c_(c), vel_(c), strat_(s) {}
+  // The Strategy argument is kept for source compatibility; the CY-107 estimator replaced both strategies.
+  explicit Tracker(const ScrollCfg& c = ScrollCfg(), Strategy s = Strategy::Lsq2) : c_(c), est_(c), strat_(s) {}
   void setStrategy(Strategy s) { strat_ = s; }
   Strategy strategy() const { return strat_; }
 
-  void down(uint32_t ms, float y, Fling* running = nullptr) {
-    vel_.clear(); vel_.add(ms, y);
-    downY_ = lastY_ = anchor_ = y; claimed_ = false; active_ = true; stoppedFling_ = false;
-    if (running && !running->finished(ms)) { running->stop(ms); stoppedFling_ = true; }
+  void down(uint32_t ms, float y, Fling* running = nullptr) { down(ms, y, y); if (running && !running->finished(ms)) { running->stop(ms); stoppedFling_ = true; } }
+  void down(uint32_t ms, float y, Coast* running) { down(ms, y, y); if (running && !running->finished(ms)) { running->stop(ms); stoppedFling_ = true; } }
+  void down(uint32_t ms, float y, float yRaw) {
+    est_.clear(); est_.add(ms, yRaw);
+    downY_ = lastY_ = anchor_ = y; downRaw_ = lastRaw_ = yRaw; claimed_ = false; active_ = true; stoppedFling_ = false; upV_ = 0;
   }
-  // Returns true once the touch is a drag (claimed). delta() is then y minus the claim point (slop removed).
-  bool move(uint32_t ms, float y) {
+  // Returns true once the touch is a drag (claimed). delta() is then the filtered y minus the claim point (slop removed).
+  bool move(uint32_t ms, float y) { return move(ms, y, y); }
+  bool move(uint32_t ms, float y, float yRaw) {
     if (!active_) return false;
-    if (y != lastY_) { vel_.add(ms, y); lastY_ = y; }
-    if (!claimed_ && (stoppedFling_ || fabsf(y - downY_) > c_.slopPx)) {
+    if (yRaw != lastRaw_) { est_.add(ms, yRaw); lastRaw_ = yRaw; }
+    lastY_ = y;
+    if (!claimed_ && (stoppedFling_ || fabsf(yRaw - downRaw_) > c_.slopPx)) {
       claimed_ = true;
-      anchor_ = stoppedFling_ ? downY_ : downY_ + detail::sgn(y - downY_) * c_.slopPx;
+      if (stoppedFling_) anchor_ = downY_;
+      else {  // remove the slop from the filtered travel, never more than the filtered y has actually moved
+        const float dir = detail::sgn(yRaw - downRaw_), moved = (y - downY_) * dir;
+        anchor_ = downY_ + dir * (moved < 0 ? 0 : (moved < c_.slopPx ? moved : c_.slopPx));
+      }
     }
     return claimed_;
   }
-  // Release. Starts `fling` at content position y0 within [minY,maxY] and returns true when the touch was a drag,
-  // |v| > minFling and the last changed sample is not older than stopMs (hold-then-lift: no fling). vScale maps
-  // finger velocity to content velocity (-1: content moves opposite to a finger moving along +y).
-  bool up(uint32_t ms, Fling& fling, float y0, float minY, float maxY, float vScale = -1.0f) {
-    active_ = false; upV_ = 0;
-    if (!claimed_ || (uint32_t)(ms - vel_.lastMs()) > c_.stopMs) return false;
-    upV_ = vel_.get(strat_);
-    if (fabsf(upV_) <= c_.minFling) return false;
+  // Release. Starts `fling`/`coast` at content position y0 within [minY,maxY] and returns true when the touch was a
+  // drag and the estimator released a velocity (no rest, travel >= minTravelPx, |v| >= minVelPxS). vScale maps finger
+  // velocity to content velocity (-1: content moves opposite to a finger moving along +y). restNowMs: see FlickEstimator.
+  bool up(uint32_t ms, Fling& fling, float y0, float minY, float maxY, float vScale = -1.0f, uint32_t restNowMs = 0) {
+    if (!release(ms, restNowMs)) return false;
     fling.start(y0, vScale * upV_, minY, maxY, ms);
     return true;
+  }
+  bool up(uint32_t ms, Coast& coast, float y0, float minY, float maxY, float vScale = -1.0f, uint32_t restNowMs = 0) {
+    if (!release(ms, restNowMs)) return false;
+    coast.start(y0, vScale * upV_, minY, maxY, ms);
+    return !coast.finished(ms);
   }
   bool active() const { return active_; }
   bool claimed() const { return claimed_; }
   bool stoppedFling() const { return stoppedFling_; }               // touch-down hit a running fling
   bool isTap() const { return !claimed_ && !stoppedFling_; }        // meaningful at up(); long-press is the caller's
   float delta() const { return claimed_ ? lastY_ - anchor_ : 0; }   // finger travel since the claim point
-  float velocity() const { return vel_.get(strat_); }               // live finger velocity (px/s)
+  float velocity() const { return est_.smoothed(); }                // live smoothed finger velocity (px/s)
   float releaseVelocity() const { return upV_; }                    // velocity seen by the last up()
-  const Velocity& samples() const { return vel_; }
+  const FlickEstimator& samples() const { return est_; }
 
  private:
+  bool release(uint32_t ms, uint32_t restNowMs) {
+    active_ = false; upV_ = 0;
+    if (!claimed_) return false;
+    upV_ = est_.release(ms, restNowMs);
+    return upV_ != 0;
+  }
   ScrollCfg c_;
-  Velocity vel_;
+  FlickEstimator est_;
   Strategy strat_;
-  float downY_ = 0, lastY_ = 0, anchor_ = 0, upV_ = 0;
+  float downY_ = 0, lastY_ = 0, anchor_ = 0, downRaw_ = 0, lastRaw_ = 0, upV_ = 0;
   bool active_ = false, claimed_ = false, stoppedFling_ = false;
 };
 

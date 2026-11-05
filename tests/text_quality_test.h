@@ -208,6 +208,24 @@ static void browsePages(const std::string& dir){
   for(unsigned rotation:{1u,0u}){tft.setRotation(rotation);home();tapTile(5);tapRow(0);ui_redraw();pump();preview(dir,"audio-output-r"+std::to_string(rotation));}
   std::cout<<"CY85_BROWSE_OK: mini-player lines inside their cell in all rotations; list and settings previews written\n";
 }
+// 3c. One sheet: the same strings at the v20 slot heights (verbatim sampler, real Font16 data) above the same
+//     strings through the CY-85 faces. Native pixels; the x3 PNG is the enlarged inspection copy.
+static void v20Line(const char* text,int x,int y,int height){
+  for(const unsigned char* c=(const unsigned char*)text;*c;++c){const Bits g=v20Sample(char(*c),height);
+    for(int dy=0;dy<g.h;++dy){int run=-1;for(int dx=0;dx<=g.w;++dx){const bool on=g.at(dx,dy);if(on&&run<0)run=dx;else if(!on&&run>=0){tft.drawFastHLine(x+run,y+dy,dx-run,0);run=-1;}}}
+    x+=g.w;}
+}
+static void beforeAfter(const std::string& dir){
+  tft.setRotation(1);tft.fillScreen(0xffff);
+  tft.setTextColor(0x001f,0xffff);tft.setTextDatum(TL_DATUM);
+  const char* title="...Baby One More Time";const char* artist="Britney Spears";const char* album="...Baby One More Time (Digital Deluxe)";
+  tft.drawString("Before (v20): font 2 shrunk to 22..10 px",2,0,2);
+  v20Line(title,6,20,22);v20Line(artist,6,46,14);v20Line(album,6,64,12);v20Line("24 / 85   1:24   -2:36",6,82,11);v20Line("Headphones   AirPods Pro 2",6,98,10);
+  tft.drawString("After (CY-85): FreeSans 12 bold / 9 pt",2,112,2);
+  cydtext::draw(Face::Title,title,6,138,cydtext::HAlignLeft,0);cydtext::draw(Face::Label,artist,6,160,cydtext::HAlignLeft,0);cydtext::draw(Face::Label,album,6,180,cydtext::HAlignLeft,0);
+  cydtext::draw(Face::Label,"24 / 85   1:24   -2:36",6,200,cydtext::HAlignLeft,0);cydtext::draw(Face::Label,"Headphones   AirPods Pro 2",6,220,cydtext::HAlignLeft,0);
+  preview(dir,"before-after-sampler");
+}
 static void run(){
   const int savedQueue=queueLength,savedCurrent=current,savedVolume=volume;const uint16_t* savedData=queueData;const bool savedPlaying=playing,savedSeek=seekAllowed;
   const uint32_t savedPosition=positionMs;const uint8_t savedRoute=g_settings.outRoute;const String savedPeer=btName;const unsigned savedRotation=tft.getRotation();
@@ -225,6 +243,7 @@ static void run(){
   for(const Scene& s:scenes)sceneRun(dir,s,true);
   secondTick();
   browsePages(dir);
+  beforeAfter(dir);
   classic_hostTrackInfo(nullptr);
   queueLength=savedQueue;queueData=savedData;current=savedCurrent;playing=savedPlaying;volume=savedVolume;positionMs=savedPosition;seekAllowed=savedSeek;
   g_settings.outRoute=savedRoute;btName=savedPeer;tft.setRotation(savedRotation);

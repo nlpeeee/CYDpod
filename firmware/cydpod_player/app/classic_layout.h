@@ -69,4 +69,12 @@ template<class R> constexpr inline R key(int w,int h,int i,bool digits){const in
 template<class R> constexpr inline R keyBack(int h){return h<PortraitMinH?R{0,KeyActionY,KeyActionW,KeyH}:R{ActionW,PortraitActionY,ActionW,KeyH};}
 template<class R> constexpr inline R keyDigits(int h){return h<PortraitMinH?R{KeyDigitsX,KeyActionY,KeyDigitsW,KeyH}:R{PlayingX,PortraitActionY,ActionW,KeyH};}
 template<class R> constexpr inline R keyPage(){return {KeyActionW,KeyActionY,KeyActionW,KeyH};}
+// CY-80 Home: six tiles (3 x 2 landscape, 2 x 3 portrait) between header and mini-player.
+// The left/top margins match proposal C; the right margin is one gap. Swipe-back needs this much rightward travel.
+constexpr int TileCount=6,TileMargin=8,TileGap=4,TileTop=8,TileBottom=4,TileRadius=8,SwipeBackPx=40;
+constexpr int TileIconY=26,TileIconSize=28,TileLabelBottom=15,TileTextInset=6,TileStroke=2;
+constexpr inline int tileCols(int h){return h<PortraitMinH?3:2;}
+constexpr inline int tileW(int w,int h){return (w-TileMargin-TileGap*tileCols(h))/tileCols(h);}
+constexpr inline int tileH(int h){return (h-HeaderH-FooterH-TileTop-TileBottom-(TileCount/tileCols(h)-1)*TileGap)/(TileCount/tileCols(h));}
+template<class R> constexpr inline R tile(int w,int h,int i){return {TileMargin+(i%tileCols(h))*(tileW(w,h)+TileGap),HeaderH+TileTop+(i/tileCols(h))*(tileH(h)+TileGap),tileW(w,h),tileH(h)};}
 } } // namespace cydclassic::layout

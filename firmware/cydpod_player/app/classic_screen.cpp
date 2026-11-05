@@ -27,7 +27,7 @@ extern const unsigned char* const chrtbl_f16[96];
 
 namespace {
 namespace L=cydclassic::layout;
-enum class Mode:uint8_t { Home,Music,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Volume,Options,About,Refresh,Message,Search,Keyboard };
+enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Volume,Options,About,Refresh,Message,Search,Keyboard };
 struct Page {
   Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;uint16_t top=0;
   SourceKind sourceKind=SRC_M3U;char title[64]={};
@@ -51,7 +51,7 @@ bool shownPlaying=false,savePending=false,shownSeeking=false,shownWaiting=false;
 bool previewDirty=false;
 bool externalReturn=false;
 bool seekPreview=false,seekCancelled=false,volumeChanged=false;
-int playerPressed=-1;
+int playerPressed=-1,tilePressed=-1;
 #ifdef CYDPOD_CATALOG_HOST
 int volumeSaveArms=0;
 #endif
@@ -60,6 +60,7 @@ char notice[128]={};
 char query[32]={};bool digitKeys=false,lettersSecond=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44,KeyPage=-45;
+constexpr int TileBase=-50; // Home tile i is target TileBase-i
 constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Volume=-23,Options=-24,Slider=-25,Minus=-26,Plus=-27,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
 Page miniReturn{};uint8_t miniReturnDepth=0;uint32_t miniPressUntil=0;bool miniQueued=false;
 Page& page(){return navigation.current();}
@@ -76,12 +77,12 @@ void centred(const String& s,int y,uint16_t fg,uint16_t bg,int width=0){ui_text(
 const char* pageTitle(const Page& value){
   if(value.title[0])return value.title;
   switch(value.mode){
-    case Mode::Home:return "CYDpod";case Mode::Music:return "Music";case Mode::Player:return "Now Playing";
+    case Mode::Home:return "CYDpod";case Mode::Playlists:return "Playlists";case Mode::Player:return "Now Playing";
     case Mode::Search:return "Search Results";case Mode::Keyboard:return "Search Songs";
     case Mode::Settings:return "Settings";case Mode::Playback:return "Playback";case Mode::Display:return "Display";
     case Mode::Output:return "Audio Output";case Mode::Volume:return "Volume";case Mode::Options:return "Options";
     case Mode::About:return "About";case Mode::Refresh:return "Refresh Library";case Mode::Message:return "CYDpod";
-    default:return "Music";
+    default:return "CYDpod";
   }
 }
 const char* title(){return pageTitle(page());}
@@ -178,6 +179,28 @@ void footer(){
   }
 }
 
+int tileOf(int target){return target<=TileBase&&target>TileBase-L::TileCount?TileBase-target:-1;}
+// Artists, Albums and Search have no ui_icon(); draw them from plain primitives like the Home glyph.
+void tileGlyph(int i,int cx,int cy,uint16_t fg,uint16_t bg){
+  const int s=L::TileIconSize;
+  if(i==0)ui_icon(ICON_NOTE,cx,cy,s,fg,bg);
+  else if(i==1){tft.fillCircle(cx,cy-s/4,s/5,fg);tft.fillRoundRect(cx-s/3,cy+s/12,2*s/3,s/2-s/12,s/6,fg);}
+  else if(i==2){for(int k=0;k<L::TileStroke;++k)tft.drawRect(cx-s/2+k,cy-s/2+k,s-2*k,s-2*k,fg);tft.fillCircle(cx,cy,s/7,fg);}
+  else if(i==3)ui_icon(ICON_STAR,cx,cy,s,fg,bg);
+  else if(i==4){
+    tft.fillCircle(cx-s/8,cy-s/8,s/3,fg);tft.fillCircle(cx-s/8,cy-s/8,s/3-L::TileStroke-1,bg);
+    for(int k=0;k<L::TileStroke;++k)tft.drawLine(cx+s/8+k,cy+s/8,cx+s/2-1+k,cy+s/2-1,fg);
+  }else ui_icon(ICON_GEAR,cx,cy,s,fg,bg);
+}
+void paintTile(int i,bool pressed){
+  if(i<0||i>=L::TileCount)return;
+  const char* names[]={"Songs","Artists","Albums","Playlists","Search","Settings"};
+  const Palette& p=theme();const Rect r=L::tile<Rect>(tft.width(),tft.height(),i);const uint16_t face=pressed?p.pressed:p.band;
+  tft.fillRoundRect(r.x,r.y,r.w,r.h,L::TileRadius,face);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::TileRadius,p.outline);
+  tileGlyph(i,r.cx(),r.y+L::TileIconY,p.text,face);
+  ui_text(String(names[i]),r.cx(),r.y+r.h-L::TileLabelBottom,MC_DATUM,p.text,face,r.w-2*L::TileTextInset);
+}
+void paintTiles(){for(int i=0;i<L::TileCount;++i)paintTile(i,false);}
 void paintRow(int i,bool pressed){
   if(i<0||i>=rows())return;Row& r=cache[i];const Palette& p=theme();const Rect box=rowRect(i);
   uint16_t bg=pressed?p.accent:p.bg,fg=pressed?p.onAccent:r.disabled?p.disabled:p.text;
@@ -210,7 +233,7 @@ int sourceId(int wanted){
 }
 int rowCount(){
   switch(page().mode){
-    case Mode::Home:return 5;case Mode::Music:return 7;
+    case Mode::Home:return 0;case Mode::Playlists:return 2+playlist_sourceCount(SRC_M3U);
     case Mode::Search:return 1+max(1,storage_searchCount());
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
@@ -224,8 +247,10 @@ void loadRow(int i){
   Row& r=cache[i];r=Row{};const int at=page().top+i;
   if(at>=count){r.valid=true;paintRow(i,false);return;}
   switch(page().mode){
-    case Mode::Home:{const char* names[]={"Music","Now Playing","Shuffle Songs","Settings","Search Songs"};setRow(r,names[at],String(),true,at==1&&!storage_trackCount());break;}
-    case Mode::Music:{const char* names[]={"Artists","Albums","Songs","Playlists","Folders","Favourites","Search Songs"};setRow(r,names[at],String(),true);break;}
+    case Mode::Playlists:
+      if(at<2)setRow(r,at?"Folders":"Favourites",String(),true);
+      else{const int source=playlist_sourceAt(SRC_M3U,at-2);setRow(r,playlist_name(source).c_str(),String(),true,source<0);r.source=source;}
+      break;
     case Mode::Catalog:{CatalogEntry e;if(storage_browseEntry(page().view,at,e)){setRow(r,e.label.c_str(),e.detail,e.navigates);r.track=e.track;r.child=e.child;}
       else setRow(r,"Unable to read entry","Check SD card",false,true);break;}
     case Mode::Search:
@@ -415,7 +440,7 @@ void editQuery(int target){
   if(changed){storage_searchStart(query);queryPaint();}
 }
 void enter(){
-  bg_stop();seekPreview=false;playerPressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
+  bg_stop();seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
@@ -424,6 +449,7 @@ void enter(){
   shownVolume=shownConnection=-1;
   if(page().mode==Mode::Keyboard){keyboardPaint();searchShownCount=searchShownProgress=-1;}
   else if(page().mode==Mode::Player){playerTrack();playerTransport();playerBottom();lastPlayer=0;playerTick(millis());}
+  else if(page().mode==Mode::Home)paintTiles();
   else if(page().mode==Mode::Volume){volumePaint();shownVolume=audio_volume();}
   else if(page().mode==Mode::Message){
     // Bounded, word-wrapped ASCII status text; music labels use cached UTF-8 strips.
@@ -493,20 +519,23 @@ void toggleFavourite(){
         }
   if(page().mode==Mode::Player)playerHeader();else invalidate();
 }
+// Home tiles go straight to the page: Music is no longer an intermediate list.
+void openTile(int i){
+  switch(i){
+    case 0:catalog({CatalogKind::Songs,0},"Songs");break;
+    case 1:catalog({CatalogKind::Artists,0},"Artists");break;
+    case 2:catalog({CatalogKind::Albums,0},"Albums");break;
+    case 3:show(Mode::Playlists);break;
+    case 4:storage_searchStart(query);show(Mode::Search);show(Mode::Keyboard);break;
+    default:show(Mode::Settings);break;
+  }
+}
 void activate(int at){
   const int index=at-page().top;if(index<0||index>=rows())return;Row selected=cache[index];
   if(!selected.valid||selected.disabled){Serial.println("cmd: row ignored (unavailable)");ui_toast("Entry unavailable. Try again.");return;}
   Serial.printf("cmd: row %d accepted screen %u\n",at,unsigned(page().mode));
   switch(page().mode){
-    case Mode::Home:
-      if(at==0)show(Mode::Music);else if(at==1)show(Mode::Player);else if(at==2){
-        const int n=storage_trackCount();if(!n){message("No songs on the SD card.");break;}
-        audio_setShuffle(true);g_settings.shuffle=true;
-        if(playlist_playView({CatalogKind::Songs,0},esp_random()%n))show(Mode::Player);else message(playlist_memoryRefused()?"Not enough memory, try again":"Unable to start playback.");
-      }else if(at==3)show(Mode::Settings);else {storage_searchStart(query);show(Mode::Search);show(Mode::Keyboard);}break;
-    case Mode::Music:
-      if(at<3){const CatalogKind kinds[]={CatalogKind::Artists,CatalogKind::Albums,CatalogKind::Songs};catalog({kinds[at],0},selected.label);}
-      else if(at==3)sourceMenu(SRC_M3U,"Playlists");else if(at==4)sourceMenu(SRC_FOLDER,"Folders");else if(at==5)openSource(1);else {storage_searchStart(query);show(Mode::Search);show(Mode::Keyboard);}break;
+    case Mode::Playlists:if(at==0)openSource(1);else if(at==1)sourceMenu(SRC_FOLDER,"Folders");else openSource(selected.source);break;
     case Mode::Catalog:
       if(selected.navigates)catalog(selected.child,selected.label);
       else if(playlist_playView(page().view,at))show(Mode::Player);else message(playlist_memoryRefused()?"Not enough memory, try again":"Unable to read songs or allocate queue.");break;
@@ -574,6 +603,7 @@ int targetAt(int x,int y){
     if(!audio_queueLen())return storage_trackCount()?Shuffle:-1;
     return L::mini<Rect>(tft.width(),tft.height(),0).contains(x,y)?Play:L::mini<Rect>(tft.width(),tft.height(),2).contains(x,y)?Next:Now;
   }
+  if(page().mode==Mode::Home){for(int i=0;i<L::TileCount;++i)if(L::tile<Rect>(tft.width(),tft.height(),i).contains(x,y))return TileBase-i;return -1;}
   if(browse()&&L::strip<Rect>(tft.width(),tft.height()).contains(x,y))return count>rows()?(L::pageStrip<Rect>(tft.width(),tft.height(),false).contains(x,y)?Up:Down):-1;
   if(page().mode==Mode::Volume){
     if(sliderRect().contains(x,y))return Slider;
@@ -605,6 +635,8 @@ void transportDown(int target){
   if(target==Prev)audio_prev();else if(target==Next)audio_next();else audio_togglePause();
   lastPlayer=0; // repaint the transport and track now, not on the next 250 ms tick
 }
+// Swipe-back is a shortcut for the Back button on browse pages, started in the body (not header, mini-player or strip).
+bool swipeable(){return browse()&&navigation.depth>1&&gesture.target!=Slider&&gesture.y>=L::HeaderH&&gesture.y<L::miniY(tft.height())&&gesture.x<tft.width()-L::StripW;}
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
@@ -619,6 +651,7 @@ bool press(PressPhase phase,int x,int y){
       if(hit==Prev||hit==Play||hit==Next||hit==Shuffle||hit==Repeat)playerTransport();else if(hit==Output)playerOutput();else if(hit==Favourite||hit==Options||hit==Back)playerHeader();
       if(gesture.claimed)return true;
     }
+    if(tileOf(hit)>=0){tilePressed=tileOf(hit);paintTile(tilePressed,true);return false;}
     highlight=hit>=0&&page().mode!=Mode::Keyboard?hit-page().top:-1;if(highlight>=0&&highlight<rows()&&cache[highlight].valid)paintRow(highlight,true);
     return false;
   }
@@ -632,12 +665,15 @@ bool press(PressPhase phase,int x,int y){
     const bool claimed=gesture.move(x,y,!within(x,y,cydclassic::Gesture::SlopFar),gesture.target>=0&&gesture.target<KeyBase&&count>rows());
     if(gesture.claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
       if(top!=page().top){page().top=top;highlight=-1;invalidate();footer();}}
+    // CY-80 swipe-back: travelling right claims the press so the release never taps a row or tile.
+    if(swipeable()&&gesture.swipeBack(x,y))gesture.claimed=true;
     // Show what a release would do: lit while within the slop, plain once outside, lit again on return.
     const bool inside=!gesture.claimed&&!gesture.strayed&&within(x,y,cydclassic::Gesture::SlopNear);
+    if(tileOf(gesture.target)>=0){const int want=inside?tileOf(gesture.target):-1;if(want!=tilePressed){tilePressed=want;paintTile(tileOf(gesture.target),inside);}return gesture.claimed||gesture.strayed;}
     if(page().mode==Mode::Player){const int pressed=inside?gesture.target:-1;if(pressed!=playerPressed){playerPressed=pressed;playerTransport();playerHeader();playerOutput();}return claimed;}
     if(!inside&&highlight>=0){paintRow(highlight,false);dimmed=highlight;highlight=-1;}
     else if(inside&&highlight<0&&dimmed>=0){highlight=dimmed;dimmed=-1;paintRow(highlight,true);}
-    return claimed;
+    return claimed||gesture.claimed;
   }
   if(phase==PRESS_UP){
     if(gesture.target==Slider){armVolumeSave();gesture.target=-1;return true;}
@@ -651,6 +687,8 @@ bool press(PressPhase phase,int x,int y){
     if(page().mode==Mode::Player){playerPressed=-1;if(gesture.target==Prev||gesture.target==Play||gesture.target==Next||gesture.target==Shuffle||gesture.target==Repeat)playerTransport();else if(gesture.target==Output)playerOutput();else if(gesture.target==Favourite||gesture.target==Options||gesture.target==Back)playerHeader();}
     if(browse()&&(gesture.target==Play||gesture.target==Next)&&int32_t(screenNow-miniPressUntil)>=0){playerPressed=-1;miniPlayer();}
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next)return true; // already acted on touch-down
+    if(tilePressed>=0){const int lit=tilePressed;tilePressed=-1;if(page().mode==Mode::Home)paintTile(lit,false);}
+    if(swipeable()&&gesture.swipeBack(x,y)){ready=-1;highlight=dimmed=-1;back();return true;}
     const bool ok=gesture.activate(within(x,y,cydclassic::Gesture::SlopNear));
     ready=ok?gesture.target:-1;
     if(!ok&&gesture.target!=-1){
@@ -667,6 +705,7 @@ void touch(TouchEvent ev,int,int){
   if(ev!=TOUCH_TAP&&ev!=TOUCH_LONG_PRESS)return;
   if(page().mode==Mode::Keyboard&&target!=Back&&target!=-1){if(target==KeyDone)back();else editQuery(target);return;}
   if(target>=0){activate(target);return;}
+  if(tileOf(target)>=0){openTile(tileOf(target));return;}
   switch(target){
     case Back:back();break;
     case Home:classic_home();ui_go(SCR_CLASSIC);break;
@@ -689,7 +728,7 @@ void touch(TouchEvent ev,int,int){
 
 void classic_home(){miniReturnDepth=0;flushSettings();freePreview();externalReturn=false;navigation.home();}
 void classic_preparePlayer(){if(externalReturn){externalReturn=false;return;}if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}}
-void classic_prepareLibrary(){classic_home();Page p{};p.mode=Mode::Music;navigation.push(p);}
+void classic_prepareLibrary(){classic_home();}
 const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};
 #ifdef CYDPOD_CATALOG_HOST
 // Exercise the original private geometry/hit test, without adding firmware state.
@@ -707,6 +746,7 @@ std::string classic_geometry(){
   for(unsigned rotation:{0u,1u,2u,3u}){
     tft.setRotation(rotation);out<<"rotation="<<rotation<<" size="<<tft.width()<<'x'<<tft.height()<<" rows="<<rows()<<" rects=";
     for(int i=0;i<rows();++i)rect(rowRect(i));
+    for(int i=0;i<L::TileCount;++i)rect(L::tile<Rect>(tft.width(),tft.height(),i));
     for(int cell:{0,1,2})rect(L::mini<Rect>(tft.width(),tft.height(),cell));rect(L::miniProgress<Rect>(tft.width(),tft.height()));rect(L::deepHome<Rect>());for(bool down:{false,true})rect(L::pageStrip<Rect>(tft.width(),tft.height(),down));
     for(int a:{Prev,Play,Next})rect(transportRect(a));rect(sliderRect());
     for(Rect r:{L::playerBack<Rect>(),L::favourite<Rect>(tft.width()),L::options<Rect>(tft.width()),L::progress<Rect>(tft.width(),tft.height()),L::playerVolume<Rect>(tft.width(),tft.height()),L::playerVolumeTrack<Rect>(tft.width(),tft.height()),L::output<Rect>(tft.width(),tft.height()),L::outputFace<Rect>(tft.width(),tft.height()),L::playerToggle<Rect>(tft.width(),tft.height(),false),L::playerToggle<Rect>(tft.width(),tft.height(),true)})rect(r);

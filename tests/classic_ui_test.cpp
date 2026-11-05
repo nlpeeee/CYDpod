@@ -129,7 +129,7 @@ static bool shown(const char* full){
   return false;
 }
 static int countLabel(const char* s){return int(std::count(tft.labels.begin(),tft.labels.end(),s));}
-static void snapshot(const char* path){tft.save(path);std::string png=path;png.replace(png.size()-4,4,".png");tft.savePng(png.c_str(),1);}
+static void snapshot(const char* path){if(std::getenv("CYDPOD_VIEWPORT_ONLY")&&std::string(path).find("cy98b-")!=0)return;tft.save(path);std::string png=path;png.replace(png.size()-4,4,".png");tft.savePng(png.c_str(),1);}
 
 // ---------------------------------------------------------------------------
 // CY-62: the real press classifier (touch_gesture.h) -> UI hook -> command path.
@@ -163,6 +163,13 @@ static void toPlayer(){home();tapMini();}
 static void toPlayback(){home();tapTile(5);tap(80,154);}
 static void toSongs(){home();tapTile(0);}
 unsigned classic_depth();int classic_top();
+int classic_offset();bool classic_thumbVisible();
+static void dragListRows(int amount){
+  const int y=cydclassic::layout::HeaderH+60,end=y-amount*cydclassic::layout::RowH-(amount>0?7:-7);
+  SCREEN_CLASSIC.press(PRESS_DOWN,60,y);SCREEN_CLASSIC.press(PRESS_MOVE,60,end);
+  SCREEN_CLASSIC.tick(++clockNow);SCREEN_CLASSIC.press(PRESS_UP,60,end);SCREEN_CLASSIC.touch(TOUCH_TAP,60,end);pump();
+}
+
 static void touchRegression(){
   const uint32_t durations[]={1,20,50,100,300,650,4000,4500},periods[]={10,80,150};
   int cases=0;
@@ -242,7 +249,7 @@ static void touchRegression(){
   check(classic_depth()==2&&calls==songCalls,"a mostly vertical 14 px move claims the press");
   toSongs();check(classic_top()==0,"Songs page starts at the top");
   pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=int(150-std::min<uint32_t>(t,200)*120/200);});
-  check(classic_top()==3&&classic_depth()==2,"a true vertical drag scrolls the list instead of activating a row");
+  check(classic_top()==2&&classic_depth()==2,"a true vertical drag scrolls the list instead of activating a row");
   std::cout<<"PASS CY-62 lists: jitter under 16 px keeps the row tap, sideways/vertical drags claim, vertical drag scrolls\n";
 
   // Wake: the whole touch is swallowed, the next one works.
@@ -255,6 +262,8 @@ static void touchRegression(){
   std::cout<<"PASS CY-62 wake swallow unchanged under the real classifier\n";
 }
 unsigned classic_depth();int classic_top();
+
+
 int classic_volumeSaveArms();uint32_t classic_volumeSaveAt();int classic_target(int,int);uint32_t classic_seekPreviewMs();
 static void nowPlayingRegression(){
   namespace L=cydclassic::layout;
@@ -303,6 +312,8 @@ static void nowPlayingRegression(){
   std::cout<<"CY61_NOWPLAYING_OK: rotations 0/1/3, SVG geometry, slider/seek edges and monotonic drag, live shared volume, one deferred save, down-only transport, favourite, shuffle, repeat, Output and Options\n";
 }
 unsigned classic_depth();int classic_top();
+
+
 static void miniPlayerRegression(){
   namespace L=cydclassic::layout;
   for(unsigned rotation:{0u,1u,2u,3u}){
@@ -318,14 +329,12 @@ static void miniPlayerRegression(){
       check(*button.second==before+1&&tft.colorCount(theme().pressed)>faces,"mini transport acts and paints pressed face on down");
       down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(*button.second==before+1,"mini release and hold never repeat");
     }
-    const Rect up=L::pageStrip<Rect>(w,h,false),dn=L::pageStrip<Rect>(w,h,true);
-    check(up.w==30&&dn.w==30&&up.y+up.h==dn.y,"30 px paging halves meet");
-    for(int expected:{std::min(10-capacity,capacity-1),std::min(10-capacity,2*(capacity-1)),10-capacity,10-capacity}){tap(dn.cx(),dn.cy());check(classic_top()==expected,"page down advances rows minus one and stops at end");}
+    for(int expected:{std::min(10-capacity,capacity-1),std::min(10-capacity,2*(capacity-1)),10-capacity,10-capacity}){dragListRows(capacity-1);check(classic_top()==expected,"drag advances pixels and clamps at end");}
     const int oldTop=classic_top();const unsigned depth=classic_depth();
     for(int i=0;i<10;++i){tap(title.cx(),title.cy());check(classic_depth()==depth,"mini opens Playing without stack growth");tap(20,18);check(classic_depth()==depth&&classic_top()==oldTop,"Back restores exact list position and depth");}
     // Return from Player Options to an existing Playing page instead of nesting it.
     tap(title.cx(),title.cy());tap(L::options<Rect>(w).cx(),18);tap(title.cx(),title.cy());check(classic_depth()==depth,"mini returns to existing Playing through Options");tap(20,18);
-    for(int expected:{std::max(0,oldTop-capacity+1),0,0}){tap(up.cx(),up.cy());check(classic_top()==expected,"page up advances rows minus one and stops at start");}
+    for(int expected:{std::max(0,oldTop-capacity+1),0,0}){dragListRows(-(capacity-1));check(classic_top()==expected,"drag moves back and clamps at start");}
     ui_redraw();pump();snapshot(rotation==0?"cy79-mini-portrait.svg":rotation==1?"cy79-mini-landscape.svg":rotation==2?"cy79-mini-portrait2.svg":"cy79-mini-landscape3.svg");
     // Count actual recorder calls; a settled 1 Hz tick can only fill the two progress rectangles.
     SCREEN_CLASSIC.tick(clockNow+=1100);tft.resetDrawCounts();positionMs+=1000;SCREEN_CLASSIC.tick(clockNow+=1000);
@@ -343,7 +352,7 @@ static void miniPlayerRegression(){
     check(queueLength>0&&playing&&shuffle&&calls>commands,"empty-queue action shuffles full library through existing queue helper");
     if(!queueLength)queueLength=savedLength;
   }
-  tft.setRotation(0);home();std::cout<<"CY79_MINI_PLAYER_OK: down-only transport, pressed feedback, stack-free Playing return, paging clamps, empty queue, line-only 1 Hz progress, all rotations\n";
+  tft.setRotation(0);home();std::cout<<"CY79_MINI_PLAYER_OK: down-only transport, pressed feedback, stack-free Playing return, drag clamps, empty queue, line-only 1 Hz progress, all rotations\n";
 }
 // CY-80: Home tiles, flatter navigation and swipe-back, driven through the real press hooks.
 static bool dragRun(int x0,int y0,std::initializer_list<std::pair<int,int>> moves){
@@ -553,7 +562,7 @@ static void tapRect(const Rect& r){tap(r.cx(),r.cy());}
 // Settings has 7 rows: past the visible ones, page down first and use the real scroll position.
 static void tapSettingsRow(int idx){
   namespace L=cydclassic::layout;
-  if(idx>=L::rows(tft.height()))tapRect(L::pageStrip<Rect>(tft.width(),tft.height(),true));
+  if(idx>=classic_top()+L::rows(tft.height()))dragListRows(idx-classic_top());
   tapRow(idx-classic_top());
 }
 static void tapBackButton(){tap(cydclassic::layout::HeaderBackX,cydclassic::layout::HeaderTextY);}
@@ -761,9 +770,9 @@ static void settingsRegression(){
 #if CYD_TOUCH_CAPACITIVE
   check(!label("Calibrate touch"),"no touch calibration row on the capacitive board");
 #else
-  tapRect(L::pageStrip<Rect>(tft.width(),tft.height(),true));  // CY-91: Theme took the fourth landscape row; Calibrate is on page 2
+  dragListRows(1);  // CY-91: Theme took the fourth landscape row; Calibrate is on page 2
   check(label("Calibrate touch"),"touch calibration row on the resistive board");
-  tapRect(L::pageStrip<Rect>(tft.width(),tft.height(),false));
+  dragListRows(-1);
 #endif
   const uint8_t expectedOrder[]={3,0,2,1};std::vector<uint8_t> seen;
   for(uint8_t want:expectedOrder){
@@ -846,7 +855,7 @@ static void themeRegression(){
       check(g_settings.colorTheme==want&&settingsSaves==saves+1,"one release cycles the theme once and saves once");
       check(label("Theme")&&label(themeName(want))&&!label(themeName(was))&&label("Orientation"),"the row cache is rebuilt with the new value");
       {const uint16_t got[4]={tft.pixel(row.x+row.w-3,row.cy()),tft.pixel(w-3,2),tft.pixel(w-L::StripW+2,L::HeaderH+1),tft.pixel(2,h-3)};
-       const uint16_t exp[4]={next.bg,next.band,next.band,next.band};
+       const uint16_t exp[4]={next.bg,next.band,next.bg,next.band};
        for(int k=0;k<4;++k)check(got[k]==exp[k],("page/header/strip/footer sample "+std::to_string(k)+" took the new palette: r"+std::to_string(rotation)+" "+std::to_string(got[k])+" vs "+std::to_string(exp[k])).c_str());}
       check(!queueLength||tft.pixel(w/2,L::footerY(h))==next.miniTrack||tft.pixel(w/2,L::footerY(h))==next.miniFill,"mini-player progress line takes the new palette");
       const uint16_t* a=reinterpret_cast<const uint16_t*>(&old);const uint16_t* b=reinterpret_cast<const uint16_t*>(&next);
@@ -1033,13 +1042,13 @@ static void navReset(){
   queueLength=0;queueData=nullptr;playing=false;current=0;g_settings.outRoute=OUT_BT;routeAllowed=true;saveAllowed=true;btConnected=true;
   g_settings.screenTimeout=0;sleep_begin(clockNow);   // no dim or swallowed wake touch left over from a previous probe
 }
-static void navReplay(const std::vector<NavPoint>& path){navReset();home();for(const NavPoint& p:path)tap(p.x,p.y);}
+static void navReplay(const std::vector<NavPoint>& path){navReset();home();for(const NavPoint& p:path){if(p.x==-1)dragListRows(p.y);else tap(p.x,p.y);}}
 static std::vector<NavPoint> navTargets(){
   std::vector<NavPoint> out;std::vector<int> seen;
   if(ui_current()==SCR_BLUETOOTH){for(int y=0;y<tft.height();y+=16)for(int x=0;x<tft.width();x+=16)out.push_back({x+4,y+4});return out;}
   for(int y=0;y<tft.height();y+=4)for(int x=0;x<tft.width();x+=4){
     const int t=classic_target(x,y);if(t==-1||std::find(seen.begin(),seen.end(),t)!=seen.end())continue;
-    seen.push_back(t);out.push_back({x,y});
+    seen.push_back(t);if(t==-12){out.push_back({-1,1});out.push_back({-1,-1});}else out.push_back({x,y});
   }
   return out;
 }
@@ -1051,7 +1060,7 @@ static void navigationGraph(){
     const std::vector<NavPoint> path=queue[head];navReplay(path);const std::string fromNode=navNode(),from=navPage();
     for(const NavPoint& t:navTargets()){
       navReplay(path);check(navNode()==fromNode,("replay of a tap path reaches a different page: "+fromNode+" vs "+navNode()).c_str());
-      tap(t.x,t.y);const std::string to=navPage(),toNode=navNode();
+      if(t.x==-1)dragListRows(t.y);else tap(t.x,t.y);const std::string to=navPage(),toNode=navNode();
       if(to.rfind("Legacy.",0)==0||to=="UNKNOWN")unknown.insert(to);
       if(to!=from)edges[from].insert(to);
       classes.insert(to);
@@ -1122,8 +1131,8 @@ static void viewportRegression(){
     tft.labels.clear();classic_paintViewport(1);check(label("Song 00")&&label(capacity==6?"Song 06":"Song 04"),"loader recovers both partial edges");
     classic_paintViewport(100000);check(classic_offset()==(10-capacity)*L::RowH,"offset clamps to last full viewport");
     classic_paintViewport(-10);check(classic_offset()==0,"offset clamps at zero");
-    const Rect down=L::pageStrip<Rect>(w,h,true);tap(down.cx(),down.cy());
-    check(classic_offset()==std::min(10-capacity,capacity-1)*L::RowH,"existing row step maps to pixel multiple");
+    dragListRows(capacity-1);
+    check(classic_offset()==std::min(10-capacity,capacity-1)*L::RowH,"drag helper maps to pixel multiple");
   }
   home();tapTile(4);typeQuery("song");tapRect(L::keyAction<Rect>(tft.width(),tft.height(),3));searchSettle();pump();
   classic_paintViewport(41);tapMini();tap(20,20);searchSettle();pump();
@@ -1131,10 +1140,50 @@ static void viewportRegression(){
   ui_redraw();pump();check(classic_offset()==41,"search invalidation retains pixel bookmark");
   std::cout<<"PASS CY-98a viewport: offsets/clamp, partial-edge clipping, cache-only placeholders/recovery, mini return, invalidation, row steps; 4/6 rows\n";
 }
+static void dragRegression(){
+  namespace L=cydclassic::layout;
+  for(unsigned rotation:{0u,1u}){
+    g_settings.rotation=rotation;tft.setRotation(rotation);toSongs();
+    const int h=tft.height(),w=tft.width(),y=L::HeaderH+100,maxOffset=(10-L::rows(h))*L::RowH;
+    const int before=calls;const auto io=searchIO();
+    SCREEN_CLASSIC.press(PRESS_DOWN,60,y);SCREEN_CLASSIC.press(PRESS_MOVE,60,y-7);
+    check(classic_offset()==0,"slop does not move the list");
+    SCREEN_CLASSIC.press(PRESS_MOVE,60,y-8);check(classic_offset()==1,"slop is subtracted");
+    SCREEN_CLASSIC.tick(++clockNow);tft.resetDrawCounts();
+    SCREEN_CLASSIC.press(PRESS_MOVE,60,y-19);SCREEN_CLASSIC.press(PRESS_MOVE,60,y-32);
+    check(classic_offset()==25&&tft.fillCalls==0,"moves coalesce without painting");
+    SCREEN_CLASSIC.tick(++clockNow);check(classic_thumbVisible()&&searchIO()==io,"drag frame shows thumb without catalogue IO");
+    snapshot(rotation==0?"cy98b-drag-portrait.svg":"cy98b-drag-landscape.svg");
+    SCREEN_CLASSIC.press(PRESS_MOVE,60,y-10000);SCREEN_CLASSIC.tick(++clockNow);
+    check(classic_offset()==maxOffset&&searchIO()==io,"drag hard clamps without reads");
+    SCREEN_CLASSIC.press(PRESS_MOVE,60,y);SCREEN_CLASSIC.tick(++clockNow);
+    SCREEN_CLASSIC.press(PRESS_UP,60,y);SCREEN_CLASSIC.touch(TOUCH_TAP,60,y);
+    check(classic_depth()==2&&calls==before,"claimed drag returning to start never selects");
+    SCREEN_CLASSIC.tick(clockNow+=L::ThumbHoldMs-1);check(classic_thumbVisible(),"thumb holds briefly after release");
+    SCREEN_CLASSIC.tick(++clockNow);check(!classic_thumbVisible(),"thumb hides after delay");pump();
+    const Rect r=L::thumb<Rect>(w,h,10,classic_offset());const auto thumbIO=searchIO();
+    SCREEN_CLASSIC.press(PRESS_DOWN,w-5,r.cy());SCREEN_CLASSIC.press(PRESS_MOVE,w-5,10000);SCREEN_CLASSIC.tick(++clockNow);
+    check(classic_offset()==maxOffset&&searchIO()==thumbIO,"thumb drag maps to bottom without IO");
+    SCREEN_CLASSIC.press(PRESS_MOVE,w-5,-10000);SCREEN_CLASSIC.tick(++clockNow);
+    check(classic_offset()==0,"thumb drag maps to top");
+    SCREEN_CLASSIC.press(PRESS_UP,w-5,-10000);SCREEN_CLASSIC.touch(TOUCH_TAP,w-5,-10000);pump();
+    for(int offset:{0,25,maxOffset}){const Rect thumb=L::thumb<Rect>(w,h,10,offset);
+      check(abs(L::thumbOffset(thumb.cy(),h,10,thumb.h/2)-offset)<=2,"thumb mapping round trip");}
+    toSongs();tap(60,L::HeaderH+20);check(classic_depth()==3&&calls>before,"a tap still selects");
+    home();tapTile(5);tapSettingsRow(5);check(std::string(classic_modeName(classic_mode()))=="About","Settings bottom action is reachable by drag");
+  }
+  std::cout<<"PASS CY-98b drag: slop/1:1, coalesced frames, clamp, tap versus claimed drag, no drag IO, thumb mapping/timeout, Settings; 4/6 rows\n";
+}
 int main(){try{
+  if(std::getenv("CYDPOD_REGENERATE_CLASSIC")){std::ofstream("../golden/classic_layout.txt")<<classic_geometry();return 0;}
+
   if(const char* preview=std::getenv("CYDPOD_HP_LIMIT_ONLY")){headphoneLimitRegression(preview);return 0;}
 
-  if(!std::getenv("CYDPOD_VIEWPORT_ONLY"))geometryGolden(); // Focused renderer mode leaves the unchanged geometry suite separate.
+  if(!std::getenv("CYDPOD_VIEWPORT_ONLY"))geometryGolden();
+  else {const auto actual=classic_geometry();std::ifstream f("../golden/classic_layout.txt");
+    check(actual==std::string((std::istreambuf_iterator<char>(f)),{}),"Classic drag geometry differs from golden");
+    std::cout<<"PASS CY-98b Classic layout golden (dialog excluded: baseline failure)\n";}
+
   g_settings.screenTimeout=0;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
   SD.root=std::filesystem::current_path()/("ui-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   const std::filesystem::path uiCardRoot=SD.root;
@@ -1145,7 +1194,7 @@ int main(){try{
   for(int i=0;i<10;++i){auto bytes=original;char name[32];snprintf(name,sizeof(name),"Song %02d",i);memset(bytes.data()+pos,0,tag.size());memcpy(bytes.data()+pos,name,strlen(name));
     std::ofstream out(SD.root/(std::string("music/Example/")+name+".m4a"),std::ios::binary);out.write(bytes.data(),bytes.size());}
   check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
-  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){viewportRegression();return 0;}
+  if(std::getenv("CYDPOD_VIEWPORT_ONLY")){viewportRegression();dragRegression();miniPlayerRegression();return 0;}
   tapTile(1);check(label("Fixture Artist")&&classic_depth()==2,"artist view straight from the tile");snapshot("ui-artists.svg");
   tap(80,66);check(label("All Songs")&&label("Fixture Album"),"artist album view");snapshot("ui-albums.svg");
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");

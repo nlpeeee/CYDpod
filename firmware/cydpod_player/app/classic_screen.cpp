@@ -1,6 +1,7 @@
 #ifndef CYD_UPLOADER
 #include "classic_screen.h"
 #include "classic_navigation.h"
+#include "scroll_core.h"
 #include "classic_layout.h"
 #include "ui.h"
 #include "display.h"
@@ -40,6 +41,11 @@ struct Row {
 };
 cydclassic::Navigation<Page> navigation;
 cydclassic::Gesture gesture;
+cydscroll::Tracker listTracker;
+bool listDragging=false,listPress=false,thumbDrag=false,viewportPending=false,thumbVisible=false;
+int32_t dragOffset=0;int thumbGrab=0;
+uint32_t thumbUntil=0;
+
 constexpr int CacheSlots=L::MaxRows+1;
 Row cache[CacheSlots];
 String rowUtf8; // Reserved once; the legacy UTF-8 strip loader accepts String.
@@ -65,6 +71,13 @@ uint32_t seekMs=0,seekDuration=0,seekSerial=0;
 char notice[128]={};
 char query[32]={};bool digitKeys=false;uint32_t screenNow=0;
 int searchShownCount=-1,searchShownProgress=-1;
+uint32_t inputNow(){
+#ifdef CYDPOD_CATALOG_HOST
+  return screenNow;
+#else
+  return millis();
+#endif
+}
 enum class SearchState:uint8_t { Empty,Active,Cancelled,Error };
 struct SearchSession {
   char applied[32]={};uint32_t due=0;int32_t resumePx=-1;
@@ -102,7 +115,7 @@ void applySearch(uint32_t now){
 }
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44;
 constexpr int TileBase=-50; // Home tile i is target TileBase-i
-constexpr int Back=-10,Home=-11,Up=-12,Down=-13,Now=-14,Prev=-20,Play=-21,Next=-22,Options=-24,Slider=-25,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
+constexpr int Back=-10,Home=-11,Thumb=-12,Now=-14,Prev=-20,Play=-21,Next=-22,Options=-24,Slider=-25,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
 Page miniReturn{};uint8_t miniReturnDepth=0;uint32_t miniPressUntil=0;bool miniQueued=false;
 Page& page(){return navigation.current();}
 bool browse(){return page().mode!=Mode::Player&&page().mode!=Mode::Keyboard;}
@@ -112,7 +125,7 @@ int topRow(){return page().offsetPx/L::RowH;}
 int visibleRows(){return rows()+(page().offsetPx%L::RowH?1:0);}
 Rect rowRect(int i){Rect r=L::row<Rect>(tft.width(),i);r.y-=page().offsetPx%L::RowH;return r;}
 Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
-void setTop(int top){if(page().mode==Mode::Search)searchSession.resumePx=-1;page().offsetPx=cydclassic::clampTop(top,count,rows())*L::RowH;}
+
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
 void freePreview(){free(preview);preview=nullptr;previewCount=0;}
@@ -135,7 +148,7 @@ const char* title(){return pageTitle(page());}
 // native strip height. `y` is the vertical centre of capitals for the sized faces.
 using cydtext::Face;
 void playerText(const char* value,int x,int y,Face face,int width,uint16_t fg,uint16_t bg,int align=cydtext::HAlignCentre){
-  if(!cydtext::ascii(value)){ui_text(String(value),x,y,uint8_t(3+align),fg,bg,width);return;}
+  if(!listPress&&!thumbDrag&&!cydtext::ascii(value)){ui_text(String(value),x,y,uint8_t(3+align),fg,bg,width);return;}
   titles_release(); // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip.
   char label[128],fitted[128];cydlib::copyText(label,value);
   for(char* c=label;*c;++c)if((unsigned char)*c<32)*c=' ';
@@ -247,7 +260,7 @@ void paintTile(int i,bool pressed){
 void paintTiles(){for(int i=0;i<L::TileCount;++i)paintTile(i,false);}
 // Fixed text scratch keeps ASCII painting allocation-free; UTF-8 retains the legacy strip loader.
 void rowText(const char* value,int y,int width,uint16_t fg,uint16_t bg){
-  if(!cydtext::ascii(value)){
+  if(!listPress&&!thumbDrag&&!cydtext::ascii(value)){
     rowUtf8=value;
     if(titles_load(rowUtf8)){titles_draw({L::TextMargin,y-TITLE_STRIP_H/2,min(width,titles_width()),TITLE_STRIP_H},0,0,fg,bg);return;}
   }
@@ -296,13 +309,18 @@ void paintViewport(int32_t offsetPx){
     paintRow(i,highlight==i);
   }
 }
+void paintThumb(){
+  const Rect rail=L::strip<Rect>(tft.width(),tft.height());
+  tft.fillRect(rail.x,rail.y,rail.w,rail.h,theme().bg);
+  if(thumbVisible&&count>rows()){
+    const Rect r=L::thumb<Rect>(tft.width(),tft.height(),count,page().offsetPx);
+    tft.fillRect(r.x,r.y,r.w,r.h,theme().dim);
+  }
+}
 void invalidate(){
   page().offsetPx=cydclassic::clampOffset(page().offsetPx,count,rows());dirty=uint8_t((1u<<visibleRows())-1);
   for(Row& r:cache){r.valid=false;r.absolute=-1;}
-  const Palette& p=theme();const int x=tft.width()-L::StripW,h=rows()*L::RowH;
-  tft.fillRect(x,L::HeaderH,L::StripW,h,p.band);
-  if(count>rows())for(bool down:{false,true}){const Rect r=L::pageStrip<Rect>(tft.width(),tft.height(),down);ui_icon(down?ICON_DOWN:ICON_UP,r.cx(),r.cy(),L::FooterIconSize,p.text,p.band);}
-  if(count>rows()){const int thumb=max(L::ThumbMin,h*rows()/count);const int y=L::HeaderH+int(int64_t(h-thumb)*page().offsetPx/max(1,(count-rows())*L::RowH));tft.fillRect(x+L::ThumbInset,y,L::ThumbW,thumb,p.dim);}
+  paintThumb();
 }
 void setRow(Row& r,const char* label,const String& detail=String(),bool navigate=false,bool disabled=false){
   cydlib::copyText(r.label,label);cydlib::copyText(r.detail,detail.c_str());r.valid=true;r.navigates=navigate;r.disabled=disabled;
@@ -537,7 +555,7 @@ void enter(){
 #ifndef CYDPOD_CATALOG_HOST
   rowUtf8.reserve(128);
 #endif
-  seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
+  seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
@@ -570,6 +588,10 @@ void leave(){
 }
 void tick(uint32_t now){
   screenNow=now;
+  if(viewportPending){viewportPending=false;paintViewport(page().offsetPx);paintThumb();}
+  // Drag frames are cache-only, including Search and UTF-8 titles. Load after release.
+  if(listPress||thumbDrag)return;
+  if(thumbVisible&&int32_t(now-thumbUntil)>=0){thumbVisible=false;paintThumb();}
   if(savePending&&!(touch_isDown()&&gesture.target==Slider)&&int32_t(now-saveAt)>=0)flushSettings();
   if(now-lastStatus>=1000){
     lastStatus=now;char error[48];int track=-1;
@@ -730,7 +752,7 @@ int targetAt(int x,int y){
     return L::mini<Rect>(tft.width(),tft.height(),0).contains(x,y)?Play:L::mini<Rect>(tft.width(),tft.height(),2).contains(x,y)?Next:Now;
   }
   if(page().mode==Mode::Home){for(int i=0;i<L::TileCount;++i)if(L::tile<Rect>(tft.width(),tft.height(),i).contains(x,y))return TileBase-i;return -1;}
-  if(browse()&&L::strip<Rect>(tft.width(),tft.height()).contains(x,y))return count>rows()?(L::pageStrip<Rect>(tft.width(),tft.height(),false).contains(x,y)?Up:Down):-1;
+  if(browse()&&L::strip<Rect>(tft.width(),tft.height()).contains(x,y))return count>rows()?Thumb:-1;
   const int local=y-L::HeaderH;const int at=(local+page().offsetPx)/L::RowH;
   return local>=0&&local<rows()*L::RowH&&at<count?at:-1;
 }
@@ -763,6 +785,14 @@ bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
     ready=-1;dimmed=-1;gesture.down(x,y,topRow(),hit);
+    listPress=browse()&&page().mode!=Mode::Home&&hit>=0&&hit<KeyBase&&count>rows();
+    listDragging=false;thumbDrag=hit==Thumb;dragOffset=page().offsetPx;
+    if(listPress)listTracker.down(inputNow(),y);
+    if(thumbDrag){
+      const Rect r=L::thumb<Rect>(tft.width(),tft.height(),count,page().offsetPx);
+      thumbGrab=y>=r.y&&y<r.y+r.h?y-r.y:r.h/2;
+      gesture.claimed=true;thumbVisible=true;viewportPending=true;return true;
+    }
     if(page().mode==Mode::Keyboard&&hit>=KeyBase){editQuery(hit);gesture.claimed=true;return true;}
     if(hit==Slider){volumeChanged=false;volumeAt(x);return true;}
     if(hit==Seek){
@@ -786,9 +816,14 @@ bool press(PressPhase phase,int x,int y){
       if(!seekCancelled)seekPreviewAt(x);return true;
     }
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next){if(browse()&&!within(x,y,cydclassic::Gesture::SlopNear)&&playerPressed!=-1){playerPressed=-1;miniPlayer();}return true;}
-    const bool claimed=gesture.move(x,y,!within(x,y,cydclassic::Gesture::SlopFar),gesture.target>=0&&gesture.target<KeyBase&&count>rows());
-    if(gesture.claimed&&gesture.target>=0&&abs(y-gesture.y)>=10){int top=gesture.scrollTop(y,count,rows());
-      if(top!=topRow()){setTop(top);highlight=-1;invalidate();footer();}}
+    const bool tracked=listPress&&listTracker.move(inputNow(),y);
+    if(thumbDrag||(tracked&&(listDragging||abs(y-gesture.y)>=abs(x-gesture.x)))){
+      listDragging=!thumbDrag;
+      gesture.claimed=true;gesture.vlead=true;highlight=dimmed=-1;
+      page().offsetPx=thumbDrag?L::thumbOffset(y,tft.height(),count,thumbGrab):cydclassic::clampOffset(dragOffset-int32_t(listTracker.delta()),count,rows());
+      thumbVisible=true;viewportPending=true;return true;
+    }
+    const bool claimed=gesture.move(x,y,!within(x,y,cydclassic::Gesture::SlopFar),listPress);
     // CY-80 swipe-back: travelling right claims the press so the release never taps a row or tile.
     if(swipeable()&&gesture.swipeBack(x,y))gesture.claimed=true;
     // Show what a release would do: lit while within the slop, plain once outside, lit again on return.
@@ -800,6 +835,11 @@ bool press(PressPhase phase,int x,int y){
     return claimed||gesture.claimed;
   }
   if(phase==PRESS_UP){
+    if(listPress||thumbDrag){
+      const bool dragged=thumbDrag||listDragging;
+      listPress=thumbDrag=false;
+      if(dragged){viewportPending=true;thumbUntil=inputNow()+L::ThumbHoldMs;gesture.claimed=true;ready=-1;highlight=dimmed=-1;return true;}
+    }
     if(gesture.target==Slider){armVolumeSave();gesture.target=-1;return true;}
     if(gesture.target==Seek){
       seekPreview=false;shownProgress=shownSecond=-1;lastPlayer=0;
@@ -833,7 +873,6 @@ void touch(TouchEvent ev,int,int){
   switch(target){
     case Back:back();break;
     case Home:classic_home();ui_go(SCR_CLASSIC);break;
-    case Up:case Down:setTop(topRow()+(target==Up?-1:1)*max(1,rows()-1));invalidate();footer();break;
     case Now:if(storage_trackCount())openPlaying();break;
     case Options:show(Mode::Options);break;
     case Favourite:toggleFavourite();break;
@@ -870,6 +909,7 @@ const char* classic_modeName(unsigned m){
 }
 int classic_top(){return topRow();}
 int classic_offset(){return page().offsetPx;}
+bool classic_thumbVisible(){return thumbVisible;}
 void classic_paintViewport(int offset){paintViewport(offset);}
 void classic_invalidateViewport(){invalidate();}
 int classic_cacheSlots(){return CacheSlots;}
@@ -883,7 +923,7 @@ std::string classic_geometry(){
     tft.setRotation(rotation);out<<"rotation="<<rotation<<" size="<<tft.width()<<'x'<<tft.height()<<" rows="<<rows()<<" rects=";
     for(int i=0;i<rows();++i)rect(rowRect(i));
     for(int i=0;i<L::TileCount;++i)rect(L::tile<Rect>(tft.width(),tft.height(),i));
-    for(int cell:{0,1,2})rect(L::mini<Rect>(tft.width(),tft.height(),cell));rect(L::miniProgress<Rect>(tft.width(),tft.height()));rect(L::deepHome<Rect>());for(bool down:{false,true})rect(L::pageStrip<Rect>(tft.width(),tft.height(),down));
+    for(int cell:{0,1,2})rect(L::mini<Rect>(tft.width(),tft.height(),cell));rect(L::miniProgress<Rect>(tft.width(),tft.height()));rect(L::deepHome<Rect>());rect(L::thumb<Rect>(tft.width(),tft.height(),7,0));
     for(int a:{Prev,Play,Next})rect(transportRect(a));
     for(Rect r:{L::playerBack<Rect>(),L::favourite<Rect>(tft.width()),L::options<Rect>(tft.width()),L::progress<Rect>(tft.width(),tft.height()),L::playerVolume<Rect>(tft.width(),tft.height()),L::playerVolumeTrack<Rect>(tft.width(),tft.height()),L::output<Rect>(tft.width(),tft.height()),L::outputFace<Rect>(tft.width(),tft.height()),L::playerToggle<Rect>(tft.width(),tft.height(),false),L::playerToggle<Rect>(tft.width(),tft.height(),true)})rect(r);
     rect(L::seek<Rect>(tft.width(),tft.height()));rect(L::strip<Rect>(tft.width(),tft.height()));rect({0,L::HeaderH,tft.width(),L::QueryH});out<<'\n';

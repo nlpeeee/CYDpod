@@ -7,20 +7,32 @@ constexpr int HeaderTextY=18,HeaderTitleRight=36,HeaderTitleGap=8,HeaderBackX=16
 constexpr int RouteInset=20,RouteSize=24;
 constexpr inline int rows(int h){return (h-HeaderH-FooterH)/RowH<MaxRows?(h-HeaderH-FooterH)/RowH:MaxRows;}
 constexpr inline int footerY(int h){return h-FooterH;}
-// Browse pages reserve a 30 px strip for page-up/down taps and the thumb.
+// Browse pages reserve a 30 px scrollbar touch rail; no paging controls.
 constexpr int RowTitleY=12,RowDetailY=30,RowTextInset=34,RowIconInset=12,RowIconSize=12;
 constexpr int RowInset=30,StripW=30,ThumbMin=12,ThumbInset=25,ThumbW=3;
 template<class R> constexpr inline R row(int w,int i){return {0,HeaderH+i*RowH,w-RowInset,RowH};}
 template<class R> constexpr inline R strip(int w,int h){return {w-StripW,HeaderH,StripW,rows(h)*RowH};}
 constexpr int FooterIconSize=14;
-// Browse mini-player and paging strip; the Player bottom row remains independent.
+// Browse mini-player; the Player bottom row remains independent.
 constexpr int MiniButtonW=52,MiniProgressH=2,MiniTitleY=12,MiniArtistY=31;
 constexpr int MiniTextInset=8,MiniIconSize=18,MiniPressMs=80,DeepHomeW=40,HomeGlyphHalf=7,HomeRoofH=6,HomeWallH=7;
 constexpr inline int miniY(int h){return footerY(h);}
 template<class R> constexpr inline R mini(int w,int h,int cell){return {cell==0?0:cell==1?MiniButtonW:w-MiniButtonW,miniY(h),cell==1?w-2*MiniButtonW:MiniButtonW,FooterH};}
 template<class R> constexpr inline R miniProgress(int w,int h){return {0,miniY(h),w,MiniProgressH};}
 template<class R> constexpr inline R deepHome(){return {BackW,0,DeepHomeW,HeaderH};}
-template<class R> constexpr inline R pageStrip(int w,int h,bool down){return {w-StripW,HeaderH+(down?rows(h)*RowH/2:0),StripW,rows(h)*RowH/2};}
+constexpr int ThumbHoldMs=550;
+template<class R> inline R thumb(int w,int h,int count,int32_t offset){
+  const int height=rows(h)*RowH,size=count>rows(h)?(height*rows(h)/count>ThumbMin?height*rows(h)/count:ThumbMin):height;
+  const int32_t end=int32_t(count>rows(h)?count-rows(h):0)*RowH;
+  const int32_t clamped=offset<0?0:offset>end?end:offset;
+  return {w-StripW+ThumbInset,HeaderH+(end?int(int64_t(height-size)*clamped/end):0),ThumbW,size};
+}
+inline int32_t thumbOffset(int y,int h,int count,int grab){
+  struct Box{int x,y,w,h;};const Box r=thumb<Box>(0,h,count,0);
+  const int travel=rows(h)*RowH-r.h,position=y-HeaderH-grab;
+  const int32_t end=int32_t(count>rows(h)?count-rows(h):0)*RowH;
+  return travel<=0||position<=0?0:position>=travel?end:int32_t(int64_t(position)*end/travel);
+}
 // Proposal A: Player-only chrome and controls remain independent of browse rows.
 constexpr int PlayerHeaderH=36,PlayerHeaderY=18,PlayerHeaderHitH=40;
 constexpr int PlayerBackW=100,PlayerCountX=150,PlayerPortraitCountX=125,PlayerCountW=96,PlayerPortraitCountW=48,PlayerBackX=16,PlayerParentX=28;

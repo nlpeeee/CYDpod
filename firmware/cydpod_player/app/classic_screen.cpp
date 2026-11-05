@@ -527,7 +527,9 @@ void editQuery(int target){
   if(changed){scheduleSearch(150);queryPaint();}
 }
 void enter(){
+#ifndef CYDPOD_CATALOG_HOST
   rowUtf8.reserve(128);
+#endif
   seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};
   if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}

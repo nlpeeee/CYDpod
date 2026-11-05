@@ -848,7 +848,7 @@ void touch(TouchEvent ev,int,int){
 }
 } // namespace
 
-void classic_home(){miniReturnDepth=0;flushSettings();freePreview();externalReturn=false;navigation.home();}
+void classic_home(){searchSession.resumePx=-1;miniReturnDepth=0;flushSettings();freePreview();externalReturn=false;navigation.home();}
 // Back from a page outside Classic (the Bluetooth page): the page it was opened from when Settings opened it, otherwise Now Playing.
 void classic_return(){if(externalReturn)externalReturn=false;else if(page().mode!=Mode::Player){Page p{};p.mode=Mode::Player;if(!navigation.push(p)){navigation.home();navigation.push(p);}}ui_go(SCR_CLASSIC);}
 const Screen SCREEN_CLASSIC={enter,leave,tick,touch,press};

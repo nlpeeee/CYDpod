@@ -1,0 +1,225 @@
+{
+  "current": {
+    "catalogue": {
+      "windows": 6761,
+      "pixels": 39791,
+      "wire_bytes": 153953
+    },
+    "entries": 162,
+    "transport_model": "primitive face and glyph calls",
+    "mask_bytes": 0,
+    "metadata_bytes": 0,
+    "rgb565_one_color_bytes": 0,
+    "max_row_bytes": 0,
+    "transport": {
+      "normal": {
+        "windows": 474,
+        "pixels": 33297,
+        "wire_bytes": 71808,
+        "wire_floor_us_40mhz": 14361.6
+      },
+      "pressed": {
+        "windows": 469,
+        "pixels": 33019,
+        "wire_bytes": 71197,
+        "wire_floor_us_40mhz": 14239.4
+      },
+      "active": {
+        "windows": 438,
+        "pixels": 33248,
+        "wire_bytes": 71314,
+        "wire_floor_us_40mhz": 14262.8
+      },
+      "repeat1": {
+        "windows": 474,
+        "pixels": 33315,
+        "wire_bytes": 71844,
+        "wire_floor_us_40mhz": 14368.8
+      }
+    }
+  },
+  "A": {
+    "catalogue": {
+      "windows": 7643,
+      "pixels": 43703,
+      "wire_bytes": 171479
+    },
+    "entries": 162,
+    "transport_model": "primitive face and glyph calls",
+    "mask_bytes": 0,
+    "metadata_bytes": 0,
+    "rgb565_one_color_bytes": 0,
+    "max_row_bytes": 0,
+    "transport": {
+      "normal": {
+        "windows": 581,
+        "pixels": 31043,
+        "wire_bytes": 68477,
+        "wire_floor_us_40mhz": 13695.4
+      },
+      "pressed": {
+        "windows": 581,
+        "pixels": 31043,
+        "wire_bytes": 68477,
+        "wire_floor_us_40mhz": 13695.4
+      },
+      "active": {
+        "windows": 548,
+        "pixels": 31028,
+        "wire_bytes": 68084,
+        "wire_floor_us_40mhz": 13616.8
+      },
+      "repeat1": {
+        "windows": 586,
+        "pixels": 31067,
+        "wire_bytes": 68580,
+        "wire_floor_us_40mhz": 13716.0
+      }
+    }
+  },
+  "B": {
+    "catalogue": {
+      "windows": 162,
+      "pixels": 58725,
+      "wire_bytes": 119232
+    },
+    "entries": 162,
+    "transport_model": "single-window whole-cell row compositor",
+    "mask_bytes": 8456,
+    "metadata_bytes": 1944,
+    "rgb565_one_color_bytes": 117450,
+    "max_row_bytes": 76,
+    "transport": {
+      "normal": {
+        "windows": 5,
+        "pixels": 15104,
+        "wire_bytes": 30263,
+        "wire_floor_us_40mhz": 6052.6
+      },
+      "pressed": {
+        "windows": 5,
+        "pixels": 15104,
+        "wire_bytes": 30263,
+        "wire_floor_us_40mhz": 6052.6
+      },
+      "active": {
+        "windows": 5,
+        "pixels": 15104,
+        "wire_bytes": 30263,
+        "wire_floor_us_40mhz": 6052.6
+      },
+      "repeat1": {
+        "windows": 5,
+        "pixels": 15104,
+        "wire_bytes": 30263,
+        "wire_floor_us_40mhz": 6052.6
+      }
+    }
+  },
+  "C": {
+    "catalogue": {
+      "windows": 162,
+      "pixels": 60183,
+      "wire_bytes": 122148
+    },
+    "entries": 162,
+    "transport_model": "single-window whole-cell row compositor",
+    "mask_bytes": 30469,
+    "metadata_bytes": 1944,
+    "rgb565_one_color_bytes": 120366,
+    "max_row_bytes": 68,
+    "transport": {
+      "normal": {
+        "windows": 5,
+        "pixels": 15104,
+        "wire_bytes": 30263,
+        "wire_floor_us_40mhz": 6052.6
+      },
+      "pressed": {
+        "windows": 5,
+        "pixels": 15104,
+        "wire_bytes": 30263,
+        "wire_floor_us_40mhz": 6052.6
+      },
+      "active": {
+        "windows": 5,
+        "pixels": 15104,
+        "wire_bytes": 30263,
+        "wire_floor_us_40mhz": 6052.6
+      },
+      "repeat1": {
+        "windows": 5,
+        "pixels": 15104,
+        "wire_bytes": 30263,
+        "wire_floor_us_40mhz": 6052.6
+      }
+    }
+  },
+  "contrast": {
+    "light": {
+      "normal": 17.32,
+      "active": 5.32,
+      "pressed": 3.52
+    },
+    "black": {
+      "normal": 12.49,
+      "active": 5.32,
+      "pressed": 3.52
+    },
+    "hc": {
+      "normal": 21.0,
+      "active": 16.24,
+      "pressed": 21.0
+    }
+  },
+  "pngs": [
+    "current-sheet-light.png",
+    "current-sheet-light-x4.png",
+    "current-player-light.png",
+    "current-player-light-x4.png",
+    "a-sheet-light.png",
+    "a-sheet-light-x4.png",
+    "a-player-light.png",
+    "a-player-light-x4.png",
+    "a-sheet-black.png",
+    "a-sheet-black-x4.png",
+    "a-player-black.png",
+    "a-player-black-x4.png",
+    "a-sheet-hc.png",
+    "a-sheet-hc-x4.png",
+    "a-player-hc.png",
+    "a-player-hc-x4.png",
+    "a-portrait-light.png",
+    "a-portrait-light-x4.png",
+    "b-sheet-light.png",
+    "b-sheet-light-x4.png",
+    "b-player-light.png",
+    "b-player-light-x4.png",
+    "b-sheet-black.png",
+    "b-sheet-black-x4.png",
+    "b-player-black.png",
+    "b-player-black-x4.png",
+    "b-sheet-hc.png",
+    "b-sheet-hc-x4.png",
+    "b-player-hc.png",
+    "b-player-hc-x4.png",
+    "b-portrait-light.png",
+    "b-portrait-light-x4.png",
+    "c-sheet-light.png",
+    "c-sheet-light-x4.png",
+    "c-player-light.png",
+    "c-player-light-x4.png",
+    "c-sheet-black.png",
+    "c-sheet-black-x4.png",
+    "c-player-black.png",
+    "c-player-black-x4.png",
+    "c-sheet-hc.png",
+    "c-sheet-hc-x4.png",
+    "c-player-hc.png",
+    "c-player-hc-x4.png",
+    "c-portrait-light.png",
+    "c-portrait-light-x4.png",
+    "comparison.png",
+    "comparison-x4.png"
+  ]
+}

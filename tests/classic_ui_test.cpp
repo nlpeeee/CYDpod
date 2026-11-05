@@ -1130,7 +1130,7 @@ static void viewportRegression(){
 int main(){try{
   if(const char* preview=std::getenv("CYDPOD_HP_LIMIT_ONLY")){headphoneLimitRegression(preview);return 0;}
 
-  geometryGolden();
+  if(!std::getenv("CYDPOD_VIEWPORT_ONLY"))geometryGolden(); // Focused renderer mode leaves the unchanged geometry suite separate.
   g_settings.screenTimeout=0;g_settings.outRoute=OUT_BT;g_settings.rotation=0;
   SD.root=std::filesystem::current_path()/("ui-card-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   const std::filesystem::path uiCardRoot=SD.root;

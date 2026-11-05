@@ -8,7 +8,15 @@ Paging helpers, mini-player cases, navigation graph actions and the Classic layo
 
 Pinned 8924c3b archive, full WSL geometry gate: `FAIL firmware UI: Confirmation dialog geometry differs` (exit 1; `.tools/logs/cy98-baseline-ui.log`). This predates CY-98a. Focused mode retains the migrated Classic layout comparison and excludes that dialog gate.
 
-Final checks pending; logs `.tools/logs/cy98b-{ui,default,jc2432w328c}.log`.
+Final code: 9c584f9. Logs `.tools/logs/cy98b-{ui,default,jc2432w328c}.log`.
+- `sh .tools/cy98-ui.sh` (WSL), exit 0: `PASS CY-98b Classic layout golden (dialog excluded: baseline failure)`; `PASS CY-98b drag: slop/1:1, coalesced frames, clamp, tap versus claimed drag, no drag IO, thumb mapping/timeout, Settings; 4/6 rows`. CY-98a viewport and `CY79_MINI_PLAYER_OK` also pass.
+- `tools/check.ps1 -SkipProbe -SkipHostMedia`, exit 0: `PASS: compile-only checks completed; no device commands were run.`
+- `tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia`, exit 0: same compile-only PASS line.
+
+Sketch flash / static RAM, delta vs CY-98a:
+- Default: 1491665 (+1208) / 91712 (+320) bytes.
+- JC2432W328C: 1532857 (+1228) / 93304 (+320) bytes.
+Codec pool remains 40960 B (`PASS single pool`). Recipe exports v26, no v27 image; image naming was not changed.
 
 ## Owner feel-test
 

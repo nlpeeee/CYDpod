@@ -59,11 +59,26 @@ static bool validRecord(const Record& r){
 }
 static bool groupAt(File& f,uint32_t at,int index,Group& g){return readAt(f,at+index*sizeof(Group),&g,sizeof(g));}
 static bool idAt(File& f,uint32_t at,int index,uint16_t& id){return readAt(f,at+index*2,&id,2)&&id<header.tracks;}
-static bool validate(const char* path,Header& h){
+// CYDCAT2 adds a 4 B sampled CRC trailer. No per-track RAM or new file handle.
+// Eight 512 B windows span records, ids and groups, including both body ends.
+// Unsampled corruption is deliberately deferred; a rebuild still checks every byte.
+static bool sampleCrc(File& f,uint32_t end,uint32_t& value){
+  value=0;const uint32_t bytes=end-sizeof(Header);
+  const size_t n=std::min<uint32_t>(bytes,512);
+  if(!n)return true;
+  uint8_t* b=(uint8_t*)&work[1];
+  const unsigned windows=bytes<=512?1:8;
+  for(unsigned i=0;i<windows;++i){
+    const uint32_t at=sizeof(Header)+(windows==1?0:uint32_t(uint64_t(bytes-n)*i/(windows-1)));
+    if(!readAt(f,at,b,n))return false;value=crc(value,b,n);
+  }return true;
+}
+static bool validate(const char* path,Header& h,bool full=false){
   File f=SD.open(path);if(!f)return false;
   bool ok=readAt(f,0,&h,sizeof(h));
   const uint32_t sum=h.headerChecksum;h.headerChecksum=0;
-  ok=ok&&!memcmp(h.magic,"CYDCAT1",8)&&sum==crc(0,&h,sizeof(h));h.headerChecksum=sum;
+  const bool legacy=!memcmp(h.magic,"CYDCAT1",8);
+  ok=ok&&(legacy||!memcmp(h.magic,"CYDCAT2",8))&&sum==crc(0,&h,sizeof(h));h.headerChecksum=sum;
   uint32_t at=sizeof(Header)+uint32_t(h.tracks)*sizeof(Record);
   ok=ok&&h.tracks<=MaxTracks&&h.artists<=h.tracks&&h.albums<=h.tracks&&h.artistAlbums<=h.tracks;
   ok=ok&&h.songsAt==at;at+=uint32_t(h.tracks)*2;
@@ -72,8 +87,11 @@ static bool validate(const char* path,Header& h){
   ok=ok&&h.artistGroupsAt==at;at+=uint32_t(h.artists)*sizeof(Group);
   ok=ok&&h.albumGroupsAt==at;at+=uint32_t(h.albums)*sizeof(Group);
   ok=ok&&h.artistAlbumGroupsAt==at;at+=uint32_t(h.artistAlbums)*sizeof(Group);
-  ok=ok&&h.bytes==at&&f.size()==at;
-  if(!ok){f.close();return false;}
+  ok=ok&&h.bytes==at+(legacy?0:sizeof(uint32_t))&&f.size()==h.bytes;
+  if(!ok||(legacy&&!full)){f.close();return false;}
+  uint32_t sampled=0,expected=0;
+  if(!legacy)ok=readAt(f,at,&expected,sizeof(expected))&&sampleCrc(f,at,sampled)&&sampled==expected;
+  if(!ok||(!full&&!legacy)){f.close();return ok;}
   uint8_t* b=(uint8_t*)&work[1];uint32_t value=0,remaining=h.bytes-sizeof(Header);f.seek(sizeof(Header));  // boot scratch, 712 B >= 512
   const uint32_t body=remaining;uint32_t chunks=0;
   while(remaining){size_t n=std::min<size_t>(remaining,512);if(f.read(b,n)!=n){ok=false;break;}value=crc(value,b,n);remaining-=n;
@@ -199,7 +217,7 @@ static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,Storage
   reportFn=progress;reportPhase="Reading song tags";
   struct Done{~Done(){reportFn=nullptr;}} done;  // progress only while a rebuild runs
   File f=SD.open(CATALOGS[slot],"w+");if(!f)return false;
-  Header h{};memcpy(h.magic,"CYDCAT1",8);h.signature=signature;h.generation=generation;
+  Header h{};memcpy(h.magic,"CYDCAT2",8);h.signature=signature;h.generation=generation;
   bool ok=writeAll(f,&h,sizeof(h));scanned=0;scanCrc=0;scanOk=true;skipped=0;
   if(ok)scanDir("/music",0,&f,progress);
   h.tracks=scanned;ok=ok&&scanOk&&scanCrc==signature;
@@ -220,14 +238,16 @@ static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,Storage
   if(ok){h.albumGroupsAt=at;ok=appendFile(f,al,at);}
   if(ok){h.artistAlbumGroupsAt=at;ok=appendFile(f,aa,at);}
   SD.remove(ag);SD.remove(al);SD.remove(aa);
-  h.bytes=at;
+  uint32_t sampled=0;
+  if(ok)ok=sampleCrc(f,at,sampled)&&f.seek(at)&&writeAll(f,&sampled,sizeof(sampled));
+  at+=sizeof(sampled);h.bytes=at;
   if(ok){uint8_t* b=(uint8_t*)&work[1];uint32_t remain=at-sizeof(Header);ok=f.seek(sizeof(Header));
     while(ok&&remain){size_t n=std::min<size_t>(remain,512);ok=f.read(b,n)==n;if(ok){h.checksum=crc(h.checksum,b,n);remain-=n;}}
   }
   h.headerChecksum=crc(0,&h,sizeof(h));
   if(ok)ok=f.seek(0)&&writeAll(f,&h,sizeof(h));f.flush();f.close();
   if(ok)phase("Checking library");
-  return ok&&validate(CATALOGS[slot],checked);
+  return ok&&validate(CATALOGS[slot],checked,true);
 }
 
 // Each FAT file slot reserves about 4.1 KB for the life of the mount (CY-41), so the pool
@@ -254,7 +274,9 @@ bool storage_begin(StorageProgressFn progress){
   xSemaphoreTake(mutex,portMAX_DELAY);closeCat();xSemaphoreGive(mutex);
   struct Reopen{~Reopen(){xSemaphoreTake(mutex,portMAX_DELAY);openCat();xSemaphoreGive(mutex);}} reopen;  // every return path
   active=-1;header={};stale=rebuilt=false;
-  Header a{},b{};const bool va=validate(CATALOGS[0],a),vb=validate(CATALOGS[1],b);
+  Header a{},b{};bool va=validate(CATALOGS[0],a),vb=validate(CATALOGS[1],b);
+  // Only pay the legacy full scan when neither sampled-format slot is usable.
+  if(!va&&!vb){va=validate(CATALOGS[0],a,true);vb=validate(CATALOGS[1],b,true);}
   if(va||vb){active=vb&&(!va||int32_t(b.generation-a.generation)>0)?1:0;header=active?b:a;}
   scanned=0;scanCrc=0;scanOk=true;skipped=0;scanDir("/music",0,nullptr,nullptr);
   // CT-04: the marker has done its job once this boot has read it. Removing it before
@@ -263,7 +285,7 @@ bool storage_begin(StorageProgressFn progress){
   if(!scanOk){stale=true;Serial.println("catalog: Library stale: cannot read /music, previous catalogue kept");return true;}
   if(skipped)Serial.printf("catalog: skipped %d\n",skipped);
   plannedTracks=scanned;
-  if(active>=0&&!force&&scanCrc==header.signature&&scanned==header.tracks)return true;
+  if(active>=0&&!force&&!memcmp(header.magic,"CYDCAT2",8)&&scanCrc==header.signature&&scanned==header.tracks)return true;
   if(readOnly){  // CT-07: nothing may be written, so keep whatever catalogue there is
     stale=true;Serial.println("catalog: SD card is read-only, no rebuild; Library stale");return true;}
   const int target=active==0?1:0;const uint32_t generation=header.generation+1;

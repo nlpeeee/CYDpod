@@ -1471,13 +1471,23 @@ int main(){try{
 #endif
   // Folder preview must be dropped above the source page, then rebuilt at its old scroll position.
   home();tapTile(3);tap(80,96);tap(80,66);
-  tap(225,220);tap(80,66);check(playing,"folder preview starts playback");
+  tap(225,220);const int sourceOffset=classic_offset();
+  tap(80,66);check(playing,"folder preview starts playback");
+  const auto liveIds=sourceIds;const int liveTrack=current;
   before=calls;hostFreeHeap=10000;tap(20,20);
-  check(label("Unable to reload list. Check SD card or try again."),"Back rebuild is gated after preview release");
-  check(calls==before,"failed preview rebuild preserves active playback queue");
-  hostFreeHeap=64000;tap(20,20);check(label("Song 04"),"Back rebuild restores source scroll position");
-  tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable");
-  std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
+  // CY-116A2 uses a fixed 256-ID cursor, not a whole-list heap allocation.
+  // Low reported heap alone cannot refuse rebuilding; SD staging can still fail.
+  check(label("Song 04")&&classic_offset()==sourceOffset,"low-heap Back rebuild serves rows at the saved scroll position");
+  check(calls==before&&sourceIds==liveIds&&current==liveTrack,"low-heap preview rebuild preserves active playback queue");
+  tap(80,66);check(playing&&calls>before,"low-heap rebuilt preview remains playable");
+  before=calls;hostWriteBudget=0;tap(20,20);
+  check(label("Unable to reload list. Check SD card or try again."),"SD write failure refuses preview rebuild without crashing");
+  check(calls==before&&sourceIds==liveIds&&current==liveTrack,"failed preview rebuild preserves active playback queue");
+  hostWriteBudget=-1;tap(20,20);
+  check(label("Song 04")&&classic_offset()==sourceOffset,"Back retries SD rebuild and restores source scroll position");
+  tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable after SD recovery");
+  hostFreeHeap=64000;
+  std::cout<<"PASS CY-43: output failure preserves route; preview release, low-heap Back rebuild, SD failure/recovery, scroll and queue preservation\n";
   classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
   tapTile(4);check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
   typeQuery("song");tapRect(cydclassic::layout::keyAction<Rect>(tft.width(),tft.height(),1));

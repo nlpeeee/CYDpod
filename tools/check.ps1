@@ -149,7 +149,10 @@ try {
                 Copy-Item -LiteralPath $_.FullName -Destination $dest
             }
         }
-        if ($job.Name -like 'cydpod-player*' -or $job.Name -eq 'cydpod-uploader') { Copy-Item -LiteralPath (Join-Path $root 'vendor/miniflac/miniflac.h') -Destination $stage }
+        if ($job.Name -like 'cydpod-player*' -or $job.Name -eq 'cydpod-uploader') {
+            & python -I (Join-Path $root 'tools/stage_flac.py') $stage
+            if ($LASTEXITCODE -ne 0) { throw 'miniflac reader overlay staging failed.' }
+        }
         if ($job.Name -like 'i2s-*') { Copy-Item -LiteralPath (Join-Path $root 'firmware/cydpod_player/app/board.h') -Destination $stage }
         # GCC -w suppresses even local diagnostic-error pragmas. Keep it for
         # stock builds only; the probe enables format errors in its own files.

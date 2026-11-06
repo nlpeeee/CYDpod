@@ -2,6 +2,7 @@
 #include "wav_track.h"
 #ifdef ARDUINO
 #include "audio.h"
+#include <esp_timer.h>
 #endif
 #include "miniflac.h" // declarations only; the implementation is flac_core.c
 // Native FLAC, 16-bit mono/stereo, block size <= 4608, no heap. miniflac decodes
@@ -29,6 +30,16 @@ struct FlacState {
   uint8_t channels, skipped, drops;
   bool io, coarse;
 
+  static bool readAt(File& f, uint32_t at, uint8_t* out, uint32_t n) {
+#ifdef ARDUINO
+    const int64_t start = esp_timer_get_time();
+#endif
+    const bool ok = WavState::readAt(f, at, out, n);
+#ifdef ARDUINO
+    audio_flacReadTime(uint32_t(esp_timer_get_time() - start));
+#endif
+    return ok;
+  }
   static uint32_t be16(const uint8_t* p) { return uint32_t(p[0]) << 8 | p[1]; }
   static uint32_t be24(const uint8_t* p) { return be16(p) << 8 | p[2]; }
   static uint32_t be32(const uint8_t* p) { return be16(p) << 16 | be16(p + 2); }
@@ -49,14 +60,14 @@ struct FlacState {
   }
   const char* open(File& f, uint8_t* in) {
     end = f.size(); uint8_t h[4];
-    if (end < 42 || !WavState::readAt(f, 0, h, 4) || memcmp(h, "fLaC", 4)) return "flac_header";
+    if (end < 42 || !readAt(f, 0, h, 4) || memcmp(h, "fLaC", 4)) return "flac_header";
     uint32_t at = 4; bool info = false, last = false; unsigned blocks = 0;
     while (!last) {
-      if (++blocks > 1024 || end - at < 4 || !WavState::readAt(f, at, h, 4)) return "flac_metadata";
+      if (++blocks > 1024 || end - at < 4 || !readAt(f, at, h, 4)) return "flac_metadata";
       last = h[0] >> 7; const unsigned type = h[0] & 127; const uint32_t len = be24(h + 1), body = at + 4;
       if (type == 127 || len > end - body) return "flac_metadata";
       if (!info) {
-        if (type != 0 || len != 34 || !WavState::readAt(f, body, in, 34)) return "flac_streaminfo";
+        if (type != 0 || len != 34 || !readAt(f, body, in, 34)) return "flac_streaminfo";
         const uint32_t minB = be16(in), maxB = be16(in + 2);
         rate = uint32_t(in[10]) << 12 | uint32_t(in[11]) << 4 | in[12] >> 4;
         channels = ((in[12] >> 1) & 7) + 1;
@@ -89,7 +100,7 @@ struct FlacState {
     const uint32_t at = bufAt + inPos;
     if (at >= end) return false;
     uint32_t n = end - at; if (n > chunk) n = chunk;
-    if (!WavState::readAt(f, at, in, n)) { io = true; return false; }
+    if (!readAt(f, at, in, n)) { io = true; return false; }
     spent += n; bufAt = at; inPos = 0; inLen = uint16_t(n);
     return true;
   }
@@ -189,7 +200,7 @@ struct FlacState {
   // Frame header at an absolute offset (CRC-8 checked, fields plausible); sample may be `unknown`.
   bool headerAt(File& f, uint32_t pos, uint64_t& sample) {
     uint8_t h[16]; const uint32_t n = end - pos < sizeof(h) ? end - pos : sizeof(h);
-    if (n < 6 || !WavState::readAt(f, pos, h, n)) return false;
+    if (n < 6 || !readAt(f, pos, h, n)) return false;
     spent += n; arm(); uint32_t used32 = 0;
     if (miniflac_sync(&dec, h, n, &used32) != MINIFLAC_OK || unsupported(dec.frame.header)) return false;
     sample = sampleOf(dec.frame.header);
@@ -199,7 +210,7 @@ struct FlacState {
     uint32_t at = from, scanned = 0;
     while (at < limit && scanned < probeScan) {
       uint32_t n = limit - at; if (n > chunk) n = chunk;
-      if (n < 2 || !WavState::readAt(f, at, in, n)) return false;
+      if (n < 2 || !readAt(f, at, in, n)) return false;
       spent += n; scanned += n;
       for (uint32_t i = 0; i + 1 < n; ++i)
         if (in[i] == 0xFF && (in[i + 1] & 0xFE) == 0xF8 && headerAt(f, at + i, sample)) { pos = at + i; return true; }
@@ -217,7 +228,7 @@ struct FlacState {
     if (tabBytes) {
       const uint32_t n = tabBytes / entryBytes; uint32_t a = 0, b = n; uint8_t e[16];
       auto entry = [&](uint32_t i, uint64_t& s, uint64_t& o) {
-        spent += sizeof(e); if (!WavState::readAt(f, tab + i * entryBytes, e, sizeof(e))) return false;
+        spent += sizeof(e); if (!readAt(f, tab + i * entryBytes, e, sizeof(e))) return false;
         s = be64(e); o = be64(e + 8); return true; };
       uint64_t s = 0, o = 0; bool ok = true;
       while (ok && a < b) {

@@ -33,3 +33,7 @@ inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t){return 0;}
 inline uint32_t esp_random(){return 1234;}
 
 inline uint32_t micros(){return uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());}
+
+inline const char* pcTaskGetName(TaskHandle_t){return "hostpull";}
+inline int xPortGetCoreID(){return 0;}
+inline unsigned uxTaskPriorityGet(TaskHandle_t){return 10;}

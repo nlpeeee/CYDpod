@@ -48,7 +48,15 @@ PoolLayout& pool() { return codecPool.layout; }
 miniaac_status CodecTrack::begin(File& file) {
   end(); pool().fir.reset(); pool().file=&file; pool().error="ok"; pool().rate=44100;
   uint8_t magic[4]={};
-  if (WavState::readAt(file,0,magic,4) && !memcmp(magic,"RIFF",4)) {
+#ifdef ARDUINO
+  const int64_t magicAt = esp_timer_get_time();
+#endif
+  const bool magicOk = WavState::readAt(file,0,magic,4);
+#ifdef ARDUINO
+  const uint32_t magicUs = uint32_t(esp_timer_get_time() - magicAt);
+  if (!memcmp(magic,"fLaC",4)) audio_flacReadTime(magicUs);
+#endif
+  if (magicOk && !memcmp(magic,"RIFF",4)) {
     pool().kind=2; new (&pool().state.wav) WavState{};
     const char* error=pool().state.wav.open(file);
     if (error) { pool().error=error; return MINIAAC_UNSUPPORTED; }
@@ -114,6 +122,9 @@ CodecTrack::Pull CodecTrack::next() {
   if(n<0) {pool().error="wav_read";return Pull::error;}
   pool().frames=size_t(n); return n?Pull::frames:Pull::eof;
 }
+bool CodecTrack::isFlac() const { return pool().kind==4; }
+bool CodecTrack::flacNeedsFrame() const { return isFlac() && pool().state.flac.used>=pool().state.flac.blockSize; }
+uint16_t CodecTrack::flacBlockSize() const { return isFlac() ? pool().state.flac.blockSize : 0; }
 bool CodecTrack::seekable() const { return pool().kind==1 ? pool().state.aac.track.seekable() : pool().kind>=2 && pool().total; }
 miniaac_status CodecTrack::seek(uint32_t ms, miniaac_seek_hook hook, void* user) {
   pool().fir.reset();

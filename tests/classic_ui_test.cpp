@@ -45,7 +45,8 @@ bool audio_ready(){return true;}
 uint32_t audio_error(char*,size_t,int*){return 0;}
 void audio_setQueue(const uint16_t* p,int n,int,bool){queueData=p;queueLength=n;++calls;}
 static std::vector<uint16_t> sourceIds;
-void audio_setQueueSource(AudioQueueSource s,int n,int keep,bool jump){sourceIds.resize(n);for(int i=0;i<n;++i)sourceIds[i]=s.at?s.at(s.context,i):s.tracks?s.tracks[i]:i;audio_setQueue(sourceIds.data(),n,keep,jump);}
+static AudioQueueSource boundSource;
+void audio_setQueueSource(AudioQueueSource s,int n,int keep,bool jump){boundSource=s;sourceIds.resize(n);for(int i=0;i<n;++i)sourceIds[i]=s.at?s.at(s.context,i):s.tracks?s.tracks[i]:i;audio_setQueue(sourceIds.data(),n,keep,jump);}
 void audio_playTrack(int n){current=n;playing=true;++serial;++calls;}
 int audio_currentTrack(){return current;}
 bool audio_isPlaying(){return playing;}
@@ -1389,13 +1390,58 @@ static void flickWireRegression(){
   check(calls==before,"flicks never select");
   std::cout<<"PASS CY-108 flick wiring: raw vs filtered routing, coast start/stop/no backdating, tap-to-stop, end clamp, per-release line, knob parsing\n";
 }
+unsigned classic_previewBuilds();
+const PlaylistQueue* classic_previewCursor();
+static void playlistBackRegression(){
+  namespace L=cydclassic::layout;
+  auto openList=[](int row){home();tapTile(3);tap(80,L::HeaderH+row*L::RowH+20);};
+  auto select=[](){tap(80,L::HeaderH+20);check(playing&&classic_mode()==5,"source selection enters Player");};
+  auto independent=[](){
+    check(boundSource.context!=classic_previewCursor()&&boundSource.at,"queue owns a separate cursor");
+    for(int i=0;i<queueLength;++i)check(boundSource.at(boundSource.context,i)==sourceIds[i],"live queue IDs survive preview reuse/free/rebuild");
+  };
+  openList(2);check(classic_previewCursor()->queueCount()==3,"first playlist preview");
+  unsigned builds=classic_previewBuilds();select();independent();
+  const int files=hostOpenFiles;hostWriteBudget=0;tap(20,20);
+  check(classic_previewBuilds()==builds&&classic_mode()==4,"unchanged Back never calls build, even with writes refused");
+  check(hostOpenFiles==files,"retained preview holds no file slot");hostWriteBudget=-1;
+  select();tap(20,20);select();independent();
+  check(classic_previewBuilds()==builds,"Back select Back select does not rebuild");
+  std::cout<<"PASS PL-BACK: unchanged playlist Back reuses preview; repeated select keeps queue independent; no retained file slot\n";
+  // The mini-player replaces its page instead of pushing Player.
+  tap(20,20);tapRect(L::mini<Rect>(tft.width(),tft.height(),1));tap(20,20);
+  check(classic_mode()==4&&classic_previewBuilds()==builds,"mini-player Back also retains the source");
+  tap(20,20);tap(80,L::HeaderH+3*L::RowH+20);
+  check(classic_previewBuilds()==++builds&&classic_previewCursor()->queueCount()==2,"changed playlist rebuilds");independent();
+  select();independent();
+  auto extra=SD.root/"music/Example/Song extra.m4a";
+  std::filesystem::copy_file(SD.root/"music/Example/Song 00.m4a",extra);
+  const uint32_t crc=storage_libraryCrc();check(storage_refreshNextBoot()&&storage_begin(nullptr),"refresh changed catalogue");
+  check(storage_libraryCrc()!=crc,"catalogue CRC changed");tap(20,20);
+  check(classic_previewBuilds()==++builds,"changed catalogue rebuilds on Back");independent();
+  std::cout<<"PASS PL-BACK: changed source and catalogue CRC rebuild\n";
+  if(!playlist_isFavourite(0))playlist_toggleFavourite(0);
+  if(!playlist_isFavourite(1))playlist_toggleFavourite(1);
+  openList(0);builds=classic_previewBuilds();check(classic_previewCursor()->queueCount()==2,"Favourites starts with two entries");
+  select();tapRect(L::favourite<Rect>(tft.width()));tap(20,20);
+  check(classic_previewBuilds()==++builds&&classic_previewCursor()->queueCount()==1,"UI favourite toggle invalidates retained preview");independent();
+  std::cout<<"PASS PL-BACK: Favourites toggle rebuilds with updated IDs\n";
+  select();hostReadBudget=0;tap(20,20);
+  check(classic_previewCursor()->queueCount()==0,"SD row read error frees retained cursor");hostReadBudget=-1;
+  ui_redraw();pump();check(classic_previewBuilds()==++builds,"SD recovery rebuilds discarded cursor");
+  openList(2);select();tapRect(L::favourite<Rect>(tft.width()));hostWriteBudget=0;tap(20,20);
+  check(label("Unable to reload list. Check SD card or try again.")&&classic_previewCursor()->queueCount()==0,"failed rebuild retains no cursor");
+  hostWriteBudget=-1;tap(20,20);check(classic_mode()==4,"Back retries a failed rebuild");independent();
+  home();check(classic_previewCursor()->queueCount()==0,"Home frees cursor for PC playlist refresh");
+  std::cout<<"PASS PL-BACK: SD failure discards preview, rebuild failure/recovery preserves live queue; Home refreshes PC edits\n";
+}
 int main(){try{
   if(std::getenv("CYDPOD_REGENERATE_CLASSIC")){std::ofstream("../golden/classic_layout.txt")<<classic_geometry();return 0;}
 
   if(const char* preview=std::getenv("CYDPOD_HP_LIMIT_ONLY")){headphoneLimitRegression(preview);return 0;}
 
-  if(!std::getenv("CYDPOD_VIEWPORT_ONLY"))geometryGolden();
-  else {const auto actual=classic_geometry();std::ifstream f("../golden/classic_layout.txt");
+  if(!std::getenv("CYDPOD_VIEWPORT_ONLY")&&!std::getenv("CYDPOD_PL_BACK_ONLY"))geometryGolden();
+  else if(!std::getenv("CYDPOD_PL_BACK_ONLY")){const auto actual=classic_geometry();std::ifstream f("../golden/classic_layout.txt");
     check(actual==std::string((std::istreambuf_iterator<char>(f)),{}),"Classic drag geometry differs from golden");
     std::cout<<"PASS CY-98b Classic layout golden (dialog excluded: baseline failure)\n";}
 
@@ -1408,7 +1454,13 @@ int main(){try{
   const std::string tag="Actual tagged fixture";auto found=std::search(original.begin(),original.end(),tag.begin(),tag.end());check(found!=original.end(),"locate fixture title");const size_t pos=size_t(found-original.begin());
   for(int i=0;i<10;++i){auto bytes=original;char name[32];snprintf(name,sizeof(name),"Song %02d",i);memset(bytes.data()+pos,0,tag.size());memcpy(bytes.data()+pos,name,strlen(name));
     std::ofstream out(SD.root/(std::string("music/Example/")+name+".m4a"),std::ios::binary);out.write(bytes.data(),bytes.size());}
+  if(std::getenv("CYDPOD_PL_BACK_ONLY")){
+    std::filesystem::create_directories(SD.root/"playlists");
+    std::ofstream(SD.root/"playlists/a.m3u")<<"/music/Example/Song 00.m4a\n/music/Example/Song 01.m4a\n/music/Example/Song 02.m4a\n";
+    std::ofstream(SD.root/"playlists/b.m3u")<<"/music/Example/Song 03.m4a\n/music/Example/Song 04.m4a\n";
+  }
   check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
+  if(std::getenv("CYDPOD_PL_BACK_ONLY")){playlistBackRegression();return 0;}
   if(std::getenv("CYDPOD_VIEWPORT_ONLY")){lateReleaseRegression();viewportRegression();dragRegression();flingRegression();flickWireRegression();miniPlayerRegression();return 0;}
   tapTile(1);check(label("Fixture Artist")&&classic_depth()==2,"artist view straight from the tile");snapshot("ui-artists.svg");
   tap(80,66);check(label("All Songs")&&label("Fixture Album"),"artist album view");snapshot("ui-albums.svg");
@@ -1487,7 +1539,7 @@ int main(){try{
   routeAllowed=false;tap(80,110);check(g_settings.outRoute==OUT_BT,"the single entry cannot select an unavailable route");routeAllowed=true;
   ui_redraw();pump();check(countLabel("Selected")==1,"one Selected entry");
 #endif
-  // Folder preview must be dropped above the source page, then rebuilt at its old scroll position.
+  // Folder preview survives Player; an explicit favourite change invalidates it.
   home();tapTile(3);tap(80,96);tap(80,66);
   tap(225,220);const int sourceOffset=classic_offset();
   tap(80,66);check(playing,"folder preview starts playback");
@@ -1495,17 +1547,17 @@ int main(){try{
   before=calls;hostFreeHeap=10000;tap(20,20);
   // CY-116A2 uses a fixed 256-ID cursor, not a whole-list heap allocation.
   // Low reported heap alone cannot refuse rebuilding; SD staging can still fail.
-  check(label("Song 04")&&classic_offset()==sourceOffset,"low-heap Back rebuild serves rows at the saved scroll position");
-  check(calls==before&&sourceIds==liveIds&&current==liveTrack,"low-heap preview rebuild preserves active playback queue");
-  tap(80,66);check(playing&&calls>before,"low-heap rebuilt preview remains playable");
-  before=calls;hostWriteBudget=0;tap(20,20);
+  check(label("Song 04")&&classic_offset()==sourceOffset,"low-heap Back reuse serves rows at the saved scroll position");
+  check(calls==before&&sourceIds==liveIds&&current==liveTrack,"low-heap preview reuse preserves active playback queue");
+  tap(80,66);check(playing&&calls>before,"low-heap retained preview remains playable");
+  before=calls;tapRect(cydclassic::layout::favourite<Rect>(tft.width()));hostWriteBudget=0;tap(20,20);
   check(label("Unable to reload list. Check SD card or try again."),"SD write failure refuses preview rebuild without crashing");
   check(calls==before&&sourceIds==liveIds&&current==liveTrack,"failed preview rebuild preserves active playback queue");
   hostWriteBudget=-1;tap(20,20);
   check(label("Song 04")&&classic_offset()==sourceOffset,"Back retries SD rebuild and restores source scroll position");
   tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable after SD recovery");
   hostFreeHeap=64000;
-  std::cout<<"PASS CY-43: output failure preserves route; preview release, low-heap Back rebuild, SD failure/recovery, scroll and queue preservation\n";
+  std::cout<<"PASS CY-43: output failure preserves route; preview retention, low-heap Back reuse, SD failure/recovery, scroll and queue preservation\n";
   classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
   tapTile(4);check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
   typeQuery("song");tapRect(cydclassic::layout::keyAction<Rect>(tft.width(),tft.height(),1));

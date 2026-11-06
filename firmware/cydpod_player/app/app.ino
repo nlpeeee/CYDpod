@@ -45,6 +45,7 @@
 #include "catalog.h"
 #include "classic_screen.h"
 #include "sleep_mode.h"
+#include "cpu_stats.h" // DIAG-CPU: loop-only diagnostics
 #include <esp_system.h>
 
 // The loop task (which also runs setup: calibration, title rendering) measured
@@ -247,6 +248,7 @@ void loop() {}
   splash_finish();
   classic_home();
   ui_go(needSpeaker ? SCR_BLUETOOTH : SCR_CLASSIC);
+  cpu_stats_begin(); // DIAG-CPU: baseline after task startup
 }
 
 // Keep the resume point current: at once when the track changes, every 30 s
@@ -318,6 +320,7 @@ void loop() {
   ui_tick(now);
 
   static uint32_t lastStat = 0;
+  cpu_stats_tick(now, now - lastStat >= 10000); // DIAG-CPU: reuse stat cadence
   if (now - lastStat >= 10000) {
     const uint32_t nextMaxMs = audio_takeMaxReadMs();
     Serial.printf("diag: sd read max %u ms  dac stalls %u\n", nextMaxMs, speaker_stalls());

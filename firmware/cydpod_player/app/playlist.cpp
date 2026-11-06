@@ -264,42 +264,121 @@ static String resolveEntry(String e, const String& listDir) {
   return nearLow.startsWith("/music/") ? near : normalise("/music/" + e);
 }
 
+// One 4-byte key per entry: 22 suffix-hash bits and its 10-bit list position.
+// Full hashes are checked after the index lookup; collisions cannot select a track.
 static uint32_t* m3uKeys = nullptr;
-static int       m3uCount = 0;
-
+static int m3uCount = 0;
+static File m3uFile, m3uState;
+static String m3uDir;
+static PlaylistMatchStats matchStats;
+struct M3uMatch { uint32_t offset; uint16_t id; uint8_t score, ambiguous; };
+static const char* M3U_STATE = "/.sys/m3u-match.tmp";
+static uint32_t tailIndexKey(const String& path) {
+  const int last = path.lastIndexOf('/');
+  const int previous = last > 0 ? path.substring(0, last).lastIndexOf('/') : -1;
+  return (pathKey(path.substring(previous < 0 ? 0 : previous)) & 0x3FFFFF) << 10;
+}
+// Drain long lines without growing a String past 258 bytes (255 plus BOM).
+static String entryLine(File& f) {
+  char bytes[259]; size_t n = 0; bool longer = false; uint8_t c;
+  while (f.available()) {
+    if (f.read(&c, 1) != 1) { queueOk = false; break; }
+    if (c == '\n') break;
+    if (c == '\r') continue;
+    if (n < sizeof(bytes)-1) bytes[n++] = char(c); else longer = true;
+  }
+  bytes[n] = 0;
+  String line(bytes);
+  if (line.startsWith("\xEF\xBB\xBF")) line = line.substring(3);
+  line.trim();
+  if (longer && !line.isEmpty() && line[0] != '#') line += "xxxx";
+  return line;
+}
+static bool matchRecord(int p, M3uMatch& record, bool write = false) {
+  const size_t bytes = sizeof(record);
+  const bool ok = m3uState.seek(p * bytes) &&
+    (write ? m3uState.write((const uint8_t*)&record, bytes) : m3uState.read((uint8_t*)&record, bytes)) == bytes;
+  if (!ok) queueOk = false;
+  return ok;
+}
 static void matchM3u(int i, const String& path, const String&) {
   ++visited;
-  const uint32_t k = pathKey(path);
-  for (int p = 0; p < m3uCount; p++)
-    if (m3uKeys[p] == k) putId(p, i);
+  const uint32_t exact = pathKey(path);
+  uint32_t tails[6]; int count = 0;
+  for (int end = path.length(); end > 0 && count < 6;) {
+    const int slash = path.substring(0, end).lastIndexOf('/');
+    if (slash < 0) break;
+    tails[count++] = pathKey(path.substring(slash)); end = slash;
+  }
+  auto end = m3uKeys + m3uCount;
+  // Each entry indexes its last two components, or its bare filename.
+  for (int suffix = 0; suffix < min(2, count); ++suffix) {
+  const uint32_t key = (tails[suffix] & 0x3FFFFF) << 10;
+  for (auto hit = std::lower_bound(m3uKeys, end, key); hit != end && (*hit & ~1023u) == key; ++hit) {
+    const int p = *hit & 1023u; M3uMatch record;
+    if (!matchRecord(p, record) || !m3uFile.seek(record.offset)) { queueOk = false; return; }
+    String entry = entryLine(m3uFile); entry.replace('\\', '/');
+    if (entry.length() > 1 && entry[1] == ':') entry = entry.substring(2);
+    const String tail = normalise(entry);
+    uint8_t score = pathKey(resolveEntry(entry, m3uDir)) == exact ? 7 : 0;
+    if (!score) {
+      int components = 0;
+      for (int end = tail.length(); end > 0 && components < count;) {
+        const int slash = tail.substring(0, end).lastIndexOf('/');
+        if (slash < 0) break;
+        if (pathKey(tail.substring(slash)) == tails[components]) score = components + 1;
+        ++components; end = slash;
+      }
+      // Paths with usable directories need at least a two-component match.
+      if (score == 1 && tail.indexOf('/', 1) >= 0) score = 0;
+    }
+    if (score > record.score) { record.id = i; record.score = score; record.ambiguous = 0; }
+    else if (score && score == record.score && record.id != i) record.ambiguous = 1;
+    if (score) matchRecord(p, record, true);
+  }
+  }
 }
-
+const PlaylistMatchStats& playlist_lastMatchStats() { return matchStats; }
 static int buildM3u(const String& listPath) {
-  File f = openSmallFile(listPath);
-  if (!f) return 0;
+  matchStats = {};
+  m3uFile = openSmallFile(listPath);
+  if (!m3uFile) return 0;
   const int cap = min(queueCap, MAX_M3U);
   m3uKeys = (uint32_t*)malloc(cap * sizeof(uint32_t));
-  if (!m3uKeys) { f.close(); return 0; }
-  const String dir = listPath.substring(0, listPath.lastIndexOf('/'));
+  m3uState = previewOut ? openSmallFile(M3U_STATE, "w+") : queueOut;
+  if (!m3uKeys || !m3uState) { free(m3uKeys); m3uKeys = nullptr; m3uFile.close(); m3uState.close(); return 0; }
+  m3uDir = listPath.substring(0, listPath.lastIndexOf('/'));
   m3uCount = 0;
-  while (f.available() && m3uCount < cap) {
-    const size_t before = f.position();
-    String line = f.readStringUntil('\n');
-    if (f.position() <= before) { queueOk = false; break; }
-    if (line.startsWith("\xEF\xBB\xBF")) line = line.substring(3);   // UTF-8 BOM
-    line.trim();
+  while (queueOk && m3uFile.available()) {
+    const uint32_t offset = m3uFile.position();
+    String line = entryLine(m3uFile);
     if (line.isEmpty() || line[0] == '#' || line.indexOf("://") >= 0) continue;
-    m3uKeys[m3uCount++] = pathKey(resolveEntry(line, dir));
+    ++matchStats.entries;
+    if (line.length() > 255) { ++matchStats.overlong; continue; }
+    if (m3uCount >= cap) { ++matchStats.truncated; continue; }
+    line.replace('\\', '/');
+    if (line.length() > 1 && line[1] == ':') line = line.substring(2);
+    m3uKeys[m3uCount] = tailIndexKey(normalise(line)) | uint32_t(m3uCount);
+    M3uMatch record{offset, 0xFFFF, 0, 0};
+    matchRecord(m3uCount++, record, true);
   }
-  f.close();
-  for (int p = 0; p < m3uCount; p++) putId(p, 0xFFFF);
-  checkedScan(matchM3u);
-  free(m3uKeys);
-  m3uKeys = nullptr;
-  // Squeeze out the entries that matched nothing, keeping the playlist's order.
+  std::sort(m3uKeys, m3uKeys + m3uCount);
+  if (queueOk) checkedScan(matchM3u);
+  free(m3uKeys); m3uKeys = nullptr;
   int n = 0;
-  for (int p = 0; p < m3uCount; p++)
-    { const int id = getId(p); if (id >= 0 && id != 0xFFFF) putId(n++, id); }
+  for (int p = 0; queueOk && p < m3uCount; ++p) {
+    M3uMatch record; if (!matchRecord(p, record)) break;
+    if (record.ambiguous) ++matchStats.ambiguous;
+    if (!record.score || (record.score == 1 && record.ambiguous)) continue;
+    putId(n++, record.id);
+    if (record.score == 7) ++matchStats.exact;
+    else if (record.score == 1) ++matchStats.byName;
+    else ++matchStats.byTail;
+  }
+  m3uFile.close(); m3uState.close(); if (previewOut) SD.remove(M3U_STATE);
+  matchStats.missing = matchStats.entries - matchStats.exact - matchStats.byTail - matchStats.byName;
+  Serial.printf("cmd: playlist %s n=%lu found=%d missing=%lu ambiguous=%lu\n", baseName(listPath).c_str(),
+    (unsigned long)matchStats.entries, n, (unsigned long)matchStats.missing, (unsigned long)matchStats.ambiguous);
   return n;
 }
 

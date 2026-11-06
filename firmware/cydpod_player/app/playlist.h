@@ -76,3 +76,11 @@ struct PlaylistQueue {
 // Independent preview files; caller retains the bounded cursor, never an ID pointer.
 bool playlist_preview(int source, PlaylistQueue& preview);
 bool playlist_playPreview(PlaylistQueue& preview, int row, int source);
+
+// Last M3U build/preview; missing includes overlong and capacity-truncated entries.
+// Ambiguous tails choose the first library track; ambiguous bare names stay missing.
+struct PlaylistMatchStats {
+  uint32_t entries = 0, exact = 0, byTail = 0, byName = 0;
+  uint32_t ambiguous = 0, missing = 0, overlong = 0, truncated = 0;
+};
+const PlaylistMatchStats& playlist_lastMatchStats();

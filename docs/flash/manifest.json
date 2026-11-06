@@ -1,0 +1,15 @@
+{
+  "name": "CYDpod",
+  "version": "33",
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "../firmware/cydpod-v33-w328c.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CYDpod: an iPod-style music player for the Cheap Yellow Display</title>
+<meta name="description" content="CYDpod is open firmware that turns the JC2432W328C Cheap Yellow Display into a pocket music player: Artist, Album and Song browsing from microSD, Bluetooth or wired output, flashed from your browser.">
+<meta name="theme-color" content="#FFD21F">
+<link rel="icon" type="image/svg+xml" href="assets/logo/cydpod-icon-yellow.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Identity from the CYDpod brand sheet: ink, off-white, one yellow accent, Source Sans 3 + IBM Plex Mono. */
+:root {
+  --ink: #1d1d1f; --white: #fbfbfb; --panel: #f5f5f7; --graphite: #2a2b2e;
+  --steel: #c7cace; --grey: #84888d; --muted: #6e6e73; --line: #e2e2e5;
+  --yellow: #ffd21f; --yellow-deep: #e0b400; --link: #7a5d00;
+  --f-brand: "Source Sans 3", "Myriad Pro", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+body { margin: 0; background: var(--white); color: var(--ink); font: 400 18px/1.55 var(--f-brand); }
+img, svg { max-width: 100%; }
+a { color: var(--link); text-underline-offset: 3px; }
+a:hover { color: var(--ink); }
+:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
+.dark :focus-visible { outline-color: var(--yellow); }
+.skip { position: absolute; left: 12px; top: -60px; background: var(--ink); color: var(--white); padding: 10px 14px; border-radius: 8px; z-index: 10; }
+.skip:focus { top: 12px; }
+.wrap { width: min(1080px, 100% - 40px); margin-inline: auto; }
+section { padding-block: clamp(56px, 9vw, 104px); }
+.sh { display: grid; grid-template-columns: minmax(0, 240px) minmax(0, 1fr); gap: 10px 40px; margin-bottom: 36px; }
+h2 { font-size: clamp(28px, 4vw, 36px); font-weight: 600; line-height: 1.1; letter-spacing: -.012em; margin: 0; }
+h3 { font-size: 20px; font-weight: 600; line-height: 1.25; margin: 0 0 6px; }
+.sh p, .lead { margin: 0; color: var(--muted); max-width: 62ch; }
+.lead { font-size: 20px; }
+p { margin: 0 0 14px; }
+.cap { font: 500 12px/1.4 var(--f-mono); color: var(--muted); }
+code, kbd { font-family: var(--f-mono); font-size: .88em; background: var(--panel); border-radius: 5px; padding: 1px 6px; }
+.dark code { background: #3a3b3f; color: var(--white); }
+
+/* top bar */
+header.bar { padding-block: 18px; }
+header.bar .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+header.bar svg { height: 30px; width: auto; color: var(--ink); display: block; }
+nav ul { list-style: none; display: flex; gap: 22px; margin: 0; padding: 0; font-size: 16px; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--ink); text-decoration: underline; }
+
+/* hero */
+.hero { text-align: center; padding-block: clamp(44px, 8vw, 96px) clamp(48px, 8vw, 88px); }
+.hero h1 { margin: 0; line-height: 0; }
+.hero h1 svg { width: min(720px, 86vw); height: auto; color: var(--ink); }
+.tagline { font-size: clamp(22px, 3.2vw, 34px); font-weight: 300; line-height: 1.2; letter-spacing: -.01em; color: var(--ink); margin: 28px auto 8px; max-width: 24ch; }
+.hero .sub { color: var(--muted); max-width: 54ch; margin: 0 auto 8px; }
+.hero .fine { max-width: 60ch; margin: 0 auto; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 34px; }
+.btn { font: 600 18px/1 var(--f-brand); border: 0; border-radius: 999px; padding: 17px 30px; cursor: pointer; text-decoration: none; display: inline-block; background: var(--yellow); color: var(--ink); }
+.btn:hover { background: var(--yellow-deep); color: var(--ink); }
+.btn.quiet { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
+.btn.quiet:hover { background: var(--ink); color: var(--white); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 30px; padding: 0; list-style: none; }
+.chips li { font: 500 12px/1 var(--f-mono); color: var(--muted); border: 1px solid var(--steel); border-radius: 5px; padding: 7px 9px; }
+
+/* screens */
+.shots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: end; }
+.shots figure { margin: 0; background: var(--panel); border-radius: 18px; padding: 22px 18px 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.shots img { border-radius: 6px; box-shadow: 0 0 0 8px #111, 0 0 0 9px #3a3a3d; margin: 8px 8px 6px; height: auto; image-rendering: auto; }
+.shots img.px { image-rendering: pixelated; }
+.shots figcaption { text-align: center; }
+.shots .tall img { width: 150px; }
+.note { color: var(--muted); font-size: 15px; margin-top: 18px; }
+
+/* cards */
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.card { background: var(--panel); border-radius: 18px; padding: 24px 24px 20px; }
+.card p, .card ul { color: var(--muted); font-size: 16.5px; margin-bottom: 8px; }
+.card ul { padding-left: 20px; margin-top: 6px; }
+.card strong { color: var(--ink); font-weight: 600; }
+.tag { display: inline-block; font: 500 11px/1 var(--f-mono); letter-spacing: .02em; padding: 5px 7px; border-radius: 4px; margin-bottom: 12px; background: var(--ink); color: var(--white); }
+.tag.opt { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--steel); }
+.flag { font: 500 11px/1 var(--f-mono); background: #fff3c2; color: #5c4600; border-radius: 4px; padding: 3px 6px; white-space: nowrap; }
+.feat { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; }
+.feat li { border-top: 1px solid var(--line); padding: 16px 0 14px; }
+.feat b { display: block; font-weight: 600; }
+.feat span { color: var(--muted); font-size: 16.5px; }
+.why { counter-reset: w; list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.why li { counter-increment: w; background: var(--panel); border-radius: 18px; padding: 22px 22px 18px; }
+.why li::before { content: counter(w, decimal-leading-zero); font: 500 12px/1 var(--f-mono); color: var(--muted); display: block; margin-bottom: 10px; }
+.why b { display: block; font-size: 20px; font-weight: 600; line-height: 1.25; margin-bottom: 4px; }
+.why span { color: var(--muted); font-size: 16.5px; }
+
+/* flash */
+.dark { background: var(--graphite); color: var(--white); }
+.dark .sh p, .dark .lead, .dark .muted { color: var(--steel); }
+.dark a { color: var(--yellow); }
+.dark a:hover { color: var(--white); }
+.flashbox { background: var(--ink); border-radius: 22px; padding: clamp(28px, 5vw, 52px); text-align: center; margin-bottom: 40px; }
+.flashbox .ver { font: 500 13px/1.5 var(--f-mono); color: var(--steel); margin: 18px 0 0; overflow-wrap: anywhere; }
+.flashbox .btn { font-size: 20px; padding: 20px 38px; }
+.flashbox .unsup { color: var(--steel); }
+.warn { border-left: 4px solid var(--yellow); padding: 4px 0 4px 18px; margin: 0 0 24px; text-align: left; max-width: 62ch; margin-inline: auto; }
+.warn b { color: var(--white); }
+ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0 0 40px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+ol.steps li { counter-increment: s; background: #34353a; border-radius: 16px; padding: 20px; font-size: 16.5px; color: var(--steel); }
+ol.steps li::before { content: counter(s); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--yellow); color: var(--ink); font-weight: 600; margin-bottom: 12px; }
+ol.steps b { color: var(--white); display: block; font-size: 18px; margin-bottom: 2px; }
+.dark .card { background: #34353a; }
+.dark .card p, .dark .card ul { color: var(--steel); }
+.dark .card strong, .dark .card h3 { color: var(--white); }
+details { background: #34353a; border-radius: 16px; padding: 4px 22px; margin-bottom: 12px; }
+details[open] { padding-bottom: 18px; }
+summary { cursor: pointer; font-weight: 600; font-size: 18px; padding: 14px 0; }
+details p, details li { color: var(--steel); font-size: 16.5px; }
+pre { position: relative; margin: 12px 0; background: #17181a; color: #ececee; border-radius: 12px; padding: 16px 18px; overflow-x: auto; font: 400 13.5px/1.6 var(--f-mono); }
+pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+.copy { position: absolute; right: 8px; top: 8px; font: 500 11px/1 var(--f-mono); background: #34353a; color: var(--white); border: 0; border-radius: 6px; padding: 7px 9px; cursor: pointer; }
+.copy:hover { background: var(--yellow); color: var(--ink); }
+
+table { border-collapse: collapse; width: 100%; font-size: 16px; }
+th, td { text-align: left; padding: 10px 14px 10px 0; border-top: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; }
+.tbl { overflow-x: auto; }
+.licences td:first-child { white-space: nowrap; font-weight: 600; }
+
+footer { background: var(--panel); padding-block: 48px 64px; color: var(--muted); font-size: 16px; }
+footer svg { height: 26px; width: auto; color: var(--ink); display: block; margin-bottom: 14px; }
+footer p { max-width: 70ch; }
+
+@media (max-width: 860px) {
+  .sh, .grid, .grid.three, .feat, .why { grid-template-columns: minmax(0, 1fr); }
+  ol.steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .shots { grid-template-columns: minmax(0, 1fr); }
+  nav { display: none; }
+  body { font-size: 17px; }
+}
+@media (max-width: 520px) {
+  ol.steps { grid-template-columns: minmax(0, 1fr); }
+  .btn { width: 100%; text-align: center; }
+  .cta { flex-direction: column; }
+  .flashbox .btn { width: auto; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="wm" viewBox="0 0 3081 917"><g transform="matrix(1 0 0 -1 -52.00 712.00)"><path fill="currentColor" fill-rule="nonzero" d="M339.0 -12Q257.0 -12 192.0 28.5Q127.0 69 89.5 145.0Q52.0 221 52.0 328Q52.0 434 90.0 510.0Q128.0 586 194.0 627.0Q260.0 668 343.0 668Q402.0 668 448.5 644.5Q495.0 621 523.0 587L478.0 536Q452.0 564 418.5 579.5Q385.0 595 344.0 595Q283.0 595 236.5 562.5Q190.0 530 164.0 471.0Q138.0 412 138.0 330Q138.0 248 163.5 187.5Q189.0 127 235.5 94.0Q282.0 61 345.0 61Q391.0 61 427.5 78.5Q464.0 96 495.0 130L538.0 82Q498.0 37 450.5 12.5Q403.0 -12 339.0 -12ZM735.0 0V254L538.0 656H627.0L712.0 471Q728.0 435 743.5 400.0Q759.0 365 775.0 328H779.0Q796.0 365 813.0 400.0Q830.0 435 845.0 471L929.0 656H1016.0L819.0 254V0ZM1080.0 0V656H1244.0Q1396.0 656 1475.0 571.5Q1554.0 487 1554.0 331Q1554.0 174 1475.5 87.0Q1397.0 0 1248.0 0ZM1163.0 68H1238.0Q1353.0 68 1410.5 137.5Q1468.0 207 1468.0 331Q1468.0 455 1410.5 521.5Q1353.0 588 1238.0 588H1163.0ZM1662.0 -205V486H1730.0L1737.0 430H1740.0Q1773.0 458 1812.5 478.0Q1852.0 498 1895.0 498Q1989.0 498 2038.0 430.5Q2087.0 363 2087.0 250Q2087.0 168 2057.5 109.0Q2028.0 50 1980.5 19.0Q1933.0 -12 1877.0 -12Q1843.0 -12 1809.5 3.0Q1776.0 18 1742.0 44L1744.0 -41V-205ZM1863.0 57Q1923.0 57 1962.5 108.5Q2002.0 160 2002.0 250Q2002.0 330 1972.5 379.5Q1943.0 429 1874.0 429Q1843.0 429 1811.5 412.0Q1780.0 395 1744.0 363V108Q1777.0 80 1808.0 68.5Q1839.0 57 1863.0 57ZM2140.00 240.00A250.00 250.00 0 1 1 2640.00 240.00A250.00 250.00 0 1 1 2140.00 240.00ZM2220.00 240.00A170.00 170.00 0 1 0 2560.00 240.00A170.00 170.00 0 1 0 2220.00 240.00ZM2908.0 -12Q2817.0 -12 2762.0 54.5Q2707.0 121 2707.0 242Q2707.0 321 2736.5 378.5Q2766.0 436 2814.5 467.0Q2863.0 498 2918.0 498Q2960.0 498 2991.0 483.0Q3022.0 468 3054.0 442L3050.0 525V712H3133.0V0H3065.0L3058.0 57H3055.0Q3027.0 29 2989.0 8.5Q2951.0 -12 2908.0 -12ZM2926.0 57Q2990.0 57 3050.0 124V378Q3019.0 406 2990.5 417.5Q2962.0 429 2932.0 429Q2893.0 429 2861.5 405.5Q2830.0 382 2811.0 340.5Q2792.0 299 2792.0 243Q2792.0 156 2827.0 106.5Q2862.0 57 2926.0 57Z"/>
+    <path style="fill:var(--dot,#FFD21F)" d="M2327.50 240.00A62.50 62.50 0 1 1 2452.50 240.00A62.50 62.50 0 1 1 2327.50 240.00Z"/></g></symbol>
+  </defs>
+</svg>
+<a class="skip" href="#flash">Skip to the flash button</a>
+
+<header class="bar">
+  <div class="wrap">
+    <svg role="img" aria-label="CYDpod" viewBox="0 0 3081 917"><use href="#wm"/></svg>
+    <nav aria-label="Page sections">
+      <ul>
+        <li><a href="#parts">What you need</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#flash">Flash</a></li>
+        <li><a href="#limits">Limits</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+<!-- ============ hero ============ -->
+<div class="hero wrap">
+  <h1><svg role="img" aria-label="CYDpod" viewBox="0 0 3081 917"><use href="#wm"/></svg></h1>
+  <p class="tagline">Up to ten thousand songs on a cheap yellow board.</p>
+  <p class="sub">An iPod-style music player for the JC2432W328C &ldquo;Cheap Yellow Display&rdquo;. Artist, Album and Song from a microSD card, out to a Bluetooth speaker or a wired output. Open firmware you flash from your browser.</p>
+  <p class="cap fine">10,000 tracks is the tested library size (host tests); the first scan on the board has not been timed yet.</p>
+  <div class="cta">
+    <a class="btn" href="#flash">Install CYDpod v<!--rel:version-->33<!--/rel--></a>
+    <a class="btn quiet" href="#parts">What you need</a>
+  </div>
+  <ul class="chips" aria-label="Board summary">
+    <li>ESP32</li><li>2.4&Prime; 240&times;320 touch</li><li>microSD</li><li>Bluetooth</li><li>JC2432W328C only</li>
+  </ul>
+</div>
+
+<!-- ============ what it is ============ -->
+<section id="what" class="wrap" aria-labelledby="h-what" style="padding-top:0">
+  <div class="sh"><h2 id="h-what">What it is</h2>
+    <p class="lead">CYDpod turns a very cheap ESP32 touchscreen board into a pocket music player. It reads your music from a microSD card, builds a catalogue, and shows it the way the classic iPod did: Artist, Album, Song. Sound goes to a Bluetooth speaker or headphones, or out of a wired output you add. There is no cloud service and no account; the firmware uses Wi-Fi only for its optional upload page.</p>
+  </div>
+  <div class="shots">
+    <figure><img class="px" src="assets/home-tiles.png" width="320" height="240" alt="Simulated CYDpod Home screen: six tiles for Songs, Artists, Albums, Playlists, Search and Settings, with a Shuffle all bar."><figcaption class="cap">Home</figcaption></figure>
+    <figure><img src="research/cy90-quiet-outline-icons/player-r1-s0-x4.png" width="320" height="240" alt="Simulated Now Playing screen: title, artist, album, seek bar with times, shuffle, previous, play, next and repeat buttons, a volume slider and an output button."><figcaption class="cap">Now Playing</figcaption></figure>
+    <figure class="tall"><img src="research/cy98b-drag-portrait.png" width="240" height="320" alt="Simulated portrait Songs list with a scroll thumb on the right and a mini player along the bottom."><figcaption class="cap">Songs, portrait</figcaption></figure>
+  </div>
+  <p class="note">Simulator renders from the project&rsquo;s test harness (layout only; the board&rsquo;s own font and colours may differ), not photos of a device.</p>
+</section>
+
+<!-- ============ parts ============ -->
+<section id="parts" class="wrap" aria-labelledby="h-parts" style="background:none">
+  <div class="sh"><h2 id="h-parts">What you need</h2>
+    <p>Four required items, and a few optional ones. Nothing here is an affiliate link; search for the exact model name.</p>
+  </div>
+  <div class="grid">
+    <article class="card"><span class="tag">REQUIRED</span>
+      <h3>A JC2432W328C board</h3>
+      <p>The 2.4&Prime; ESP32 &ldquo;Cheap Yellow Display&rdquo; with <strong>capacitive</strong> touch (ST7789 panel, CST820 touch controller), 4&nbsp;MB flash and a microSD slot. The model name is printed on the back.</p>
+      <p><strong>Other CYD variants are not supported</strong>, including the resistive-touch ESP32-2432S028R. The firmware and the flash file are built for this board only.</p>
+    </article>
+    <article class="card"><span class="tag">REQUIRED</span>
+      <h3>A microSD card</h3>
+      <p>FAT32, 32&nbsp;GB or smaller (the tested configuration). Put your music in <code>/music</code> (sub-folders are fine) and optional playlists in <code>/playlists</code>.</p>
+      <p>The player keeps its catalogue cache in a hidden <code>/.sys</code> folder on the card. Flashing never touches the card.</p>
+    </article>
+    <article class="card"><span class="tag">REQUIRED</span>
+      <h3>A USB data cable and a computer with Chrome or Edge</h3>
+      <p>Flashing from the browser uses Web Serial, which Chrome and Edge support on Windows, macOS, Linux and ChromeOS. Firefox and Safari do not. Use a cable that carries data; some charge-only cables do not.</p>
+    </article>
+    <article class="card"><span class="tag">REQUIRED</span>
+      <h3>Somewhere for the sound to go</h3>
+      <p><strong>Bluetooth:</strong> any speaker or headphones. Pair from Settings &rsaquo; Bluetooth &rsaquo; Pair new. Tested with a speaker on earlier builds; <strong>AirPods Pro 2 are not verified</strong> (an early test build did not pair with them).</p>
+      <p><strong>Wired:</strong> an I2S DAC board on the board&rsquo;s P6 connector (silkscreen top to bottom: GND, IO16, IO4, IO17: bit clock, data, word select), plus a headphone amplifier if you want headphones; a PCM5102A-class line DAC is the documented example. <span class="flag">wired audio not yet verified on hardware</span></p>
+    </article>
+  </div>
+  <div class="grid three" style="margin-top:14px">
+    <article class="card"><span class="tag opt">OPTIONAL</span><h3>A microSD card reader</h3><p>The easiest way to copy music, and the only one that works with the one-click flash (see the Wi-Fi note under Known limits).</p></article>
+    <article class="card"><span class="tag opt">OPTIONAL</span><h3>I2S DAC and amplifier</h3><p>For the wired &ldquo;Headphones&rdquo; output. Skip it if Bluetooth is enough.</p></article>
+    <article class="card"><span class="tag opt">OPTIONAL</span><h3>A phone or PC for the upload page</h3><p>The firmware has a Wi-Fi upload page (hotspot or your own network). It needs a separate uploader image that the single flash file does not include.</p></article>
+  </div>
+</section>
+
+<!-- ============ features ============ -->
+<section id="features" class="wrap" aria-labelledby="h-feat">
+  <div class="sh"><h2 id="h-feat">What it can do</h2>
+    <p>Every item below is in the v<!--rel:version-->33<!--/rel--> source and covered by host tests. Hardware checks that are still open are listed under Known limits.</p>
+  </div>
+  <ul class="feat">
+    <li><b>Four formats</b><span>MP3, FLAC (16-bit), M4A (AAC-LC) and PCM WAV. Other common sample rates are resampled to 44.1&nbsp;kHz. HE-AAC is not supported.</span></li>
+    <li><b>A big library</b><span>Built for 10,000 tracks (host-tested). The catalogue is cached on the card and checked quickly at boot instead of re-read.</span></li>
+    <li><b>Browse the classic way</b><span>Artists, Albums, Songs, Folders and Favourites, with a Shuffle all bar on every list.</span></li>
+    <li><b>Search</b><span>On-screen keyboard. Accents and case are folded, so &ldquo;beyonce&rdquo; finds Beyonc&eacute;.</span></li>
+    <li><b>M3U / M3U8 playlists</b><span>Drop them in <code>/playlists</code>. Playlists that were written for another folder layout still match by path tail or file name.</span></li>
+    <li><b>Now Playing</b><span>Seek bar, volume, shuffle, repeat and a favourite star. It restores your last track, paused, when it boots.</span></li>
+    <li><b>Three themes</b><span>Light, Black and High Contrast, in portrait or landscape.</span></li>
+    <li><b>Phone-like scrolling</b><span>Drag a list, flick it and let it coast, touch to stop, or drag the scroll thumb.</span></li>
+    <li><b>Bluetooth that behaves</b><span>If your phone takes the speaker, the player does not page it back. It is discoverable only while the Pair screen is open.</span></li>
+    <li><b>Wired headphone limit</b><span>A switchable ceiling of &minus;30&nbsp;dBFS on the wired output protects ears; turning it off allows &minus;6&nbsp;dBFS, which is much louder.</span></li>
+    <li><b>Wi-Fi upload page</b><span>Hotspot or home network, behind a six-digit passcode (<code>000000</code> until you change it). MP3s and playlists only, and it needs the separate uploader image.</span></li>
+  </ul>
+  <div class="shots" style="margin-top:44px">
+    <figure><img class="px" src="research/cy91-theme-selector/player-black-r1.png" width="320" height="240" alt="Simulated Now Playing screen in the Black theme with blue accents."><figcaption class="cap">Black theme</figcaption></figure>
+    <figure><img class="px" src="research/cy91-theme-selector/player-hc-r1.png" width="320" height="240" alt="Simulated Now Playing screen in the High Contrast theme with yellow accents on black."><figcaption class="cap">High Contrast theme</figcaption></figure>
+    <figure><img class="px" src="research/cy92-headphone-limit.png" width="320" height="240" alt="Simulated Audio Output settings: Bluetooth selected, Headphones, and a Headphone limit On row."><figcaption class="cap">Audio output and headphone limit</figcaption></figure>
+  </div>
+  <p class="note">Simulator renders, not photos. They use the project&rsquo;s test fixture library.</p>
+</section>
+
+<!-- ============ why ============ -->
+<section id="why" class="wrap" aria-labelledby="h-why" style="padding-top:0">
+  <div class="sh"><h2 id="h-why">Why it&rsquo;s worth building</h2><p>Reasons, not adjectives.</p></div>
+  <ol class="why">
+    <li><b>The hardware is cheap</b><span>One small ESP32 board with a screen and a card slot. No separate DAC needed for Bluetooth.</span></li>
+    <li><b>No cloud, no account</b><span>Your files stay on your card. The firmware has no online service to sign in to.</span></li>
+    <li><b>Open firmware</b><span>The source, the dependency pins and every third-party notice are in the repository.</span></li>
+    <li><b>Bounded memory</b><span>One fixed 40&nbsp;KB codec pool is shared by all four decoders, so playback does not depend on how big your library is.</span></li>
+    <li><b>Tested on a host</b><span>Catalogue, sorting, playlists, queue, scrolling, Bluetooth policy and output switching all have automated tests. Hardware results are labelled separately.</span></li>
+    <li><b>Flash from the browser</b><span>No toolchain: plug in, press Install, pick the port.</span></li>
+  </ol>
+</section>
+
+<!-- ============ flash ============ -->
+<section id="flash" class="dark" aria-labelledby="h-flash">
+  <div class="wrap">
+    <div class="sh"><h2 id="h-flash">Flash it</h2>
+      <p class="lead">One button, one file. Works in Chrome and Edge over USB.</p>
+    </div>
+
+    <div class="flashbox">
+      <div class="warn"><b>This erases your saved settings.</b> <span class="muted">The one-click flash writes the whole 4&nbsp;MB flash, so the saved Bluetooth speaker, volume, theme, brightness, Wi-Fi and last-track position go back to defaults and you will pair again. Your SD card is not touched. Want to keep settings? Use the four-region command below.</span></div>
+      <esp-web-install-button manifest="flash/manifest.json">
+        <button slot="activate" class="btn" type="button">Install CYDpod v<!--rel:version-->33<!--/rel--></button>
+        <span slot="unsupported" class="unsup">This browser can&rsquo;t flash over USB. Open this page in Chrome or Edge on a computer.</span>
+        <span slot="not-allowed" class="unsup">Web Serial needs a secure page (https). Open the published site rather than a local file.</span>
+      </esp-web-install-button>
+      <p class="ver">v<!--rel:version-->33<!--/rel--> &middot; JC2432W328C &middot; <!--rel:size-->4 MB<!--/rel--> image written at offset 0<br>SHA256 <!--rel:sha256-->333b5fc005416167a634adf40588b1e6a51b5a746ecf69fad36a30156b23dc3b<!--/rel--><br>built <!--rel:date-->2026-11-06<!--/rel--> &middot; flasher: ESP Web Tools 10</p>
+    </div>
+
+    <ol class="steps">
+      <li><b>Plug in</b>Connect the board to your computer with the USB cable. Leave the SD card in or out; either is fine.</li>
+      <li><b>Click Install</b>Press the yellow button above, in Chrome or Edge.</li>
+      <li><b>Choose the port</b>Pick the serial port that appears when you plug the board in (CP210x, CH340 or USB Serial), then confirm.</li>
+      <li><b>Wait</b>Leave it until the progress bar finishes, then press RESET if the board does not restart. Do not unplug while it writes.</li>
+    </ol>
+
+    <div class="grid" style="margin-bottom:24px">
+      <article class="card"><h3>Board won&rsquo;t enter download mode?</h3>
+        <p><strong>Hold BOOT, tap RESET, release BOOT</strong>, then press Install again and choose the port. If no port shows up at all, try another cable (it must carry data) or another USB port.</p></article>
+      <article class="card"><h3>Driver or port problems</h3>
+        <p>Boards of this family use a CP210x or CH340 USB-serial chip. If your computer shows no port, install the driver for the one on your board (Silicon Labs CP210x or WCH CH340), unplug and replug. Only Chrome and Edge can flash from this page.</p></article>
+    </div>
+
+    <details>
+      <summary>Keep your settings: the four-region flash with esptool</summary>
+      <p>Writes the bootloader, partition table, boot helper and app, and leaves the settings area alone. Install <a href="https://docs.espressif.com/projects/esptool/">esptool</a> 5.x (<code>pip install esptool</code>), download the four files from <a href="firmware/regions/"><code>firmware/regions/</code></a> into one folder, and put the board in download mode (hold BOOT, tap RESET, release BOOT). Replace <code>COM7</code> with your port (<code>/dev/ttyUSB0</code> on Linux, <code>/dev/cu.usbserial-…</code> on macOS). Press RESET afterwards.</p>
+      <pre tabindex="0"><code>esptool --chip esp32 --port COM7 --baud 460800 --before no-reset --after no-reset write-flash --flash-mode dio --flash-freq 80m --flash-size 4MB 0x1000 app.ino.bootloader.bin 0x8000 app.ino.partitions.bin 0xe000 boot_app0.bin 0x10000 app.ino.bin
+esptool --chip esp32 --port COM7 --baud 460800 --before no-reset --after no-reset verify-flash --flash-mode dio --flash-freq 80m --flash-size 4MB 0x1000 app.ino.bootloader.bin 0x8000 app.ino.partitions.bin 0xe000 boot_app0.bin 0x10000 app.ino.bin</code></pre>
+    </details>
+    <details>
+      <summary>The single file with esptool (erases settings)</summary>
+      <p>The same file the Install button writes, from the command line.</p>
+      <pre tabindex="0"><code>esptool --chip esp32 --port COM7 --baud 460800 --before no-reset --after no-reset write-flash --flash-mode dio --flash-freq 80m --flash-size 4MB 0x0 <!--rel:file-->cydpod-v33-w328c.bin<!--/rel-->
+esptool --chip esp32 --port COM7 --baud 460800 --before no-reset --after no-reset verify-flash --flash-mode dio --flash-freq 80m --flash-size 4MB 0x0 <!--rel:file-->cydpod-v33-w328c.bin<!--/rel--></code></pre>
+      <p><code>--before no-reset --after no-reset</code> is for a board you put in download mode by hand. If automatic reset works on your board you can drop both flags.</p>
+    </details>
+    <details>
+      <summary>Back up the original firmware first (optional)</summary>
+      <p>Reads the whole 4&nbsp;MB flash so you can go back. Restoring is a <code>write-flash 0x0</code> of the saved file.</p>
+      <pre tabindex="0"><code>esptool --chip esp32 --port COM7 --baud 460800 read-flash 0x0 0x400000 original-backup.bin</code></pre>
+    </details>
+    <details>
+      <summary>Verify the download (SHA256)</summary>
+      <p>The file must hash to <code><!--rel:sha256-->333b5fc005416167a634adf40588b1e6a51b5a746ecf69fad36a30156b23dc3b<!--/rel--></code>.</p>
+      <pre tabindex="0"><code># Windows PowerShell
+Get-FileHash .\<!--rel:file-->cydpod-v33-w328c.bin<!--/rel--> -Algorithm SHA256
+# macOS
+shasum -a 256 <!--rel:file-->cydpod-v33-w328c.bin<!--/rel-->
+# Linux
+sha256sum <!--rel:file-->cydpod-v33-w328c.bin<!--/rel--></code></pre>
+      <p>Download: <a href="firmware/<!--rel:file-->cydpod-v33-w328c.bin<!--/rel-->"><!--rel:file-->cydpod-v33-w328c.bin<!--/rel--></a></p>
+    </details>
+
+    <h3 style="margin-top:40px">After flashing</h3>
+    <ol>
+      <li>Copy music to <code>/music</code> on a FAT32 card and insert it. The first start scans the card and builds the catalogue; a large library takes a while the first time.</li>
+      <li>Open Settings &rsaquo; Bluetooth &rsaquo; Pair new to connect a speaker, or Settings &rsaquo; Audio Output to switch to wired Headphones.</li>
+    </ol>
+    <p class="muted" style="font-size:15px">The browser flash and this exact image have not yet been tried on a physical board by the project; the erase-settings behaviour is inferred from the flash layout. Both are on the owner checklist.</p>
+  </div>
+</section>
+
+<!-- ============ limits ============ -->
+<section id="limits" class="wrap" aria-labelledby="h-limits">
+  <div class="sh"><h2 id="h-limits">Known limits</h2><p>What this build does not do yet, and what has only been tested on a computer.</p></div>
+  <div class="grid">
+    <article class="card"><h3>Not in this build</h3>
+      <ul>
+        <li>The boot-loop fix after a crash.</li>
+        <li>Sleep-timer arming (the setting is present).</li>
+        <li>Album artwork.</li>
+        <li>Wi-Fi upload from the single flash file: it needs a separate uploader image, which the file leaves blank (&ldquo;Uploader not installed&rdquo;). The upload page also accepts MP3 and playlist names only.</li>
+      </ul></article>
+    <article class="card"><h3>Not yet checked on a real board</h3>
+      <ul>
+        <li>AirPods Pro 2, and wired I2S output through a DAC and amplifier.</li>
+        <li>Time to scan 10,000 tracks the first time (a model estimate is about 11 minutes, range 6 to 16; not measured) and time to boot afterwards.</li>
+        <li>Flick and scroll feel, memory headroom, battery life.</li>
+        <li>The one-click flash and the erase-settings behaviour.</li>
+      </ul></article>
+  </div>
+</section>
+
+<!-- ============ build / licences / credits ============ -->
+<section id="build" class="wrap" aria-labelledby="h-build" style="padding-top:0">
+  <div class="sh"><h2 id="h-build">Build from source</h2>
+    <p>Windows with Python and PowerShell. Setup downloads pinned dependencies into the checkout; the check compiles everything and never touches a device.</p>
+  </div>
+<pre tabindex="0" style="background:var(--ink)"><code>powershell -File tools/setup.ps1
+powershell -File tools/check.ps1 -Board jc2432w328c</code></pre>
+  <p>The build writes the four flash regions and a manifest to <code>.tools/images/</code>. See the <a href="https://github.com/OWNER/CYDpod/blob/main/docs/specs/cydpod-plan.md">player specification</a>, the <a href="https://github.com/OWNER/CYDpod/blob/main/docs/IMPLEMENTATION_STATUS.md">implementation checkpoint</a> and the <a href="https://github.com/OWNER/CYDpod/tree/main/docs/research">research reports</a> in the repository. <span class="flag">placeholder repo link</span></p>
+</section>
+
+<section id="licences" class="wrap" aria-labelledby="h-lic" style="padding-top:0">
+  <div class="sh"><h2 id="h-lic">Licences</h2>
+    <p>CYDpod is built from third-party code. Full notices and licence texts are in <code>vendor/NOTICES.md</code> and <code>vendor/notices/</code>. The combined firmware binary is <strong>not</strong> labelled Apache or MIT: GPLv3 components and the Helix RPSL/RCSL terms apply to it, and codec patent questions are separate from this inventory.</p>
+  </div>
+  <div class="tbl licences"><table>
+    <thead><tr><th scope="col">Component</th><th scope="col">Licence</th><th scope="col">Used for</th></tr></thead>
+    <tbody>
+      <tr><td>CYD-MP3-Player</td><td>Apache-2.0</td><td>Application shell the player started from</td></tr>
+      <tr><td>AnimatedGIF</td><td>Apache-2.0 (BitBank)</td><td>Bundled with the shell; the linker drops it</td></tr>
+      <tr><td>ESP32-A2DP</td><td>Apache-2.0</td><td>Bluetooth audio</td></tr>
+      <tr><td>arduino-libhelix, Helix MP3</td><td>GPLv3 wrapper, RealNetworks RPSL/RCSL codec</td><td>MP3 decoding</td></tr>
+      <tr><td>MiniAAC</td><td>MIT wrapper, Helix AAC core under GPLv3 / RPSL / RCSL</td><td>M4A and AAC-LC decoding</td></tr>
+      <tr><td>miniflac</td><td>0BSD</td><td>FLAC decoding</td></tr>
+      <tr><td>TFT_eSPI</td><td>BSD two-clause (MIT ancestry, font notices kept)</td><td>Display driver</td></tr>
+      <tr><td>arduino-audio-tools</td><td>GPLv3</td><td>Vendored for reference; not wired into the build</td></tr>
+      <tr><td>Arduino-ESP32, ESP-IDF</td><td>LGPL-2.1 and Espressif/third-party SDK notices</td><td>Platform core</td></tr>
+    </tbody></table></div>
+  <p class="note">CYDpod&rsquo;s own licence has not been chosen yet. <span class="flag">decision pending</span></p>
+</section>
+
+<section id="credits" class="wrap" aria-labelledby="h-cred" style="padding-top:0">
+  <div class="sh"><h2 id="h-cred">Credits</h2><p>CYDpod stands on other people&rsquo;s work.</p></div>
+  <ul class="feat">
+    <li><b>CYD-MP3-Player</b><span>Garionhk&rsquo;s player, the starting point for the application.</span></li>
+    <li><b>MiniAAC</b><span>The minimal AAC and M4A decoder with a Helix core.</span></li>
+    <li><b>Helix MP3 and arduino-libhelix</b><span>RealNetworks&rsquo; fixed-point decoder and Phil Schatzmann&rsquo;s Arduino wrapper.</span></li>
+    <li><b>miniflac</b><span>John Regan&rsquo;s single-header FLAC decoder.</span></li>
+    <li><b>ESP32-A2DP</b><span>Phil Schatzmann&rsquo;s Bluetooth A2DP library for ESP32.</span></li>
+    <li><b>TFT_eSPI</b><span>Bodmer&rsquo;s fast display library.</span></li>
+    <li><b>ESP Web Tools</b><span>ESPHome&rsquo;s browser flasher behind the Install button.</span></li>
+    <li><b>Type</b><span>Source Sans 3 and IBM Plex Mono, both under the SIL Open Font Licence.</span></li>
+  </ul>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <svg role="img" aria-label="CYDpod" viewBox="0 0 3081 917"><use href="#wm"/></svg>
+    <p>Designed by hand. Built on a Cheap Yellow Display. Firmware v<!--rel:version-->33<!--/rel-->, JC2432W328C only. CYDpod is an independent hobby project, not affiliated with Apple. &ldquo;iPod&rdquo; is a trademark of Apple Inc.</p>
+  </div>
+</footer>
+
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<script>
+(function () {
+  // Add a Copy button to each code block.
+  document.querySelectorAll('pre').forEach(function (pre) {
+    if (!navigator.clipboard) return;
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'copy'; b.textContent = 'Copy';
+    b.addEventListener('click', function () {
+      navigator.clipboard.writeText(pre.querySelector("code").innerText).then(function () {
+        b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500);
+      });
+    });
+    pre.appendChild(b);
+  });
+})();
+</script>
+</body>
+</html>

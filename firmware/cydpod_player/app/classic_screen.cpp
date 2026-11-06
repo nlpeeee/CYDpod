@@ -446,6 +446,10 @@ void paintViewport(int32_t offsetPx){
   if(claimPending){scrollStats.claimToPaintMs=inputNow()-claimAt;claimPending=false;}
 }
 
+bool ordinaryMotion(uint32_t now){
+  return !thumbDrag&&fabsf(flingActive?listCoast.velocity(now):listTracker.velocity())<=20*L::RowH;
+}
+
 // Moving rows paint only their centre bands. Absolute clipping also covers
 // the partial first and last rows in both orientations.
 void paintMovingViewport(uint32_t now){
@@ -465,7 +469,7 @@ void paintMovingViewport(uint32_t now){
     const int oldRows=rows()+(motionOffset%L::RowH?1:0);
     for(int i=0;i<oldRows;++i)tft.fillRect(L::TextMargin,y+i*L::RowH,textW,BandH,p.bg);
   }
-  const bool ordinary=!thumbDrag&&fabsf(flingActive?listCoast.velocity(now):listTracker.velocity())<=20*L::RowH;
+  const bool ordinary=ordinaryMotion(now);
   for(int i=0;i<visibleRows();++i){
     const int at=topRow()+i;
     if(at>=count)break;
@@ -594,15 +598,23 @@ int fetchNeighbour(int direction){
 void tickMotion(uint32_t now){
   const int32_t offset=page().offsetPx;
   if(offset!=motionOffset)motionDirection=offset>motionOffset?1:-1;
-  if(viewportPending&&(!motionPainted||now-motionPaintAt>=MotionFrameMs)){
-    viewportPending=false;
-    paintMovingViewport(now);paintThumb();
-  }else if(!motionFetched&&!audio_bufferLow()){
+  const bool firstCoastFrame=flingActive&&diag.coastPaintMs<0;
+  if(firstCoastFrame&&offset==coastStartPx)return;
+  const bool paintDue=viewportPending&&(!motionPainted||now-motionPaintAt>=MotionFrameMs);
+  // Give the loader a pass even if a slow paint consumed the whole interval.
+  // The first coast frame and fast throws get priority over a due lookup.
+  if(motionPainted&&!motionFetched&&!audio_bufferLow()&&
+     (!paintDue||(!firstCoastFrame&&ordinaryMotion(now)))){
     const int at=fetchNeighbour(motionDirection);
     if(at>=0){
       motionFetched=true;
       if(at>=topRow()&&at<topRow()+visibleRows())viewportPending=true;
+      return;
     }
+  }
+  if(paintDue){
+    viewportPending=false;
+    paintMovingViewport(now);paintThumb();
   }
 }
 void message(const char* value);

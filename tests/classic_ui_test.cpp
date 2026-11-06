@@ -1176,7 +1176,7 @@ static void dragRegression(){
   for(unsigned rotation:{0u,1u}){
     g_settings.rotation=rotation;tft.setRotation(rotation);toSongs();
     const int h=tft.height(),w=tft.width(),y=L::HeaderH+100,maxOffset=(10-L::rows(h))*L::RowH;
-    const int before=calls;const auto io=searchIO();
+    const int before=calls;
     SCREEN_CLASSIC.press(PRESS_DOWN,60,y);SCREEN_CLASSIC.press(PRESS_MOVE,60,y-7);
     check(classic_offset()==0,"slop does not move the list");
     SCREEN_CLASSIC.press(PRESS_MOVE,60,y-8);check(classic_offset()==1,"slop is subtracted");
@@ -1185,13 +1185,14 @@ static void dragRegression(){
     check(classic_offset()==25&&tft.fillCalls==0,"moves coalesce without painting");
     SCREEN_CLASSIC.tick(++clockNow);
     check(tft.fillCalls==0,"moving paints are capped at 33 ms");
+    const auto paintIO=searchIO();
     tft.labels.clear();
     SCREEN_CLASSIC.tick(clockNow+=33);
-    check(classic_thumbVisible()&&searchIO()==io&&tft.rowFillCalls==0,"moving paint skips row backgrounds and catalogue IO");
+    check(classic_thumbVisible()&&searchIO()==paintIO&&tft.rowFillCalls==0,"moving paint skips row backgrounds and catalogue IO");
     check(label(rotation==0?"Song 06":"Song 04"),"warm lookahead titles enter with the drag");
     snapshot(rotation==0?"cy98b-drag-portrait.svg":"cy98b-drag-landscape.svg");
     SCREEN_CLASSIC.press(PRESS_MOVE,60,y-10000);SCREEN_CLASSIC.tick(++clockNow);
-    check(classic_offset()==maxOffset&&searchIO()==io,"drag hard clamps without reads");
+    check(classic_offset()==maxOffset,"drag hard clamps despite queued paints or lookahead");
     SCREEN_CLASSIC.press(PRESS_MOVE,60,y);SCREEN_CLASSIC.tick(++clockNow);
     SCREEN_CLASSIC.tick(clockNow+=41);SCREEN_CLASSIC.press(PRESS_UP,60,y);SCREEN_CLASSIC.touch(TOUCH_TAP,60,y);
     check(classic_depth()==2&&calls==before,"claimed drag returning to start never selects");
@@ -1208,7 +1209,7 @@ static void dragRegression(){
     toSongs();tap(60,L::HeaderH+20);check(classic_depth()==3&&calls>before,"a tap still selects");
     home();tapTile(5);tapSettingsRow(5);check(std::string(classic_modeName(classic_mode()))=="About","Settings bottom action is reachable by drag");
   }
-  std::cout<<"PASS CY-98b drag: slop/1:1, coalesced frames, clamp, tap versus claimed drag, no drag IO, thumb mapping/timeout, Settings; 4/6 rows\n";
+  std::cout<<"PASS CY-98b drag: slop/1:1, coalesced title paints, lookahead, clamp, tap versus claimed drag, thumb mapping/timeout, Settings; 4/6 rows\n";
 }
 extern bool classic_flingActive();
 extern float classic_flingVelocity();
@@ -1274,7 +1275,7 @@ static void flingRegression(){
   check(classic_scrollStats().flings>=initial.flings+5&&classic_scrollStats().frames>initial.frames,"scroll counters record flings and frames");  // CY-108: a release with no room (list end) starts no coast, so 5 not 7
   check(classic_scrollStats().claimToPaintMs<=41,"claim to first frame measured with fake clock");
   classic_logScrollStats();
-  std::cout<<"PASS CY-99 fling: start/finish, tap-to-stop/drag, hard edges, fake-clock frame independence, cache-only fast frames, thumb timeout, stats/underruns\n";
+  std::cout<<"PASS CY-99 fling: start/finish, tap-to-stop/drag, hard edges, fake-clock frame independence, cache-only paints, thumb timeout, stats/underruns\n";
 }
 // CY-103: real PressTracker grace -> ui_touch/syncPress -> Classic PRESS_UP.
 static void lateReleaseRegression(){

@@ -3,7 +3,7 @@
 Code/tests: `05dc50a`. Host only, no device operations. Independent C99 from
 RFC 9639 / PLAN-FONIX; no copied decoder code, heap or mutable static storage.
 
-API: `flac_compact_init` walks metadata through a read-at callback (short reads
+API (pool integration): `flac_compact_init` now takes a caller-owned 2048-byte input window and walks metadata through a read-at callback (short reads
 allowed). `decode_frame` publishes caller-owned interleaved stereo int16 only
 on FRAME after CRC-8/16; mono duplicates L/R. `next` preserves the pool's 64 KiB
 sync scan, 8 drops/call, 64/stream and damaged-tail EOF. `reset(state, offset,
@@ -18,7 +18,7 @@ copies <=1152 frames, trims total and supports overlap.
 |17-bit side plane|512|
 |Reader/frame/CRC counters|88|
 |Reserved bookkeeping/seek allowance|528|
-|**sizeof(state)**|**3368**|
+|**sizeof(state), caller-owned input excluded**|**1320**|
 |Caller PCM block|16384|
 |**Combined, compile-time asserted**|**19752**|
 

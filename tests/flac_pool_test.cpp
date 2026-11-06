@@ -35,13 +35,17 @@ int main() {
     r.rate = std::stoul(rate); r.ch = std::stoul(ch); r.frames = std::stoull(frames); rows.push_back(r);
   }
   assert(rows.size() >= 20);
-  CodecTrack track; unsigned positives = 0, rejects = 0;
+  CodecTrack track; unsigned positives = 0, rejects = 0, policyRejects = 0;
   for (const Row& r : rows) {
     const std::vector<int16_t> want = slurp("tests/out/flac/" + r.name + ".pcm");
     File f(flacPath(r.name), "r"); assert(f);
     const std::string kind = r.status.substr(0, r.status.find(':')), what = r.status.find(':') == std::string::npos ? "" : r.status.substr(r.status.find(':') + 1);
     if (r.name == "stereo-tags-table") hostReadBudget = 8192; // ~160 kB of tags/PICTURE/padding must be skipped by offset
     auto rc = track.begin(f); hostReadBudget = -1;
+    if (r.name == "stereo-4608" || r.name == "notable-4608" || r.name == "mono-4608") {
+      assert(rc == MINIAAC_UNSUPPORTED && !strcmp(track.name(), "flac_block_size"));
+      ++policyRejects; track.end(); f.close(); continue;
+    }
     if (kind == "reject") {
       if (rc == MINIAAC_OK) fprintf(stderr, "expected reject %s\n", r.name.c_str());
       assert(rc != MINIAAC_OK); assert(what == track.name());
@@ -68,7 +72,7 @@ int main() {
     printf("PASS 48 kHz FLAC -> FIR: %zu output frames for 12805 source frames\n", out); track.end(); f.close(); }
   // Seeks: exact against the source PCM, bytes read per seek capped, cancellable, restartable.
   static FlacState direct; // host-only second instance for the counters
-  const char* seekNames[] = {"table-long", "notable-long", "stereo-tags-table", "variable-long", "fixed-minmax", "stereo-4608", "notable-4608", "mono-4608", "mono-long", "44100-2-1152"};
+  const char* seekNames[] = {"table-long", "notable-long", "stereo-tags-table", "variable-long", "fixed-minmax", "stereo-compact", "notable-compact", "mono-compact", "mono-long", "44100-2-1152"};
   unsigned seeks = 0;
   for (const char* name : seekNames) {
     const Row* row = nullptr; for (const Row& r : rows) if (r.name == name) row = &r; assert(row);
@@ -95,7 +99,7 @@ int main() {
     track.end(); f.close();
   }
   // Hostile input: flipped bytes, cuts and garbage must terminate with eof/error and never write outside the pool (ASan/UBSan build).
-  for (const char* fuzzName : {"notable-long", "notable-4608"}) { std::ifstream in(flacPath(fuzzName), std::ios::binary); std::vector<unsigned char> src((std::istreambuf_iterator<char>(in)), {});
+  for (const char* fuzzName : {"notable-long", "notable-compact"}) { std::ifstream in(flacPath(fuzzName), std::ios::binary); std::vector<unsigned char> src((std::istreambuf_iterator<char>(in)), {});
     unsigned state = 12345, eofs = 0, errs = 0; auto rnd = [&] { state = state * 1103515245u + 12345u; return state >> 8; };
     for (unsigned v = 0; v < 160; ++v) {
       auto bad = src; const unsigned mode = v % 4;
@@ -120,5 +124,27 @@ int main() {
     assert(hostReadCalls==reads && h.calls==1);
     assert(direct.resync(f,input,direct.first)==1);
     puts("PASS FLAC resync cancellation before read + restart"); }
+  // Compact seek resets the frame reader and slices from inside a CRC-gated
+  // 4096 block into the shared sink, without aliasing its input window.
+  { File f(flacPath("stereo-compact"), "r"); uint8_t input[2048]; int16_t pcm[2304];
+    direct = FlacState{}; assert(!direct.open(f,input));
+    assert(direct.dec.book.v.input == input); const char* error = nullptr;
+    assert(direct.seek(f,input,37,nullptr,nullptr,error)==FlacState::Seek::ok);
+    const auto want = slurp("tests/out/flac/stereo-compact.pcm");
+    assert(direct.used == 37*44100/1000 && direct.blockSize == 4096);
+    const int n = direct.read(f,input,pcm,error);
+    assert(n == 1152 && !memcmp(pcm,want.data()+2*(37*44100/1000),n*4));
+    puts("PASS seek into compact block + shared input + 1152-frame slice"); }
+  // STREAMINFO accepts 4096, but the first header still advertises 4608:
+  // reject through the same user-visible path before decoding/publishing PCM.
+  { std::ifstream in(flacPath("stereo-4608"), std::ios::binary);
+    std::vector<char> data((std::istreambuf_iterator<char>(in)), {});
+    data[8]=data[10]=0x10; data[9]=data[11]=0;
+    std::ofstream out("tests/out/flac/header4608.flac",std::ios::binary);
+    out.write(data.data(),data.size()); out.close();
+    File f("tests/out/flac/header4608.flac","r"); assert(track.begin(f)==MINIAAC_OK);
+    assert(track.next()==CodecTrack::Pull::error && !strcmp(track.name(),"flac_block_size"));
+    assert(!track.pending()); track.end();
+    assert(policyRejects==3); puts("PASS 4608-block rejection: 3 STREAMINFO files + frame header"); }
   (void)direct;
 }

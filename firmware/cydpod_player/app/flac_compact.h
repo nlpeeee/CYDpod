@@ -13,8 +13,8 @@ extern "C" {
 #define FLAC_COMPACT_INPUT_BYTES 2048
 #define FLAC_COMPACT_BOOK_BYTES 616
 #define FLAC_COMPACT_PCM_SAMPLES (2 * FLAC_COMPACT_MAX_BLOCK)
-#define FLAC_COMPACT_STATE_BYTES (2048 + 128 + 64 + FLAC_COMPACT_MAX_BLOCK / 8 + 616)
-#define FLAC_COMPACT_TOTAL_BYTES (FLAC_COMPACT_STATE_BYTES + 4 * FLAC_COMPACT_MAX_BLOCK)
+#define FLAC_COMPACT_STATE_BYTES (128 + 64 + FLAC_COMPACT_MAX_BLOCK / 8 + 616)
+#define FLAC_COMPACT_TOTAL_BYTES (FLAC_COMPACT_STATE_BYTES + FLAC_COMPACT_INPUT_BYTES + 4 * FLAC_COMPACT_MAX_BLOCK)
 
 enum flac_compact_result {
     FLACX_EOF = 0, FLACX_FRAME = 1,
@@ -22,7 +22,7 @@ enum flac_compact_result {
     FLACX_BITS = -4, FLACX_CHANNELS = -5, FLACX_BLOCK_SIZE = -6,
     FLACX_SAMPLE_RATE = -7, FLACX_RATE_CHANGE = -8, FLACX_NO_AUDIO = -9,
     FLACX_READ = -10, FLACX_TRUNCATED = -11, FLACX_CRC = -12,
-    FLACX_BAD_FRAME = -13, FLACX_RANGE = -14, FLACX_ARGUMENT = -15
+    FLACX_BAD_FRAME = -13, FLACX_RANGE = -14, FLACX_ARGUMENT = -15, FLACX_CANCELLED = -16
 };
 
 /* Read at absolute offset: positive byte count (short reads allowed), 0 EOF,
@@ -30,17 +30,24 @@ enum flac_compact_result {
 typedef int (*flac_compact_read_fn)(void *user, uint64_t offset,
                                    uint8_t *dst, size_t capacity);
 
+/* Nonzero cancels; checked before refills, channel boundaries and recovery. */
+typedef int (*flac_compact_cooperate_fn)(void *user);
+
 typedef struct flac_compact_book {
+    uint8_t *input; /* caller-owned 2048-byte window; never overlaps PCM */
+    flac_compact_cooperate_fn cooperate;
+    void *cooperate_user;
+    uint64_t seek_table;
+    uint32_t seek_bytes, rejected_block;
     uint64_t cursor, first, total, next_sample, frame_sample, frame_number, frame_start;
     uint32_t rate, fixed_block;
     int32_t error;
-    uint16_t pos, len, block_size, used, crc16;
+    uint16_t pos, len, block_size, used, crc16, window_capacity;
     uint8_t byte, bits, crc8, channels, assignment, blocking, drops, skipped;
     uint8_t initialized, published;
 } flac_compact_book;
 
 typedef struct flac_compact_state {
-    uint8_t input[FLAC_COMPACT_INPUT_BYTES];
     int32_t history[32];
     int16_t coefficients[32];
     uint8_t side[FLAC_COMPACT_MAX_BLOCK / 8];
@@ -63,7 +70,8 @@ FLACX_ASSERT(sizeof(flac_compact_state) == FLAC_COMPACT_STATE_BYTES, flacx_state
 FLACX_ASSERT(FLAC_COMPACT_MAX_BLOCK != 4096 || FLAC_COMPACT_TOTAL_BYTES == 19752, flacx_total_budget);
 #undef FLACX_ASSERT
 
-/* init walks native FLAC metadata without caching tags; returns FRAME or error.
+/* init requires a caller-owned INPUT_BYTES window lasting until re-init.
+ * init walks native FLAC metadata without caching tags; returns FRAME or error.
  * decode_frame strictly decodes ONE frame. On FRAME only, pcm contains block_size
  * interleaved stereo int16 frames; mono is duplicated, as FlacState::read does.
  * pcm must have PCM_SAMPLES entries. On error it is scratch, never publish it.
@@ -71,7 +79,11 @@ FLACX_ASSERT(FLAC_COMPACT_MAX_BLOCK != 4096 || FLAC_COMPACT_TOTAL_BYTES == 19752
  * reset restarts at an absolute frame boundary, preserving STREAMINFO; the pool
  * supplies the next sample for fixed streams whose block size is still unknown.
  * slice copies <=1152 stereo frames, trimming to total; dst may equal pcm. */
-int flac_compact_init(flac_compact_state *, flac_compact_read_fn, void *);
+int flac_compact_init(flac_compact_state *, flac_compact_read_fn, void *, uint8_t *window);
+void flac_compact_set_cooperate(flac_compact_state *, flac_compact_cooperate_fn, void *);
+/* Destructive header probe: call reset before decoding after probing/shared-window use. */
+int flac_compact_header_at(flac_compact_state *, flac_compact_read_fn, void *, uint64_t offset);
+int flac_compact_resync(flac_compact_state *, flac_compact_read_fn, void *, uint64_t offset);
 void flac_compact_reset(flac_compact_state *, uint64_t offset, uint64_t next_sample);
 int flac_compact_decode_frame(flac_compact_state *, flac_compact_read_fn, void *, int16_t *pcm);
 int flac_compact_next(flac_compact_state *, flac_compact_read_fn, void *, int16_t *pcm);

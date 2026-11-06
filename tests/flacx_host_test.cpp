@@ -41,6 +41,7 @@ static std::vector<uint8_t> slurp(const char *path) {
 }
 struct Guarded {
     uint64_t before = UINT64_C(0x123456789abcdef0);
+    uint8_t input[FLAC_COMPACT_INPUT_BYTES]{};
     flac_compact_state state{};
     uint64_t between = UINT64_C(0x123456789abcdef0);
     std::array<int16_t, FLAC_COMPACT_PCM_SAMPLES> pcm{};
@@ -83,7 +84,7 @@ static int compact(int argc, char **argv) {
     require(src.file, "input open");
     FILE *out = fopen(argv[3], "wb"); require(out, "output open");
     Guarded g; auto &s = g.state; auto &b = s.book.v;
-    int r = flac_compact_init(&s, read_at, &src);
+    int r = flac_compact_init(&s, read_at, &src, g.input);
     uint64_t frames = 0, samples = 0;
     double us = 0;
     bool recovering = argc > 5 && !strcmp(argv[5], "recover");
@@ -145,11 +146,11 @@ static int reference(int argc, char **argv) {
 static void restart(const char *path) {
     auto data = slurp(path);
     Guarded a, b;
-    require(flac_compact_init(&a.state,memory_read,&data)==FLACX_FRAME,"restart init");
+    require(flac_compact_init(&a.state,memory_read,&data,a.input)==FLACX_FRAME,"restart init");
     require(flac_compact_decode_frame(&a.state,memory_read,&data,a.pcm.data())==FLACX_FRAME,"restart first");
     uint64_t at = a.state.book.v.cursor, sample = a.state.book.v.next_sample;
     require(flac_compact_decode_frame(&a.state,memory_read,&data,a.pcm.data())==FLACX_FRAME,"restart second");
-    require(flac_compact_init(&b.state,memory_read,&data)==FLACX_FRAME,"restart second init");
+    require(flac_compact_init(&b.state,memory_read,&data,b.input)==FLACX_FRAME,"restart second init");
     flac_compact_reset(&b.state,at,sample);
     require(flac_compact_decode_frame(&b.state,memory_read,&data,b.pcm.data())==FLACX_FRAME,"restart reset");
     require(a.state.book.v.frame_sample == b.state.book.v.frame_sample &&
@@ -169,7 +170,7 @@ static void hostile(const char *path) {
         auto data=original;
         if(v%3==0) data.resize(42+rng()%(data.size()-42));
         else for(unsigned k=0;k<1+v/8;++k) data[8+rng()%(data.size()-8)]^=1u<<(rng()%8);
-        Guarded g; int r=flac_compact_init(&g.state,memory_read,&data);
+        Guarded g; int r=flac_compact_init(&g.state,memory_read,&data,g.input);
         unsigned frames=0;
         while(r==FLACX_FRAME) {
             r=flac_compact_next(&g.state,memory_read,&data,g.pcm.data());

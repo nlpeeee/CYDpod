@@ -17,8 +17,7 @@ struct AacState {
 };
 union CodecState { AacState aac; WavState wav; Mp3State mp3; FlacState flac; CodecState() {} ~CodecState() {} };
 struct PoolLayout {
-  alignas(8) int16_t pcm[2304];      // 1152 stereo MP3 frames, also AAC/WAV. Placed first: FLAC's second channel
-                                     // (4608 int32) starts here and continues into FlacState::rightTail.
+  alignas(8) int16_t pcm[2304]; // shared 1152-frame stereo slice sink
   CodecState state;
   uint8_t input[2048];
   FirState fir;
@@ -29,19 +28,26 @@ struct PoolLayout {
   uint32_t rate;
   const char* error;
 };
-static_assert(sizeof(AacState) + 4608 + 2048 + sizeof(FirState) + 128 <= 40960, "AAC inclusive pool budget");
-static_assert(sizeof(Mp3State) + 4608 + 2048 + sizeof(FirState) + 128 <= 40960, "MP3 inclusive pool budget");
-static_assert(sizeof(WavState) + 4608 + 2048 + sizeof(FirState) + 128 <= 40960, "WAV inclusive pool budget");
-static_assert(sizeof(FlacState) + 4608 + 2048 + sizeof(FirState) + 128 <= 40960, "FLAC inclusive pool budget");
-static_assert(sizeof(PoolLayout) <= 40960, "inclusive codec pool overflow");
-static_assert(offsetof(PoolLayout,state)==sizeof(PoolLayout::pcm) && offsetof(FlacState,rightTail)==0, "FLAC right channel must run from pcm into FlacState::rightTail");
+#if defined(CYDPOD_FLAC_LEGACY)
+static constexpr size_t codecPoolBytes = 40960;
+static_assert(offsetof(PoolLayout,state)==sizeof(PoolLayout::pcm) && offsetof(FlacState,rightTail)==0, "legacy FLAC channel overlay");
+#else
+static constexpr size_t codecPoolBytes = sizeof(PoolLayout);
+#ifdef ESP32
+static_assert(sizeof(Mp3State)==23856 && sizeof(AacState)==22576 && sizeof(FirState)==272, "pinned codec sizes");
+static_assert(sizeof(FlacState)==17760, "compact FLAC member including seek bookkeeping");
+static_assert(sizeof(CodecState)==23856, "MP3 dominates the compact codec union");
+static_assert(sizeof(PoolLayout)==23856+4608+2048+272+40, "exact 30824-byte inclusive codec pool");
+#endif
+#endif
+static_assert(sizeof(PoolLayout)<=codecPoolBytes, "inclusive codec pool overflow");
 union alignas(8) DecoderPool {
   PoolLayout layout;
-  uint8_t bytes[40960];
+  uint8_t bytes[codecPoolBytes];
   DecoderPool() : layout{} {}
   ~DecoderPool() {}
 };
-static_assert(sizeof(DecoderPool)==40960,"single inclusive pool size");
+static_assert(sizeof(DecoderPool)==codecPoolBytes,"single inclusive pool size");
 static DecoderPool codecPool; // the ONLY decoder/PCM/input/FIR allocation (.bss)
 PoolLayout& pool() { return codecPool.layout; }
 }
@@ -66,7 +72,10 @@ miniaac_status CodecTrack::begin(File& file) {
     return MINIAAC_OK;
   }
   if (!memcmp(magic,"fLaC",4)) {
-    pool().kind=4; new (&pool().state.flac) FlacState{}; pool().state.flac.right=reinterpret_cast<int32_t*>(pool().pcm);
+    pool().kind=4; new (&pool().state.flac) FlacState{};
+#if defined(CYDPOD_FLAC_LEGACY)
+    pool().state.flac.right=reinterpret_cast<int32_t*>(pool().pcm);
+#endif
     const char* error=pool().state.flac.open(file,pool().input);
     if (error) { pool().error=error; return MINIAAC_UNSUPPORTED; }
     pool().rate=pool().state.flac.rate;

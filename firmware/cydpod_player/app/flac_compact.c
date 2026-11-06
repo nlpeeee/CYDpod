@@ -1,6 +1,11 @@
 /* Compact FLAC, independently implemented from RFC 9639 and PLAN-FONIX.
  * No Fonix or micro-flac code. No allocations or mutable static storage.
  * See docs/research/flacx-host.md for the pinned comparison and byte budget. */
+#if !defined(CYD_UPLOADER) && !defined(CYDPOD_FLAC_LEGACY)
+// Match the replaced core's local O2 setting; Arduino's global default is Os.
+#if defined(__GNUC__)
+#pragma GCC optimize ("O2")
+#endif
 #include "flac_compact.h"
 #include <limits.h>
 #include <string.h>
@@ -16,9 +21,17 @@ static void position(flac_compact_state *s, uint64_t at) {
     B(s).pos = B(s).len = B(s).bits = 0;
     B(s).error = 0;
 }
+static int cooperate(flac_compact_state *s) {
+    return B(s).cooperate && B(s).cooperate(B(s).cooperate_user) ? fail(s, FLACX_CANCELLED) : 0;
+}
+void flac_compact_set_cooperate(flac_compact_state *s, flac_compact_cooperate_fn hook, void *user) {
+    B(s).cooperate = hook; B(s).cooperate_user = user;
+}
 static int fill(flac_compact_state *s, flac_compact_read_fn read, void *user) {
-    int n = read(user, B(s).cursor, s->input, sizeof(s->input));
-    if (n < 0 || n > (int)sizeof(s->input)) return fail(s, FLACX_READ);
+    int n;
+    if (cooperate(s)) return B(s).error;
+    n = read(user, B(s).cursor, B(s).input, B(s).window_capacity);
+    if (n < 0 || n > B(s).window_capacity) return fail(s, FLACX_READ);
     B(s).pos = 0;
     B(s).len = (uint16_t)n;
     return n;
@@ -31,7 +44,7 @@ static uint32_t octet(flac_compact_state *s, flac_compact_read_fn read, void *us
         fail(s, FLACX_TRUNCATED);
         return 0;
     }
-    v = s->input[B(s).pos++];
+    v = B(s).input[B(s).pos++];
     ++B(s).cursor;
     B(s).crc8 ^= (uint8_t)v;
     B(s).crc16 ^= (uint16_t)(v << 8);
@@ -72,11 +85,12 @@ static int accepted_rate(uint32_t rate) {
     default: return 0;
     }
 }
-int flac_compact_init(flac_compact_state *s, flac_compact_read_fn read, void *user) {
+int flac_compact_init(flac_compact_state *s, flac_compact_read_fn read, void *user, uint8_t *window) {
     unsigned blocks;
     int last = 0;
-    if (!s || !read) return FLACX_ARGUMENT;
+    if (!s || !read || !window) return FLACX_ARGUMENT;
     memset(s, 0, sizeof(*s));
+    B(s).input = window; B(s).window_capacity = 64; // metadata needs no audio-sized reads
     if (get(s, read, user, 32) != UINT32_C(0x664c6143)) return fail(s, FLACX_HEADER);
     for (blocks = 0; !last && !B(s).error; ++blocks) {
         unsigned type, n;
@@ -100,20 +114,24 @@ int flac_compact_init(flac_compact_state *s, flac_compact_read_fn read, void *us
             if (!B(s).rate || minb < 16 || maxb < minb) return fail(s, FLACX_STREAMINFO);
             if (bps != 16) return fail(s, FLACX_BITS);
             if (B(s).channels > 2) return fail(s, FLACX_CHANNELS);
-            if (maxb > FLAC_COMPACT_MAX_BLOCK) return fail(s, FLACX_BLOCK_SIZE);
+            if (maxb > FLAC_COMPACT_MAX_BLOCK) { B(s).rejected_block = maxb; return fail(s, FLACX_BLOCK_SIZE); }
             if (!accepted_rate(B(s).rate)) return fail(s, FLACX_SAMPLE_RATE);
             B(s).fixed_block = minb == maxb ? maxb : 0;
         } else {
             uint64_t end = B(s).cursor + n;
             if (!type) return fail(s, FLACX_STREAMINFO);
+            if (type == 3 && !B(s).seek_table) {
+                B(s).seek_table = B(s).cursor; B(s).seek_bytes = n / 18 * 18;
+            }
             /* Validate the skipped metadata extent, reading only its final byte. */
-            if (n) { position(s, end - 1); octet(s, read, user); }
+            if (n) { uint8_t byte; if (read(user, end - 1, &byte, 1) != 1) fail(s, FLACX_TRUNCATED); }
             if (!B(s).error) position(s, end);
         }
     }
     if (B(s).error) return B(s).error;
     B(s).first = B(s).cursor;
     if (B(s).pos == B(s).len && fill(s, read, user) <= 0) return fail(s, FLACX_NO_AUDIO);
+    B(s).window_capacity = FLAC_COMPACT_INPUT_BYTES;
     B(s).initialized = 1;
     return FLACX_FRAME;
 }
@@ -272,7 +290,7 @@ static int header(flac_compact_state *s, flac_compact_read_fn read, void *user) 
     get(s, read, user, 8);
     if (B(s).error) return B(s).error;
     if (B(s).crc8) return fail(s, FLACX_CRC);
-    if (n > FLAC_COMPACT_MAX_BLOCK) return fail(s, FLACX_BLOCK_SIZE);
+    if (n > FLAC_COMPACT_MAX_BLOCK) { B(s).rejected_block = n; return fail(s, FLACX_BLOCK_SIZE); }
     if (bps && bps != 4) return fail(s, FLACX_BITS);
     if (B(s).assignment > 10 || (B(s).assignment > 1 && B(s).assignment < 8) ||
         (B(s).assignment == 0 ? 1 : 2) != B(s).channels) return fail(s, FLACX_CHANNELS);
@@ -282,6 +300,20 @@ static int header(flac_compact_state *s, flac_compact_read_fn read, void *user) 
     if (!B(s).blocking && !B(s).fixed_block) B(s).fixed_block = n;
     B(s).frame_sample = B(s).blocking ? number : number * B(s).fixed_block;
     return FLACX_FRAME;
+}
+int flac_compact_header_at(flac_compact_state *s, flac_compact_read_fn read, void *user, uint64_t offset) {
+    if (!s || !read || !B(s).initialized) return FLACX_ARGUMENT;
+    /* A header is <=16 bytes. Do not overwrite the caller's sync scan window
+     * or read an entire input window at every binary-search probe. */
+    uint8_t window[16], *saved = B(s).input;
+    uint16_t capacity = B(s).window_capacity;
+    int r;
+    B(s).input = window; B(s).window_capacity = sizeof(window);
+    position(s, offset); B(s).crc8 = 0; B(s).crc16 = 0;
+    r = header(s, read, user);
+    B(s).input = saved; B(s).window_capacity = capacity;
+    B(s).pos = B(s).len = B(s).bits = 0;
+    return r;
 }
 int flac_compact_decode_frame(flac_compact_state *s, flac_compact_read_fn read, void *user, int16_t *pcm) {
     unsigned i, w0, w1;
@@ -301,6 +333,7 @@ int flac_compact_decode_frame(flac_compact_state *s, flac_compact_read_fn read, 
     w0 = 16 + (B(s).assignment == 9);
     w1 = 16 + (B(s).assignment == 8 || B(s).assignment == 10);
     subframe(s, read, user, pcm, 0, w0);
+    if (!B(s).error) cooperate(s);
     if (!B(s).error && B(s).channels == 2) subframe(s, read, user, pcm, 1, w1);
     if (B(s).bits && get(s, read, user, B(s).bits)) fail(s, FLACX_BAD_FRAME);
     get(s, read, user, 16);
@@ -322,17 +355,18 @@ int flac_compact_decode_frame(flac_compact_state *s, flac_compact_read_fn read, 
     B(s).published = 1;
     return FLACX_FRAME;
 }
-static int resync(flac_compact_state *s, flac_compact_read_fn read, void *user, uint64_t start) {
+int flac_compact_resync(flac_compact_state *s, flac_compact_read_fn read, void *user, uint64_t start) {
     unsigned scanned;
     int previous = -1;
     position(s, start);
+    if (cooperate(s)) return B(s).error;
     for (scanned = 0; scanned < 64u * 1024; ++scanned) {
         int c;
         if (B(s).pos == B(s).len) {
             int n = fill(s, read, user);
             if (n <= 0) return n < 0 ? B(s).error : FLACX_EOF;
         }
-        c = s->input[B(s).pos++]; ++B(s).cursor;
+        c = B(s).input[B(s).pos++]; ++B(s).cursor;
         if (previous == 255 && (c & 254) == 248) {
             position(s, B(s).cursor - 2);
             return FLACX_FRAME;
@@ -347,12 +381,14 @@ int flac_compact_next(flac_compact_state *s, flac_compact_read_fn read, void *us
     B(s).skipped = 0;
     for (;;) {
         uint64_t start = B(s).cursor;
-        int r = flac_compact_decode_frame(s, read, user, pcm);
-        if (r >= 0) return r;
-        if (r == FLACX_TRUNCATED || r == FLACX_READ || r == FLACX_ARGUMENT) return r;
+        int r;
+        if (recovering && cooperate(s)) return B(s).error;
+        r = flac_compact_decode_frame(s, read, user, pcm);
+        if (r >= 0) { if (r == FLACX_FRAME) B(s).skipped = 0; return r; }
+        if (r == FLACX_CANCELLED || r == FLACX_TRUNCATED || r == FLACX_READ || r == FLACX_ARGUMENT) return r;
         if (!recovering && (r == FLACX_BLOCK_SIZE || r == FLACX_BITS || r == FLACX_CHANNELS || r == FLACX_RATE_CHANGE)) return r;
         if (++B(s).skipped > 8 || ++B(s).drops > 64) return r;
-        r = resync(s, read, user, start + 1);
+        r = flac_compact_resync(s, read, user, start + 1);
         if (r <= 0) return r;
         recovering = 1;
     }
@@ -382,6 +418,9 @@ const char *flac_compact_error(int r) {
     case FLACX_SAMPLE_RATE: return "flac_sample_rate"; case FLACX_RATE_CHANGE: return "flac_rate_change";
     case FLACX_NO_AUDIO: return "flac_no_audio"; case FLACX_READ: return "flac_read";
     case FLACX_TRUNCATED: return "flac_truncated"; case FLACX_CRC: return "flac_crc";
+    case FLACX_CANCELLED: return "flac_cancelled";
     case FLACX_ARGUMENT: return "flac_argument"; default: return "flac_frame";
     }
 }
+
+#endif

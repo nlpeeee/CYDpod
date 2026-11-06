@@ -1550,7 +1550,7 @@ int main(){try{
   check(label("Song 04")&&classic_offset()==sourceOffset,"low-heap Back reuse serves rows at the saved scroll position");
   check(calls==before&&sourceIds==liveIds&&current==liveTrack,"low-heap preview reuse preserves active playback queue");
   tap(80,66);check(playing&&calls>before,"low-heap retained preview remains playable");
-  before=calls;tapRect(cydclassic::layout::favourite<Rect>(tft.width()));hostWriteBudget=0;tap(20,20);
+  before=calls;hostFreeHeap=64000;tapRect(cydclassic::layout::favourite<Rect>(tft.width()));hostWriteBudget=0;tap(20,20);
   check(label("Unable to reload list. Check SD card or try again."),"SD write failure refuses preview rebuild without crashing");
   check(calls==before&&sourceIds==liveIds&&current==liveTrack,"failed preview rebuild preserves active playback queue");
   hostWriteBudget=-1;tap(20,20);

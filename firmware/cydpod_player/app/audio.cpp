@@ -233,7 +233,7 @@ static bool openTrack(int index) {
 // ---------------------------------------------------------------------------
 // It opens what it is asked to open and reports when a track has run out; it
 // never decides what plays next. Play order (shuffle, repeat) is the UI task's
-// business in audio_tick(), so the order table needs no locking.
+// business in audio_tick(), so the order state needs no locking.
 static volatile uint32_t endedCommand=0, failedCommand=0;
 static volatile uint32_t endedSerial = 0;     // bumped when a track finishes
 static volatile uint32_t failSerial  = 0;     // bumped when a track will not open
@@ -315,7 +315,7 @@ static void decodeTask(void*) {
 // ---------------------------------------------------------------------------
 // Play order (UI task only)
 // ---------------------------------------------------------------------------
-static uint16_t* order = nullptr;             // play position -> track index
+static AudioOrder order;                     // play position -> queue position
 static int       orderPos = 0;                // -1: playing a song outside the queue
 static int       orderLen = 0;
 // The list being played (playlist.h), in list order. nullptr: every track.
@@ -345,27 +345,13 @@ static int       failStreak = 0;
 // The queue in list order, or shuffled with `firstTrack` first. A first track
 // outside the queue leaves orderPos at -1: next then starts the list.
 static void buildOrder(bool shuffled, int firstTrack) {
-  for (int i = 0; i < orderLen; i++) order[i] = queueAt(i);
   const int first = queueFind(firstTrack);
-  if (!shuffled || orderLen < 2) {
-    orderPos = first;
-    return;
-  }
-  if (first > 0) {
-    order[first] = order[0];
-    order[0] = firstTrack;
-  }
-  const int from = first >= 0 ? 1 : 0;           // keep the first in place
-  for (int i = orderLen - 1; i > from; i--) {
-    const int j = from + esp_random() % (i - from + 1);
-    const uint16_t tmp = order[i];
-    order[i] = order[j];
-    order[j] = tmp;
-  }
-  orderPos = first >= 0 ? 0 : -1;
+  order.reset(orderLen, shuffled, first, esp_random());
+  orderPos = order.position(first);
 }
 
 static void request(int track, uint32_t startMs = 0) {
+  if (track < 0) return; // queueAt already published the unavailable-source error
   portENTER_CRITICAL(&stateLock);
   const int superseded=reqTrack;
   reqStartMs = startMs; seekGoalMs = startMs; reqSeekMs = -1; reqTrack = track;
@@ -390,15 +376,12 @@ static void advance(bool trackFinished) {
       // The end of the list: load the first track, paused, ready to go again.
       playing = false;
       next = 0;
-    } else if (shuffleOn) {
-      buildOrder(true, order[esp_random() % orderLen]);   // a fresh shuffle
-      next = 0;
     } else {
       next = 0;
     }
   }
   orderPos = next;
-  request(order[orderPos]);
+  request(queueAt(order.at(orderPos)));
 }
 
 // ---------------------------------------------------------------------------
@@ -408,10 +391,8 @@ void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle,
   playing = false;
   rb = (int16_t*)malloc(RB_FRAMES * 2 * sizeof(int16_t));
   orderLen = storage_trackCount();
-  // Sized for the whole library: a playlist's queue is never longer.
-  order = (uint16_t*)malloc(max(1, orderLen) * sizeof(uint16_t));
-  if (!rb || !order) {
-    free(rb); free(order); rb = nullptr; order = nullptr; orderLen = 0;
+  if (!rb) {
+    orderLen = 0;
     reportError("audio_memory", -1); return;
   }
   volumePct = min<uint8_t>(volume, 100);
@@ -424,7 +405,7 @@ void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle,
   }
   // CY-37/v3 minimum free stack was >=3964 B on 6144 B: retain ~1.9 KiB observed margin.
   if (xTaskCreatePinnedToCore(decodeTask, "m4adec", 4096, nullptr, 5, &decodeHandle, 1) != pdPASS) {
-    free(rb); free(order); rb = nullptr; order = nullptr; orderLen = 0;
+    free(rb); rb = nullptr; orderLen = 0;
     reportError("audio_task", -1);
   }
 }
@@ -452,8 +433,8 @@ void audio_playTrack(int index) {
   ++playIntentSerial;
   Serial.printf("cmd: play track %d accepted\n",index);
   index = constrain(index, 0, storage_trackCount() - 1);
-  for (int i = 0; i < orderLen; i++)
-    if (order[i] == index) { orderPos = i; break; }
+  orderPos = order.position(queueFind(index));
+  if (!orderLen) return; // a failed cursor read stopped playback
   playing = true;
   failStreak = 0;
   request(index);
@@ -472,7 +453,7 @@ void audio_prev() {
   failStreak = 0;
   if (!requestPending() && !seeking && audio_positionMs() > 3000) { request(curTrack); return; }
   orderPos = orderPos <= 0 ? orderLen - 1 : orderPos - 1;
-  request(order[orderPos]);
+  request(queueAt(order.at(orderPos)));
 }
 
 static void setPlaying(bool on) {
@@ -534,7 +515,7 @@ void audio_setQueueSource(AudioQueueSource source, int n, int keepTrack, bool ju
   if (orderLen > 0 && orderPos < 0 && jump) {
     orderPos = 0;
     failStreak = 0;
-    request(order[0]);
+    request(queueAt(order.at(0)));
   }
 }
 

@@ -18,6 +18,55 @@
 
 #include <Arduino.h>
 
+// Seeded permutation of queue positions; no per-track storage or allocation.
+// Six balanced Feistel rounds on the smallest power-of-four domain, cycle
+// walked into [0,count). Swapping two outputs makes the selected entry first.
+class AudioOrder {
+  uint32_t count_ = 0, seed_ = 0, mask_ = 0, bits_ = 0;
+  int first_ = -1, zero_ = -1;
+  bool shuffled_ = false;
+  uint32_t round(uint32_t x, unsigned r) const {
+    x ^= seed_ + 0x9e3779b9u * (r + 1);
+    x ^= x >> 16; x *= 0x7feb352du;
+    x ^= x >> 15; x *= 0x846ca68bu;
+    return (x ^ (x >> 16)) & mask_;
+  }
+  uint32_t permute(uint32_t x, bool inverse) const {
+    uint32_t l = x >> bits_, r = x & mask_;
+    for (unsigned i = 0; i < 6; ++i) {
+      const uint32_t next = inverse ? r ^ round(l, 5 - i) : l ^ round(r, i);
+      if (inverse) { r = l; l = next; } else { l = r; r = next; }
+    }
+    return (l << bits_) | r;
+  }
+  int raw(int value, bool inverse = false) const {
+    uint32_t x = uint32_t(value);
+    do { x = permute(x, inverse); } while (x >= count_);
+    return int(x);
+  }
+  int swapFirst(int value) const {
+    return value == first_ ? zero_ : value == zero_ ? first_ : value;
+  }
+public:
+  void reset(int count, bool shuffled, int selected, uint32_t seed) {
+    count_ = count > 0 ? uint32_t(count) : 0; seed_ = seed;
+    shuffled_ = shuffled && count_ > 1;
+    bits_ = 0;
+    while ((uint64_t(1) << (2 * bits_)) < count_) ++bits_;
+    mask_ = (uint32_t(1) << bits_) - 1;
+    first_ = selected >= 0 && uint32_t(selected) < count_ ? selected : -1;
+    zero_ = shuffled_ && first_ >= 0 ? raw(0) : -1;
+  }
+  int at(int pos) const {
+    if (pos < 0 || uint32_t(pos) >= count_) return -1;
+    return shuffled_ ? swapFirst(raw(pos)) : pos;
+  }
+  int position(int queuePos) const {
+    if (queuePos < 0 || uint32_t(queuePos) >= count_) return -1;
+    return shuffled_ ? raw(swapFirst(queuePos), true) : queuePos;
+  }
+};
+
 void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle, uint8_t repeat);
 // Starts paused. After restoring the queue, release the decode task's boot barrier.
 void audio_start();

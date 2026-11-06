@@ -143,29 +143,44 @@ void flac_compact_reset(flac_compact_state *s, uint64_t offset, uint64_t next_sa
     B(s).published = B(s).drops = B(s).skipped = 0;
 }
 
-int flac_lpc(const int32_t *h, const int16_t *c, unsigned index,
-             unsigned order, unsigned shift, unsigned bps, int64_t *prediction, int *wide) {
+static int lpc_narrow(const int16_t *c, unsigned order, unsigned bps) {
+    uint32_t sumabs = 0;
     unsigned j;
-    uint64_t sumabs = 0;
-    int64_t sum = 0, extent;
-    int narrow;
-    if (!h || !c || !prediction || order > 32 || shift > 15 || !bps || bps > 17) return FLACX_ARGUMENT;
-    extent = INT64_C(1) << (bps - 1);
     for (j = 0; j < order; ++j) {
-        int32_t v = h[(index - j - 1) & 31];
-        if (v < -extent || v >= extent) return FLACX_RANGE;
-        sumabs += c[j] < 0 ? -(int64_t)c[j] : c[j];
+        int32_t coefficient = c[j];
+        sumabs += coefficient < 0 ? -coefficient : coefficient;
     }
-    narrow = sumabs * (uint64_t)extent <= INT32_MAX;
+    /* Each tap is bounded by abs(coefficient) * 2^(bps-1). */
+    return sumabs <= (UINT32_C(0x7fffffff) >> (bps - 1));
+}
+
+static inline int64_t lpc_predict(const int32_t *h, const int16_t *c, unsigned index,
+                                  unsigned order, unsigned shift, int narrow) {
+    unsigned j;
+    /* Shift unsigned magnitudes to round toward negative infinity portably. */
     if (narrow) {
         int32_t acc = 0;
         for (j = 0; j < order; ++j) acc += (int32_t)c[j] * h[(index - j - 1) & 31];
-        sum = acc;
-    } else {
-        for (j = 0; j < order; ++j) sum += (int64_t)c[j] * h[(index - j - 1) & 31];
+        return acc >= 0 ? (int32_t)((uint32_t)acc >> shift)
+                        : -1 - (int32_t)((uint32_t)(-1 - acc) >> shift);
     }
-    /* Explicit floor division avoids implementation-defined signed right shift. */
-    *prediction = sum >= 0 ? sum / (INT64_C(1) << shift) : -1 - ((-1 - sum) / (INT64_C(1) << shift));
+    int64_t acc = 0;
+    for (j = 0; j < order; ++j) acc += (int64_t)c[j] * h[(index - j - 1) & 31];
+    return acc >= 0 ? (int64_t)((uint64_t)acc >> shift)
+                    : -1 - (int64_t)((uint64_t)(-1 - acc) >> shift);
+}
+
+int flac_lpc(const int32_t *h, const int16_t *c, unsigned index,
+             unsigned order, unsigned shift, unsigned bps, int64_t *prediction, int *wide) {
+    unsigned j;
+    if (!h || !c || !prediction || order > 32 || shift > 15 || !bps || bps > 17) return FLACX_ARGUMENT;
+    const int32_t extent = INT32_C(1) << (bps - 1);
+    for (j = 0; j < order; ++j) {
+        int32_t v = h[(index - j - 1) & 31];
+        if (v < -extent || v >= extent) return FLACX_RANGE;
+    }
+    const int narrow = lpc_narrow(c, order, bps);
+    *prediction = lpc_predict(h, c, index, order, shift, narrow);
     if (wide) *wide = !narrow;
     return FLACX_FRAME;
 }
@@ -232,6 +247,8 @@ static int subframe(flac_compact_state *s, flac_compact_read_fn read, void *user
     /* Equality intentionally accepts the encoder-oracle empty-first-partition
      * extension; current miniflac rejects it. Never subtract before checking. */
     if (B(s).block_size % parts || span < order) return fail(s, FLACX_BAD_FRAME);
+    /* save() validates every warmup and reconstructed sample before it enters history. */
+    const int narrow = lpc_narrow(s->coefficients, order, effective);
     i = order;
     for (p = 0; p < parts && !B(s).error; ++p) {
         unsigned k = get(s, read, user, method ? 5 : 4);
@@ -248,8 +265,7 @@ static int subframe(flac_compact_state *s, flac_compact_read_fn read, void *user
                 residual = u & 1 ? -(int64_t)((u >> 1) + 1) : (int64_t)(u >> 1);
             }
             if (B(s).error) break;
-            if (flac_lpc(s->history, s->coefficients, i, order, shift, effective, &prediction, 0) != FLACX_FRAME)
-                return fail(s, FLACX_RANGE);
+            prediction = lpc_predict(s->history, s->coefficients, i, order, shift, narrow);
             /* Addition stays wide even when the LPC accumulator is int32. */
             save(s, pcm, i++, channel, residual + prediction, wasted, width);
         }

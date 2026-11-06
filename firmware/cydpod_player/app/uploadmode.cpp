@@ -139,6 +139,7 @@ static bool endsWithCI(const String& s, const char* suffix) {
 }
 
 static void sendJson(int code, const String& body) {
+  server.sendHeader("X-Content-Type-Options", "nosniff");
   server.send(code, "application/json", body);
 }
 
@@ -147,7 +148,7 @@ static String jsonEscape(const String& s) {
   o.reserve(s.length() + 4);
   for (unsigned i = 0; i < s.length(); i++) {
     const char c = s[i];
-    if (c == '"' || c == '\\') { o += '\\'; o += c; }
+    if (c == '"' || c == '\\' || c == '/') { o += '\\'; o += c; }
     else if ((uint8_t)c < 0x20) o += ' ';
     else o += c;
   }
@@ -258,7 +259,7 @@ static void handleList() {
   File d = SD.open(dir);
   if (!d || !d.isDirectory()) { sendError("no such folder"); return; }
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, "application/json", "");
+  sendJson(200, "");
   server.sendContent("{\"items\":[");
   bool first = true;
   for (File f = d.openNextFile(); f; f = d.openNextFile()) {
@@ -399,7 +400,7 @@ static void streamSongs(const String& dir, int depth, bool& first) {
 
 static void handleSongs() {
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, "application/json", "");
+  sendJson(200, "");
   server.sendContent("{\"songs\":[");
   bool first = true;
   streamSongs("/music", 0, first);

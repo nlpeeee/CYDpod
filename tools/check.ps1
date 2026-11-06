@@ -53,7 +53,7 @@ try {
             throw "Vendored source changed: $path"
         }
     }
-    $sourceFiles = @(Get-ChildItem vendor/CYD-MP3-Player -Recurse -File)
+    $sourceFiles = @(Get-ChildItem vendor/CYD-MP3-Player -Recurse -File -Force)
     if ($sourceFiles.Count -ne @($expected.PSObject.Properties).Count) {
         throw 'Unexpected files in vendored source snapshot.'
     }
@@ -83,6 +83,7 @@ try {
         Library = (Join-Path $root '.tools/staging/miniaac-patched') }
     # Only MP3 C is staged: the stock wrapper's second AAC core conflicts with MiniAAC.
     $jobs[-1].Flags += ' -fwrapv -fno-strict-aliasing'
+    $jobs += @{ Name = 'cydpod-uploader'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYD_UPLOADER' }
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
             throw 'Required AAC probe is missing. Use -SkipProbe only for an explicit stock-baseline check.'
@@ -115,7 +116,7 @@ try {
         # CY-71: the same player forced onto the wired I2S route at every boot (board.h CYD_DEFAULT_OUT_ROUTE, 2 = OUT_WIRED),
         # for testing before the Settings row exists. The saved route in NVS is not overwritten.
         $jobs += @{ Name = 'cydpod-player-wired'; Sketch = $jobs[0].Sketch; Flags = ($jobs[0].Flags + ' -DCYD_DEFAULT_OUT_ROUTE=2'); Library = $jobs[0].Library
-            ImageName = 'codec-pool-v31-wired-jc2432w328c' }
+            ImageName = 'codec-pool-v32-wired-jc2432w328c' }
         # CY-70: standalone I2S test tone (no TFT, SD, touch or Bluetooth). The second image is the
         # 32-bit-slot fallback (BCK = 64 x fS) in case the PCM5100A PLL does not lock at 32 x fS.
         $jobs += @{ Name = 'i2s-tone'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-tone-jc2432w328c' }
@@ -125,7 +126,7 @@ try {
     $results = @()
     foreach ($job in $jobs) {
         $imageName = $job.Name
-        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v31-jc2432w328c' }
+        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v32-jc2432w328c' }
         if ($job.ImageName) { $imageName = $job.ImageName }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.
@@ -148,7 +149,7 @@ try {
                 Copy-Item -LiteralPath $_.FullName -Destination $dest
             }
         }
-        if ($job.Name -like 'cydpod-player*') { Copy-Item -LiteralPath (Join-Path $root 'vendor/miniflac/miniflac.h') -Destination $stage }
+        if ($job.Name -like 'cydpod-player*' -or $job.Name -eq 'cydpod-uploader') { Copy-Item -LiteralPath (Join-Path $root 'vendor/miniflac/miniflac.h') -Destination $stage }
         if ($job.Name -like 'i2s-*') { Copy-Item -LiteralPath (Join-Path $root 'firmware/cydpod_player/app/board.h') -Destination $stage }
         # GCC -w suppresses even local diagnostic-error pragmas. Keep it for
         # stock builds only; the probe enables format errors in its own files.
@@ -195,12 +196,14 @@ try {
             $isPlayer = $imageText.Contains('heap before audio + bt')
             $isUploader = $imageText.Contains('upload: hotspot')
             if ((($job.Name -eq 'player' -or $job.Name -like 'cydpod-player*') -and (!$isPlayer -or $isUploader)) -or
-                ($job.Name -eq 'uploader' -and (!$isUploader -or $isPlayer))) {
+                (($job.Name -eq 'uploader' -or $job.Name -eq 'cydpod-uploader') -and (!$isUploader -or $isPlayer))) {
                 throw "Wrong program in $($job.Name) image (upstream marker check)."
             }
         }
         if ($job.Name -like 'cydpod-player*') {
-            $nm = Join-Path $dependencyRoot 'arduino/packages/esp32/tools/esp-x32/2601/bin/xtensa-esp32-elf-nm.exe'
+            $toolchain = @($lock.tools | Where-Object { $_.name -eq 'esp-x32' })
+            if ($toolchain.Count -ne 1) { throw 'Expected one locked esp-x32 toolchain.' }
+            $nm = Join-Path $dependencyRoot ('arduino/packages/esp32/tools/esp-x32/' + $toolchain[0].version + '/bin/xtensa-esp32-elf-nm.exe')
             $symbols = & $nm -S --defined-only (Join-Path $root ".tools/build/$imageName/app.ino.elf")
             $poolSymbols = @($symbols | Where-Object { $_ -match ' codecPool$|codecPoolE$' })
             if ($poolSymbols.Count -ne 1 -or $poolSymbols[0] -notmatch '\s0000a000\s[bB]\s') { throw 'Expected exactly one 40960 B codec pool in .bss.' }
@@ -229,23 +232,29 @@ try {
     if ($Board -ne 'default') { $resultsPath = ".tools/logs/build-results-$Board.json" }
     $results | ConvertTo-Json | Set-Content $resultsPath
     if (!$SkipHostMedia) {
+        # Record independent suite failures, then fail the stage after all have run.
+        $hostFailures = @()
         & cmd.exe /d /c tests\build_catalog.cmd
-        if ($LASTEXITCODE -ne 0) { throw 'Catalogue/navigation host checks failed.' }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "FAIL host stage: catalogue/navigation (exit $LASTEXITCODE)"
+            $hostFailures += 'catalogue/navigation'
+        }
+        $wslRoot = (& wsl.exe -d Debian -- wslpath -a ($root.Replace([char]92,[char]47))).Trim()
+        if ($LASTEXITCODE -ne 0 -or !$wslRoot) { throw 'Failed to resolve worktree path for WSL.' }
+        foreach ($suite in @('build_codec_pool.sh', 'build_i2s_tone.sh', 'build_wired_fade.sh', 'build_i2s_diag.sh', 'build_bt_policy.sh', 'build_catalog_sort.sh', 'build_playlist_queue.sh', 'build_audio_order.sh', 'build_catalog_validation.sh')) {
+            & wsl.exe -d Debian --cd $wslRoot -- sh ('tests/' + $suite)
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "FAIL host stage: $suite (exit $LASTEXITCODE)"
+                $hostFailures += $suite
+            } else { Write-Host "PASS host stage: $suite" }
+        }
         if (!(Test-Path tools/media_check.py)) { throw 'Required host media check is missing.' }
-        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_codec_pool.sh')
-        if ($LASTEXITCODE -ne 0) { throw 'WAV/MP3 pool/FIR host checks failed.' }
-        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_i2s_tone.sh')
-        if ($LASTEXITCODE -ne 0) { throw 'I2S test-tone host checks failed.' }
-        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_wired_fade.sh')
-        if ($LASTEXITCODE -ne 0) { throw 'Wired-route host checks failed.' }
-        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_bt_policy.sh')
-        if ($LASTEXITCODE -ne 0) { throw 'Bluetooth connect-policy host checks failed.' }
-        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_i2s_diag.sh')
-        if ($LASTEXITCODE -ne 0) { throw 'I2S diagnostic host checks failed.' }
-        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_catalog_sort.sh')
-        if ($LASTEXITCODE -ne 0) { throw 'Catalogue sort host checks failed.' }
-        & python tools/media_check.py
-        if ($LASTEXITCODE -ne 0) { throw 'Host media checks failed. See output above.' }
+        & python -I tools/media_check.py
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "FAIL host stage: media_check.py (exit $LASTEXITCODE)"
+            $hostFailures += 'media_check.py'
+        } else { Write-Host 'PASS host stage: media_check.py' }
+        if ($hostFailures.Count) { throw ('Host checks failed: ' + ($hostFailures -join ', ') + '. See output above.') }
     }
     Write-Host 'PASS: compile-only checks completed; no device commands were run.'
 } finally { Pop-Location }

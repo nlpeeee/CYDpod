@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+SAMPLES=${CYDPOD_TESTSAMPLES:-testsamples}
 cd "$(dirname "$0")/.."
 # Reuse the existing MiniAAC host object/fixture preparation.
 sh tests/build_miniaac_seek.sh
@@ -15,8 +16,10 @@ CXXFLAGS="-Wl,--wrap=xmp3_UnpackFrameHeader -O1 -std=c++17 -Ivendor/miniflac -It
 g++ $CXXFLAGS tests/codec_pool_test.cpp tests/helix_host_alloc.cpp firmware/cydpod_player/app/codec_track.cpp firmware/cydpod_player/app/resampler.cpp "$OUT"/obj/*.o "$OUT"/mp3/*.o "$OUT/flac_core.o" -o "$OUT/codec_pool_test"
 python3 -I tests/codec_pool_fixtures.py
 "$OUT/codec_pool_test" tests/out/codec_pool/*.m4a tests/out/codec_pool/48000-tone.wav tests/out/codec_pool/48000-2-cbr.mp3
-if test -f /mnt/e/dev/CYDpod/testsamples/Sample_BeeMoved_48kHz16bit.m4a; then
- "$OUT/codec_pool_test" /mnt/e/dev/CYDpod/testsamples/Sample_BeeMoved_48kHz16bit.m4a
+if test -f "$SAMPLES"/Sample_BeeMoved_48kHz16bit.m4a; then
+ "$OUT/codec_pool_test" "$SAMPLES"/Sample_BeeMoved_48kHz16bit.m4a
+else
+ echo "SKIP optional real samples: $SAMPLES (set CYDPOD_TESTSAMPLES to read samples elsewhere)"
 fi
 g++ $CXXFLAGS tests/mp3_pool_test.cpp tests/helix_host_alloc.cpp firmware/cydpod_player/app/codec_track.cpp firmware/cydpod_player/app/resampler.cpp "$OUT"/obj/*.o "$OUT"/mp3/*.o "$OUT/flac_core.o" -o "$OUT/mp3_pool_test"
 "$OUT/mp3_pool_test" tests/out/codec_pool/*.mp3

@@ -1,7 +1,8 @@
 // ===========================================================================
 // bt.h -- Bluetooth A2DP source: the speaker link
 // ===========================================================================
-// Startup pages the last saved address; loop-managed reconnects follow.
+// Startup pages the last saved address once; later reconnects are bounded and
+// owner-gated (bt_reconnect_policy.h).
 // Pair new and Cancel run live on the existing Bluetooth event task. Neither
 // operation reboots or reinitializes the controller; bonds remain until Forget.
 #pragma once
@@ -29,6 +30,7 @@ enum BtFailure : uint8_t {
   BT_FAIL_NONE = 0,
   BT_FAIL_TIMEOUT,                    // nothing came back in time
   BT_FAIL_AUTH,                       // the device refused the pairing
+  BT_FAIL_RADIO,                      // a Bluetooth call failed (not a timeout)
 };
 
 // Pairing

@@ -17,6 +17,7 @@ static const uint16_t* liveQueue=nullptr;
 static int liveLength=0,currentTrack=0,audioCalls=0;
 bool settings_save(){return true;}
 bool audio_ready(){return true;}
+bool audio_isPlaying(){return false;}
 void audio_setQueue(const uint16_t* tracks,int n,int,bool){liveQueue=tracks;liveLength=n;++audioCalls;}
 static std::vector<uint16_t> sourceIds;
 void audio_setQueueSource(AudioQueueSource s,int n,int keep,bool jump){sourceIds.resize(n);for(int i=0;i<n;++i)sourceIds[i]=s.at?s.at(s.context,i):s.tracks?s.tracks[i]:i;audio_setQueue(sourceIds.data(),n,keep,jump);}

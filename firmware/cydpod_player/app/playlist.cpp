@@ -214,8 +214,16 @@ void playlist_begin() {
 // Building a queue
 // ---------------------------------------------------------------------------
 static int    built = 0, visited = 0;
-static void checkedScan(StorageEachFn fn) {
+struct BuildTelemetry {
+  uint32_t started = millis(), scanMs = 0;
+  int records = 0;
+  bool playing = audio_isPlaying(), ok = true;
+};
+static void checkedScan(StorageEachFn fn, BuildTelemetry& telemetry) {
+  const uint32_t started = millis();
   visited = 0; storage_forEach(fn);
+  telemetry.scanMs = millis() - started;
+  telemetry.records = visited;
   if (visited != storage_trackCount()) queueOk = false;
 }
 static String folderPrefix;
@@ -339,7 +347,8 @@ static void matchM3u(int i, const String& path, const String&) {
   }
 }
 const PlaylistMatchStats& playlist_lastMatchStats() { return matchStats; }
-static int buildM3u(const String& listPath) {
+static int buildM3u(const String& listPath, BuildTelemetry& telemetry) {
+  telemetry.ok = false;
   matchStats = {};
   m3uFile = openSmallFile(listPath);
   if (!m3uFile) return 0;
@@ -363,7 +372,7 @@ static int buildM3u(const String& listPath) {
     matchRecord(m3uCount++, record, true);
   }
   std::sort(m3uKeys, m3uKeys + m3uCount);
-  if (queueOk) checkedScan(matchM3u);
+  if (queueOk) checkedScan(matchM3u, telemetry);
   free(m3uKeys); m3uKeys = nullptr;
   int n = 0;
   for (int p = 0; queueOk && p < m3uCount; ++p) {
@@ -377,37 +386,49 @@ static int buildM3u(const String& listPath) {
   }
   m3uFile.close(); m3uState.close(); if (previewOut) SD.remove(M3U_STATE);
   matchStats.missing = matchStats.entries - matchStats.exact - matchStats.byTail - matchStats.byName;
-  Serial.printf("cmd: playlist %s n=%lu found=%d missing=%lu ambiguous=%lu\n", baseName(listPath).c_str(),
-    (unsigned long)matchStats.entries, n, (unsigned long)matchStats.missing, (unsigned long)matchStats.ambiguous);
+  telemetry.ok = queueOk;
   return n;
 }
 
-// Fill `queue` for source i. Returns its length; for All, the track count
-// with `*identity` set (no table needed).
-static int buildIds(int i, bool* identity) {
-  *identity = false;
-  if (i == 0) { *identity = true; return storage_trackCount(); }
-  built = 0;
-  if (i == 1) {
-    if (!favs.empty()) checkedScan(addFavourite);
-    return built;
-  }
-  SourceKind kind;
-  String name, path;
-  if (!readSource(i, kind, name, path)) return 0;
-  if (kind == SRC_FOLDER) {
-    folderPrefix = path + "/";
-    checkedScan(addFolder);
-    return built;
-  }
-  return buildM3u(path);
-}
-
+// Fill a source, then report once after all build I/O. All is an identity.
 static int build(int i, bool* identity, const char* path = nullptr) {
   if (i == 0) { *identity = true; return storage_trackCount(); }
-  if (!previewOut && !stageQueue(path)) return 0;
-  const int n = buildIds(i, identity);
-  queueOut.close();
+  BuildTelemetry telemetry;
+  const char* role = previewOut || path ? "preview" : "queue";
+  *identity = false;
+  const bool staged = previewOut || stageQueue(path);
+  SourceKind kind = SRC_FAVOURITES;
+  String name, sourcePath;
+  const bool sourceOk = i == 1 || readSource(i, kind, name, sourcePath);
+  telemetry.ok = staged && sourceOk;
+  int n = 0;
+  built = 0;
+  if (kind == SRC_M3U) matchStats = {};
+  if (telemetry.ok) {
+    if (kind == SRC_FAVOURITES) {
+      if (!favs.empty()) checkedScan(addFavourite, telemetry);
+      n = built;
+    } else if (kind == SRC_FOLDER) {
+      folderPrefix = sourcePath + "/";
+      checkedScan(addFolder, telemetry);
+      n = built;
+    } else {
+      n = buildM3u(sourcePath, telemetry);
+    }
+  }
+  if (staged) queueOut.close();
+  const uint32_t totalMs = millis() - telemetry.started;
+  const char* status = telemetry.ok && queueOk ? "ok" : "fail";
+  if (sourceOk && kind == SRC_M3U) {
+    Serial.printf("cmd: playlist %s n=%lu found=%d missing=%lu ambiguous=%lu role=%s cache=miss scan=%lu records=%d total=%lu status=%s playing=%d\n",
+      baseName(sourcePath).c_str(), (unsigned long)matchStats.entries, n,
+      (unsigned long)matchStats.missing, (unsigned long)matchStats.ambiguous, role,
+      (unsigned long)telemetry.scanMs, telemetry.records, (unsigned long)totalMs, status, int(telemetry.playing));
+  } else if (sourceOk) {
+    Serial.printf("cmd: source %s %d role=%s scan=%lu records=%d total=%lu status=%s playing=%d\n",
+      kind == SRC_FAVOURITES ? "favourites" : "folder", i, role,
+      (unsigned long)telemetry.scanMs, telemetry.records, (unsigned long)totalMs, status, int(telemetry.playing));
+  }
   return queueOk ? n : 0;
 }
 

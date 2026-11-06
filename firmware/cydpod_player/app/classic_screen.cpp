@@ -142,7 +142,13 @@ uint32_t lastPaint=0,lastPlayer=0,shownSerial=UINT32_MAX,saveAt=0;
 uint32_t seenError=0,lastStatus=0;
 int shownProgress=-1,shownSecond=-1,shownVolume=-1,shownConnection=-1;
 bool shownPlaying=false,savePending=false,shownSeeking=false,shownWaiting=false;
-bool previewDirty=false;
+// No playlist stat/favourites revision accessor: Home/re-entry refreshes PC edits;
+// successful UI favourite changes explicitly invalidate this key.
+struct PreviewKey { uint32_t crc=0;int tracks=0;int16_t source=-1;SourceKind kind=SRC_ALL; } previewKey;
+static_assert(sizeof(PreviewKey)<64,"Retained preview metadata RAM budget");
+#ifdef CYDPOD_CATALOG_HOST
+unsigned hostPreviewBuilds=0;
+#endif
 bool externalReturn=false;
 bool seekPreview=false,seekCancelled=false,volumeChanged=false;
 int playerPressed=-1,tilePressed=-1;
@@ -211,7 +217,9 @@ Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
 
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
-void freePreview(){preview.path=nullptr;preview.count=0;preview.first=-1;preview.cached=0;previewCount=0;previewFailed=false;}
+void freePreview(){preview.path=nullptr;preview.count=0;preview.first=-1;preview.cached=0;previewCount=0;previewFailed=false;previewKey=PreviewKey{};}
+bool previewMatches(int source){return previewKey.source==source&&previewKey.kind==playlist_kind(source)&&
+  previewKey.crc==storage_libraryCrc()&&previewKey.tracks==storage_trackCount()&&preview.queueCount()>0&&!previewFailed;}
 void text(const char* s,const Rect& r,uint16_t fg,uint16_t bg,TypeRole role=TYPE_BODY){ui_text(String(s),r.x+L::TextMargin,r.cy(),ML_DATUM,fg,bg,r.w-2*L::TextMargin,role);}
 void centred(const String& s,int y,uint16_t fg,uint16_t bg,int width=0){ui_text(s,tft.width()/2,y,MC_DATUM,fg,bg,width?width:tft.width()-2*L::TextMargin);}
 const char* pageTitle(const Page& value){
@@ -453,7 +461,7 @@ void loadRow(int i){
       }else setRow(r,searchWaiting()?"Searching...":"No matches",String(),false,true);
       break;
     case Mode::Sources:{int source=sourceId(at);setRow(r,playlist_name(source).c_str(),String(),true,source<0);r.source=source;break;}
-    case Mode::SourceSongs:{String title,artist;const int id=previewFailed?-1:preview.queueAt(at);if(id<0)previewFailed=true;if(id>=0&&storage_trackSummary(id,title,artist)){setRow(r,title.c_str(),artist);r.track=id;}else setRow(r,"Track unavailable",String(),false,true);break;}
+    case Mode::SourceSongs:{String title,artist;const int id=previewFailed?-1:preview.queueAt(at);if(id>=0&&storage_trackSummary(id,title,artist)){setRow(r,title.c_str(),artist);r.track=id;}else {freePreview();previewFailed=true;setRow(r,"Track unavailable",String(),false,true);}break;}
     case Mode::Settings:{const char* names[]={"Audio Output","Bluetooth","Playback","Display","Library & System","About"};setRow(r,names[at],String(),true);break;}
     case Mode::System:{const char* names[]={"Refresh Library","Upload music","Web passcode","Language"};
       setRow(r,names[at],at==2?g_settings.webPin:at==3?String(tr(T_LANG_NAME)):String(),at<2);break;}
@@ -485,8 +493,13 @@ void catalog(CatalogView view,const char* name){
   if(navigation.push(next))ui_go(SCR_CLASSIC);
 }
 bool buildPreview(int source){
-  if(!playlist_preview(source,preview))return false;
-  previewCount=preview.queueCount();previewDirty=false;previewFailed=false;
+  freePreview();
+#ifdef CYDPOD_CATALOG_HOST
+  ++hostPreviewBuilds;
+#endif
+  if(!playlist_preview(source,preview)){freePreview();return false;}
+  previewKey={storage_libraryCrc(),storage_trackCount(),int16_t(source),playlist_kind(source)};
+  previewCount=preview.queueCount();previewFailed=false;
   return true;
 }
 void openSource(int source){
@@ -506,10 +519,16 @@ void openPlaying(){
   miniReturn=page();miniReturnDepth=navigation.depth;
   page()=Page{};page().mode=Mode::Player;ui_go(SCR_CLASSIC);
 }
+void backToPage(){
+  const bool list=page().mode==Mode::SourceSongs;
+  const int source=page().source;const bool rebuilt=list&&!previewMatches(source);const uint32_t started=millis();
+  ui_go(SCR_CLASSIC);
+  if(list)Serial.printf("cmd: back list rebuild ms=%lu rebuilt=%u source=%d\n",(unsigned long)(millis()-started),unsigned(rebuilt),source);
+}
 void back(){
-  if(miniReturnDepth==navigation.depth){page()=miniReturn;miniReturnDepth=0;ui_go(SCR_CLASSIC);return;}
+  if(miniReturnDepth==navigation.depth){page()=miniReturn;miniReturnDepth=0;backToPage();return;}
   if(page().mode==Mode::SourceSongs)freePreview();
-  if(navigation.back())ui_go(SCR_CLASSIC);
+  if(navigation.back())backToPage();
 }
 void armVolumeSave(){if(volumeChanged){
 #ifdef CYDPOD_CATALOG_HOST
@@ -644,8 +663,13 @@ void enter(){
 #endif
   finishFling(inputNow());claimPending=false;
   seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
-  if(page().mode==Mode::SourceSongs&&(previewDirty||preview.queueCount()==0)){
-    if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
+  if(page().mode==Mode::SourceSongs){
+    if(!previewMatches(page().source)){
+      tft.fillScreen(theme().bg);header();centred("Loading...",100,theme().dim,theme().bg);
+      if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
+    }
+    // Reopen only the bounded ID window on demand; no File lives in the cursor.
+    preview.first=-1;preview.cached=0;
   }
   // Same-query reloads temporarily report zero hits. Keep the saved pixel bookmark
   // until that existing reload completes, while the displayed offset stays clamped.
@@ -669,8 +693,10 @@ void leave(){
   finishFling(inputNow());claimPending=false;printScrollLine();
   seekPreview=false;armVolumeSave();flushSettings();dirty=0;titles_release();
   // ui_go calls leave after a navigation push/pop: current() is the destination.
-  // Keep a newly built destination preview, otherwise rebuild lazily on Back.
-  if(page().mode!=Mode::SourceSongs||externalReturn)freePreview();
+  // Retain only for this source page or its Player (including mini-player return).
+  const Page* source=page().mode==Mode::SourceSongs?&page():page().mode==Mode::Player?
+    (miniReturnDepth==navigation.depth?&miniReturn:navigation.depth>1?&navigation.entries[navigation.depth-2]:nullptr):nullptr;
+  if(externalReturn||!source||source->mode!=Mode::SourceSongs||!previewMatches(source->source))freePreview();
   if(externalReturn||(page().mode!=Mode::Search&&page().mode!=Mode::Keyboard)){
     if(searchSession.state==SearchState::Active){storage_searchCancel();searchSession.state=SearchState::Cancelled;}
   }
@@ -684,6 +710,7 @@ void feedListSample(){
 }
 void tick(uint32_t now){
   screenNow=now;
+  if(previewKey.source>=0&&(previewKey.crc!=storage_libraryCrc()||previewKey.tracks!=storage_trackCount()))freePreview();
   feedListSample();
   advanceFling(now);
   const bool painted=viewportPending;
@@ -755,7 +782,7 @@ void toggleFavourite(){
           if(playlist_favouritesFull()&&!playlist_isFavourite(audio_currentTrack())){message("Favourites list is full.");return;}
           playlist_toggleFavourite(audio_currentTrack());
           if(playlist_favouriteFailed()){message("Unable to save favourite. Check SD card or memory.");return;}
-          previewDirty=true;
+          freePreview();
         }
   if(page().mode==Mode::Player)playerHeader();else invalidate();
 }
@@ -791,7 +818,7 @@ void activate(int at){
       }break;
     case Mode::Sources:openSource(selected.source);break;
     case Mode::SourceSongs:
-      if(!previewFailed&&playlist_playPreview(preview,at,page().source)){settings_save();show(Mode::Player);}else message("Unable to start this list.");break;
+      if(!previewFailed&&playlist_playPreview(preview,at,page().source)){settings_save();show(Mode::Player);}else {freePreview();message("Unable to start this list.");}break;
     case Mode::Settings:
       if(at==0)show(Mode::Output);else if(at==1)external(SCR_BLUETOOTH);else if(at==2)show(Mode::Playback);else if(at==3)show(Mode::Display);
       else if(at==4)show(Mode::System);else show(Mode::About);break;
@@ -1069,6 +1096,8 @@ uint32_t classic_volumeSaveAt(){return saveAt;}
 int classic_target(int x,int y){return targetAt(x,y);}
 const char* classic_query(){return query;}
 uint32_t classic_seekPreviewMs(){return seekMs;}
+unsigned classic_previewBuilds(){return hostPreviewBuilds;}
+const PlaylistQueue* classic_previewCursor(){return &preview;}
 unsigned classic_depth(){return navigation.depth;}
 unsigned classic_mode(){return unsigned(page().mode);}
 const char* classic_modeName(unsigned m){

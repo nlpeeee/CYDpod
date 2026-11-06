@@ -1,8 +1,23 @@
+# Fast path: powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia
 # Compile-only. There is deliberately no upload, monitor, port or erase option.
 [CmdletBinding()]
 param([switch]$SkipProbe, [switch]$SkipHostMedia,
+    [switch]$IncludeStock, [switch]$IncludeDiagnostics, [switch]$ListJobs,
     [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
 $ErrorActionPreference = 'Stop'
+$totalTimer = [Diagnostics.Stopwatch]::StartNew()
+$stageTimer = [Diagnostics.Stopwatch]::StartNew()
+$timings = New-Object 'System.Collections.Generic.List[string]'
+$stageName = 'dependency/inventory'
+$results = @()
+function Complete-CheckStage {
+    param([string]$NextStage)
+    if ($script:stageName) {
+        $script:timings.Add(('{0} | {1:F2}' -f $script:stageName, $script:stageTimer.Elapsed.TotalSeconds))
+    }
+    $script:stageName = $NextStage
+    $script:stageTimer.Restart()
+}
 
 function Test-FileInventory {
     param([string]$Label, [string]$SourceRoot, [string]$InventoryPath)
@@ -74,10 +89,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'MiniAAC staging failed.' }
     & python -I tools/stage_helix_mp3.py
     if ($LASTEXITCODE -ne 0) { throw 'Pinned MP3 core staging failed.' }
-    $jobs = @(
+    Complete-CheckStage 'job selection/probe staging'
+    $jobs = @()
+    if ($IncludeStock) {
+        $jobs += @(
         @{ Name = 'player'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '' },
         @{ Name = 'uploader'; Sketch = 'vendor/CYD-MP3-Player/app'; Flags = '-DCYD_UPLOADER' }
-    )
+        )
+    }
     # CY-33: the maintained touchscreen player copy (M4A via MiniAAC); MiniAAC is passed as a single --library.
     $jobs += @{ Name = 'cydpod-player'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYDPOD_AAC_LC_ONLY'
         Library = (Join-Path $root '.tools/staging/miniaac-patched') }
@@ -117,14 +136,22 @@ try {
         # for testing before the Settings row exists. The saved route in NVS is not overwritten.
         $jobs += @{ Name = 'cydpod-player-wired'; Sketch = $jobs[0].Sketch; Flags = ($jobs[0].Flags + ' -DCYD_DEFAULT_OUT_ROUTE=2'); Library = $jobs[0].Library
             ImageName = 'codec-pool-v33-wired-jc2432w328c' }
+        if ($IncludeDiagnostics) {
         # CY-70: standalone I2S test tone (no TFT, SD, touch or Bluetooth). The second image is the
         # 32-bit-slot fallback (BCK = 64 x fS) in case the PCM5100A PLL does not lock at 32 x fS.
         $jobs += @{ Name = 'i2s-tone'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-tone-jc2432w328c' }
         $jobs += @{ Name = 'i2s-tone-slot32'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C -DI2S_TEST_SLOT_BITS=32'; ImageName = 'i2s-tone-slot32-jc2432w328c' }
         $jobs += @{ Name = 'i2s-diag'; Sketch = 'firmware/cydpod_i2s_diag'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-diag-jc2432w328c' }
+        }
     }
-    $results = @()
+    if ($ListJobs) {
+        Write-Host ('Selected jobs ({0}): {1}' -f $Board, (($jobs | ForEach-Object { $_.Name }) -join ', '))
+        return
+    }
+    Complete-CheckStage $null
     foreach ($job in $jobs) {
+        $stageName = 'compile ' + $job.Name
+        $stageTimer.Restart()
         $imageName = $job.Name
         if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v34-jc2432w328c' }
         if ($job.ImageName) { $imageName = $job.ImageName }
@@ -227,34 +254,56 @@ try {
         }
         $results += [pscustomobject]@{ name=$job.Name; bytes=$binary.Length;
             sha256=(Get-FileHash $binary.FullName).Hash.ToLowerInvariant(); log=$log }
+        Complete-CheckStage $null
     }
+    $stageName = 'results export'
+    $stageTimer.Restart()
     $resultsPath = '.tools/logs/build-results.json'
     if ($Board -ne 'default') { $resultsPath = ".tools/logs/build-results-$Board.json" }
     $results | ConvertTo-Json | Set-Content $resultsPath
+    Complete-CheckStage $null
     if (!$SkipHostMedia) {
         # Record independent suite failures, then fail the stage after all have run.
         $hostFailures = @()
+        $stageName = 'host build_catalog.cmd'
+        $stageTimer.Restart()
         & cmd.exe /d /c tests\build_catalog.cmd
         if ($LASTEXITCODE -ne 0) {
             Write-Host "FAIL host stage: catalogue/navigation (exit $LASTEXITCODE)"
             $hostFailures += 'catalogue/navigation'
         }
+        Complete-CheckStage 'WSL start/path'
         $wslRoot = (& wsl.exe -d Debian -- wslpath -a ($root.Replace([char]92,[char]47))).Trim()
         if ($LASTEXITCODE -ne 0 -or !$wslRoot) { throw 'Failed to resolve worktree path for WSL.' }
+        Complete-CheckStage $null
         foreach ($suite in @('build_codec_pool.sh', 'build_i2s_tone.sh', 'build_wired_fade.sh', 'build_i2s_diag.sh', 'build_bt_policy.sh', 'build_catalog_sort.sh', 'build_playlist_queue.sh', 'build_audio_order.sh', 'build_catalog_validation.sh', 'build_splash.sh')) {
+            $stageName = 'host ' + $suite
+            $stageTimer.Restart()
             & wsl.exe -d Debian --cd $wslRoot -- sh ('tests/' + $suite)
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "FAIL host stage: $suite (exit $LASTEXITCODE)"
                 $hostFailures += $suite
             } else { Write-Host "PASS host stage: $suite" }
+            Complete-CheckStage $null
         }
+        $stageName = 'media_check.py'
+        $stageTimer.Restart()
         if (!(Test-Path tools/media_check.py)) { throw 'Required host media check is missing.' }
         & python -I tools/media_check.py
         if ($LASTEXITCODE -ne 0) {
             Write-Host "FAIL host stage: media_check.py (exit $LASTEXITCODE)"
             $hostFailures += 'media_check.py'
         } else { Write-Host 'PASS host stage: media_check.py' }
+        Complete-CheckStage $null
         if ($hostFailures.Count) { throw ('Host checks failed: ' + ($hostFailures -join ', ') + '. See output above.') }
     }
     Write-Host 'PASS: compile-only checks completed; no device commands were run.'
-} finally { Pop-Location }
+} finally {
+    Complete-CheckStage $null
+    $totalTimer.Stop()
+    $timingLines = @('stage | seconds') + $timings.ToArray() + @('total | {0:F2}' -f $totalTimer.Elapsed.TotalSeconds)
+    $timingLines | Set-Content (Join-Path $root ".tools/logs/check-timings-$Board.txt")
+    $timingLines | ForEach-Object { Write-Host $_ }
+    Write-Host ('SUMMARY board={0} images built={1} total seconds={2:F2}' -f $Board, $results.Count, $totalTimer.Elapsed.TotalSeconds)
+    Pop-Location
+}

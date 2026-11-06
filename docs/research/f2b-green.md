@@ -1,22 +1,40 @@
-# F2b host-stage correction
+# F2b/F2c host-stage correction
 
-Base cd8e3b6 (v32); code commit 74b1ce3; branch cydpod/host-green.
+Branch `cydpod/host-green`; base cd8e3b6 (v32).
+F2b code 74b1ce3, evidence 55296a5; F2c code e42d6b3.
 No firmware/golden changes, device operations or push.
 
-## Four requested verdicts
-- classic_ui: **stale test**. Pixel drag subtracts 7 px slop: 100 px travel gives offset 93, not a row boundary (`classic_screen.cpp:948`). Corrected the tap to Song 02's visible centre and asserted offset/top (`tests/classic_ui_test.cpp:1400-1404`). The full run passed selection and reached line 1476.
-- classic_ui wired: **stale test**, same shared test and evidence as above; it also reached line 1476.
-- icon verify: **stale test (upstream cascade)**. `tests/classic_ui_test.cpp:1519` calls `iconq::run()`; `tests/quiet_outline_test.h:93` writes catalogue PNGs. Blocked by the newly exposed line 1476.
-- catalog CT-08: **stale test**. CY-116A2 replaced N-ID malloc with a 256-ID stack window (`playlist.cpp:472-479`); `tests/catalog_test.cpp:229-237` now requires success at 10,240 B free and with a 4,000 B largest block, retains the heap-allocation guard boundary checks, and checks I/O failure preserves playback. PASS, including N=10,000 preview/playView coverage.
-Firmware references above are under firmware/cydpod_player/app/.
+## Verdicts
+- F2b classic_ui and wired: **stale test**. Pixel drag subtracts 7 px slop;
+  100 px travel gives offset 93. Selection now taps Song 02's visible centre
+  and asserts offset/top. Verified by the F2b run; not repeated separately.
+- F2b catalog CT-08: **stale test**. CY-116A2 uses a 256-ID stack window,
+  not N-ID malloc. Low-free-heap/fragmented-heap success and I/O-failure queue
+  preservation passed in F2b and the F2c full-host run.
+- F2c last preview assertion: **stale test**, no firmware fix required.
+  `classic_screen.cpp` buildPreview delegates to the bounded playlist_preview;
+  there is no free-heap gate. The fixed 528 B ESP32 cursor serves 256-ID windows.
+  SD staging may fail during rebuild; a later queueAt refill can return -1,
+  which SourceSongs latches as the existing disabled `Track unavailable` row
+  until reload. Bounded File/path allocations still exist; this is not a claim
+  that all allocation succeeds under real heap exhaustion (see cy-116a2.md).
+- Replaced the heap-refusal expectation with low-reported-heap Back success,
+  visible Song 04 and exact saved pixel offset, queue IDs/current track/call
+  preservation and playback. Added zero SD write budget to assert the actual
+  reload error, unchanged live queue, retry, restored scroll and playback.
+  **PASS in both UI variants**:
+  `PASS CY-43: output failure preserves route; preview release, low-heap Back rebuild, SD failure/recovery, scroll and queue preservation`
+- Icon generation/verify: **PASS**; upstream preview assertion no longer blocks it.
+  `CY90_PIXELS_OK: 1240320 independently expected production pixels`;
+  native/x4 PNG CRCs and exact replications verified.
 
-## Checks (once each)
-`powershell -NoProfile -File tools/check.ps1 -SkipProbe`: exit 1.
-Log `.tools/logs/f2b-full-host.log`; `Host checks failed: catalogue/navigation.`
+## Checks (once per code tip)
+F2c: `powershell -NoProfile -File tools/check.ps1 -SkipProbe`, **exit 1**
+on e42d6b3. Log `.tools/logs/f2c-full-host.log`.
+`Host checks failed: catalogue/navigation. See output above.`
 All four default firmware jobs compiled; `PASS single pool` (40,960 B).
-Default compile included above; no repeat.
 
-| Suite | Result |
+| Suite | F2c result |
 |---|---|
 | pairing_session | PASS |
 | speaker_lifecycle | PASS |
@@ -24,9 +42,9 @@ Default compile included above; no repeat.
 | touch_gesture | PASS |
 | scroll_core | PASS (818 golden rows) |
 | cst820_report | PASS |
-| classic_ui | FAIL: Back rebuild is gated after preview release |
+| classic_ui | FAIL: a true vertical drag scrolls the list instead of activating a row |
 | classic_ui wired | FAIL: same |
-| icon verify | FAIL: missing catalogue-12.png |
+| icon verify | PASS (CY90_PIXELS_OK) |
 | build_codec_pool.sh | PASS host stage |
 | build_i2s_tone.sh | PASS host stage |
 | build_wired_fade.sh | PASS host stage |
@@ -38,7 +56,15 @@ Default compile included above; no repeat.
 | build_catalog_validation.sh | PASS host stage |
 | media_check.py | PASS host stage |
 
-`powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia`: exit 0. Log `.tools/logs/f2b-w328c-compile.log`: `PASS: compile-only checks completed; no device commands were run.`
+F2b history: full-host exit 1, `.tools/logs/f2b-full-host.log`, blocked at
+preview heap assertion; icon verify cascaded. W328C compile-only exit 0,
+`.tools/logs/f2b-w328c-compile.log`:
+`PASS: compile-only checks completed; no device commands were run.`
+No second-board rerun requested in F2c.
 
 ## Remaining blocker
-`tests/classic_ui_test.cpp:1475-1478` still expects low simulated heap to refuse the now-bounded preview rebuild. Stopped under CHUNKING's outside-change failure rule; follow up with SD write fault injection, retaining queue/scroll assertions. Full host green is **not achieved**. Optional real samples SKIP (absent); Orca checkpoint metadata: selector_not_found for the Git-created worktree.
+Both UI variants now reach a later assertion:
+`FAIL firmware UI: a true vertical drag scrolls the list instead of activating a row`.
+Stopped corrections as instructed; did not investigate or chain fixes.
+Full host green is **not achieved**. Optional real samples SKIP (absent).
+Orca checkpoint update: `selector_not_found` for this Git-created worktree.

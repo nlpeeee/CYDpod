@@ -24,6 +24,7 @@
 #include "board.h"
 #include "settings.h"
 #include "display.h"
+#include "splash.h"
 #include "touch.h"
 #include "calibrate.h"
 #include "theme.h"
@@ -164,7 +165,7 @@ void setup() {
   Serial.printf("heap: after display+touch %u\n", ESP.getFreeHeap());
   display_bootGesture();                 // blind panel-controller switch, 8 s hold
 
-  centreMessage("CYD MP3", FIRMWARE_LABEL, theme().accent);
+  splash_show(FIRMWARE_LABEL);              // wordmark on yellow, follows the rotation applied in display_begin()
   display_setBacklight(g_settings.brightness);
 
   if (!touch_hasStoredCalibration()) calibrate_run();

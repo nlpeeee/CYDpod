@@ -100,6 +100,20 @@ int main() {
       std::printf("PASS 120 ms re-arm window unchanged\n");
     }
 
+    {  // A confirmed list lift may end early and rearm just to catch its coast.
+      cydtouch::PressTracker t;
+      t.update(2000,true,60,180);
+      t.update(2010,true,60,150);
+      check(t.update(2020,false,0,0)==TOUCH_NONE&&t.down(),"one zero keeps the press");
+      check(t.update(2028,false,0,0,nullptr,nullptr,true)==TOUCH_TAP&&!t.down(),
+            "confirmed lift ends the drag before grace expires");
+      t.update(2030,true,60,150);
+      check(!t.down(),"ordinary touch still waits for rearm");
+      t.update(2031,true,60,150,nullptr,nullptr,false,true);
+      check(t.down(),"a contact can immediately catch a confirmed coast");
+      std::printf("PASS confirmed list lift and immediate coast catch\n");
+    }
+
     {  // Long hold with a jittery pointer: one event, landing point not drift.
       cydtouch::PressTracker t;
       const Outcome o = run(t, 2000, 650, 2000, 10, 3000, 100, 200, 6);

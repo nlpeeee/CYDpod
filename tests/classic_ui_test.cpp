@@ -59,7 +59,8 @@ void audio_setShuffle(bool on){shuffle=on;++shuffleCalls;}
 bool audio_shuffle(){return shuffle;}
 void audio_setRepeat(uint8_t mode){repeatMode=mode;}
 uint8_t audio_repeat(){return repeatMode;}
-bool audio_bufferLow(){return false;}
+static bool testBufferLow=false;
+bool audio_bufferLow(){return testBufferLow;}
 bool audio_canSeek(){return seekAllowed;}
 bool audio_isSeeking(){return false;}
 bool audio_seekTo(uint32_t ms){lastSeek=ms;++seekCalls;return seekAllowed;}
@@ -119,6 +120,8 @@ bool firmware_uploaderPresent(){return false;}
 bool firmware_bootUploader(){return false;}
 bool touch_isDown(){return useTracker?tracker.down():down;}
 uint32_t touch_lastSeenMs(){return useTracker?tracker.lastSeenMs():clockNow;}
+static uint32_t testFirstZero=0;
+bool touch_confirmedLift(uint32_t& at){at=testFirstZero;return at!=0;}
 void touch_position(int& x,int& y){if(useTracker)tracker.landing(x,y);else{x=tx;y=ty;}}
 void touch_livePosition(int& x,int& y){if(useTracker)tracker.live(x,y);else{x=tx;y=ty;}}
 bool touch_rawPosition(int& x,int& y){if(!useTracker||!tracker.down())return false;tracker.raw(x,y);return true;}
@@ -151,12 +154,15 @@ static void snapshot(const char* path){if(std::getenv("CYDPOD_VIEWPORT_ONLY")&&s
 // loopStep() is the body of loop() in app.ino: poll, route the event, tick the UI.
 // ---------------------------------------------------------------------------
 using Path=std::function<void(uint32_t,int&,int&)>;
-static void loopStep(uint32_t now,bool valid,int x,int y){
+static void loopStep(uint32_t now,bool valid,int x,int y,uint32_t firstZero=0){
   int ex=0,ey=0;
-  const TouchEvent ev=tracker.update(now,valid,x,y,&ex,&ey);
+  const TouchEvent ev=tracker.update(now,valid,x,y,&ex,&ey,firstZero!=0,classic_touchMode()==TouchListMode::Coast);
+  testFirstZero=firstZero;
+  if(ui_current()==SCR_CLASSIC)classic_touchPollComplete(now);
   if(ev==TOUCH_RECALIBRATE&&!ui_pressClaimed()&&!sleep_touchBlocked())++recalCount;
   else if(ev!=TOUCH_NONE)ui_touch(ev,ex,ey);
   ui_tick(now);
+  testFirstZero=0;
 }
 // A finger on the glass for `dur` ms, polled every `period` ms from `phase` ms after it lands.
 static void pressRun(uint32_t dur,uint32_t period,uint32_t phase,const Path& path){
@@ -1136,7 +1142,7 @@ static void headphoneLimitRegression(const char* preview){
 int classic_offset();void classic_paintViewport(int);void classic_invalidateViewport();int classic_cacheSlots();
 static void viewportRegression(){
   namespace L=cydclassic::layout;
-  check(classic_cacheSlots()==L::MaxRows+1,"one extra partial-row cache slot");
+  check(classic_cacheSlots()==L::MaxRows+5,"partial-row slot and four lookahead slots");
   for(unsigned rotation:{0u,1u}){
     g_settings.rotation=rotation;tft.setRotation(rotation);toSongs();tap(80,56);tap(20,20);
     const int w=tft.width(),h=tft.height(),capacity=L::rows(h);
@@ -1177,7 +1183,12 @@ static void dragRegression(){
     SCREEN_CLASSIC.tick(++clockNow);tft.resetDrawCounts();
     SCREEN_CLASSIC.press(PRESS_MOVE,60,y-19);SCREEN_CLASSIC.press(PRESS_MOVE,60,y-32);
     check(classic_offset()==25&&tft.fillCalls==0,"moves coalesce without painting");
-    SCREEN_CLASSIC.tick(++clockNow);check(classic_thumbVisible()&&searchIO()==io,"drag frame shows thumb without catalogue IO");
+    SCREEN_CLASSIC.tick(++clockNow);
+    check(tft.fillCalls==0,"moving paints are capped at 33 ms");
+    tft.labels.clear();
+    SCREEN_CLASSIC.tick(clockNow+=33);
+    check(classic_thumbVisible()&&searchIO()==io&&tft.rowFillCalls==0,"moving paint skips row backgrounds and catalogue IO");
+    check(label(rotation==0?"Song 06":"Song 04"),"warm lookahead titles enter with the drag");
     snapshot(rotation==0?"cy98b-drag-portrait.svg":"cy98b-drag-landscape.svg");
     SCREEN_CLASSIC.press(PRESS_MOVE,60,y-10000);SCREEN_CLASSIC.tick(++clockNow);
     check(classic_offset()==maxOffset&&searchIO()==io,"drag hard clamps without reads");
@@ -1213,12 +1224,16 @@ static void flingRegression(){
     check(classic_flingActive(),"release starts fling");return clockNow;
   };
   const auto initial=classic_scrollStats();const int before=calls;
-  uint32_t start=flick();const auto io=searchIO();int last=classic_offset();
+  uint32_t start=flick();int last=classic_offset();
   for(int dt:{20,40,60,80,100,120}){
-    const auto frames=classic_scrollStats().frames;SCREEN_CLASSIC.tick(clockNow=start+dt);
-    check(classic_offset()>=last&&classic_scrollStats().frames<=frames+1,"one monotonic viewport frame per pass");last=classic_offset();
+    const auto frames=classic_scrollStats().frames;
+    const auto io=searchIO();
+    SCREEN_CLASSIC.tick(clockNow=start+dt);
+    check(classic_offset()>=last&&classic_scrollStats().frames<=frames+1,"one monotonic viewport frame per pass");
+    if(classic_scrollStats().frames!=frames)check(searchIO()==io,"motion paint performs no SD reads");
+    last=classic_offset();
   }
-  check(searchIO()==io&&classic_thumbVisible(),"fast fling has no SD reads and keeps thumb");
+  check(classic_thumbVisible(),"fling keeps thumb");
   const int dense=classic_offset();SCREEN_CLASSIC.tick(clockNow=start+1500);const int final=classic_offset();
   check(!classic_flingActive()&&calls==before,"fling completes without selection");
   start=flick();SCREEN_CLASSIC.tick(clockNow=start+120);
@@ -1288,7 +1303,22 @@ static void lateReleaseRegression(){
     check(calls==before,"late flick never selects");
     useTracker=false;clockNow=now;toSongs();
   }
-  std::cout<<"PASS CY-103 late release: 60/100 Hz, 60/90 ms grace, true rest suppresses fling\n";
+  toSongs();tracker=cydtouch::PressTracker{};useTracker=true;
+  const int before=calls;
+  uint32_t now=clockNow+300;
+  for(int i=0;i<=6;++i){SCREEN_CLASSIC.tick(clockNow=now);loopStep(now,true,60,190-i*8);now+=12;}
+  SCREEN_CLASSIC.tick(clockNow=now);loopStep(now,false,0,0);
+  check(!classic_flingActive(),"first zero keeps a confirmed drag live");
+  const uint32_t firstZero=now;
+  now+=8;SCREEN_CLASSIC.tick(clockNow=now);loopStep(now,false,0,0,firstZero);
+  check(classic_touchMode()==TouchListMode::Coast&&classic_scrollStats().releaseGapMs==20,
+        "confirmed lift starts coasting before ordinary grace");
+  now+=10;SCREEN_CLASSIC.tick(clockNow=now);loopStep(now,true,60,130);
+  check(!classic_flingActive()&&classic_touchMode()==TouchListMode::Drag,"immediate retouch catches the coast");
+  now+=60;SCREEN_CLASSIC.tick(clockNow=now);loopStep(now,false,0,0);
+  check(calls==before,"confirmed lift and coast catch never select a track");
+  useTracker=false;toSongs();
+  std::cout<<"PASS CY-103 late release, confirmed lift and safe coast catch\n";
 }
 // CY-108: raw vs filtered routing, coast start/stop, tap-to-stop, end clamp and the `scroll` knobs, through the real
 // PressTracker -> ui_touch/syncPress -> Classic path.
@@ -1340,12 +1370,14 @@ static void flickWireRegression(){
   const uint32_t t0=now;now=t0+100;SCREEN_CLASSIC.tick(clockNow=now);
   const int grabbed=classic_offset();check(grabbed>released,"coast advances from the release time");
   const uint64_t io=searchIO();
+  testBufferLow=true;
   tracker=cydtouch::PressTracker{};
   sample(true,150);
   check(!classic_flingActive()&&classic_offset()==grabbed&&classic_scrollStats().aborted&&classic_scrollStats().remRows>0.5f,"touch-down stops the coast where it is and records the remaining rows");
   now+=16;sample(true,142);
   check(classic_offset()>grabbed&&calls==before,"the stopping touch is a drag, never a tap");
-  check(searchIO()==io,"no SD reads while coasting, stopping and dragging (rows load after release)");
+  check(searchIO()==io,"low audio ring defers title lookahead during drag");
+  testBufferLow=false;
   const uint32_t seen2=now;now=seen2+60;sample(false,0);
   {const auto& log=classic_scrollLog();check(log.size()>=2&&log[log.size()-2].find("aborted 1")!=std::string::npos&&log[log.size()-2].find("remRows 0.0")==std::string::npos,"aborted coast line goes out at the next release, with its remaining rows");}
   settle(60);

@@ -9,6 +9,27 @@
 namespace cst820 {
 enum class State : uint8_t { Invalid, Released, Contact };
 struct Report { State state = State::Invalid; uint16_t x = 0, y = 0; uint8_t gesture = 0; };
+
+// Only a run of valid zero-contact reports can shorten list-release grace.
+class ListLift {
+ public:
+  bool update(State state, uint32_t now) {
+    if (state != State::Released) {
+      pending_ = false;
+      return false;
+    }
+    if (!pending_) {
+      firstMs_ = now;
+      pending_ = true;
+    }
+    return now - firstMs_ >= 8;
+  }
+  uint32_t firstMs() const { return firstMs_; }
+
+ private:
+  uint32_t firstMs_ = 0;
+  bool pending_ = false;
+};
 inline Report decode(const uint8_t* bytes, size_t length) {
   Report r;
   if (!bytes || length != 6) return r;

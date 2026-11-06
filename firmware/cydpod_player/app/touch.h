@@ -29,7 +29,8 @@ struct TouchCal {
 };
 
 void       touch_begin();
-TouchEvent touch_poll(int* x = nullptr, int* y = nullptr);
+TouchEvent touch_poll(int* x = nullptr, int* y = nullptr, TouchListMode mode = TouchListMode::Normal);
+bool       touch_confirmedLift(uint32_t& firstZeroMs); // most recent completed press
 bool       touch_isDown();
 uint32_t   touch_heldMs();
 uint32_t   touch_lastSeenMs(); // sample clock, including the press just released

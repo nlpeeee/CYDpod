@@ -10,6 +10,8 @@
 
 #include <stdint.h>
 
+enum class TouchListMode : uint8_t { Normal, Drag, Coast };
+
 enum TouchEvent : uint8_t {
   TOUCH_NONE = 0,
   TOUCH_TAP,           // < 600 ms
@@ -42,7 +44,8 @@ class PressTracker {
 
   // One call per poll. sx/sy are screen coordinates and only read when `valid`.
   // On the call that ends a press the landing point goes to *ex/*ey.
-  TouchEvent update(uint32_t now, bool valid, int sx, int sy, int* ex = nullptr, int* ey = nullptr) {
+  TouchEvent update(uint32_t now, bool valid, int sx, int sy, int* ex = nullptr, int* ey = nullptr,
+                    bool confirmedLift = false, bool catchCoast = false) {
     Stats& st = stats();
     if (polled_ && now - lastPoll_ > st.maxGapMs) st.maxGapMs = now - lastPoll_;
     polled_ = true;
@@ -52,11 +55,12 @@ class PressTracker {
       lastSeen_ = now;
       rawX_ = sx; rawY_ = sy;               // the sample as the panel reported it (before the glide filter below)
       if (!down_) {
-        if (now - lastUpAt_ < TOUCH_DEBOUNCE_MS) {
+        if (!(catchCoast && confirmedUp_) && now - lastUpAt_ < TOUCH_DEBOUNCE_MS) {
           if (!rearmCounted_) { rearmCounted_ = true; ++st.rearm; }
           return TOUCH_NONE;
         }
         down_ = true;
+        confirmedUp_ = false;
         dropout_ = false;
         downAt_ = now;
         landX_ = liveX_ = sx;               // where the press LANDED
@@ -73,9 +77,10 @@ class PressTracker {
 
     rearmCounted_ = false;
     if (!down_) return TOUCH_NONE;
-    if (now - lastSeen_ < ReleaseGraceMs) { dropout_ = true; return TOUCH_NONE; }
+    if (!confirmedLift && now - lastSeen_ < ReleaseGraceMs) { dropout_ = true; return TOUCH_NONE; }
 
     down_ = false;
+    confirmedUp_ = confirmedLift;
     lastUpAt_ = now;
     const uint32_t held = lastSeen_ - downAt_;       // may be 0: still a press
     if (ex) *ex = landX_;
@@ -94,6 +99,7 @@ class PressTracker {
 
  private:
   bool     down_ = false, dropout_ = false, polled_ = false, rearmCounted_ = false;
+  bool confirmedUp_ = false;
   uint32_t downAt_ = 0, lastSeen_ = 0, lastUpAt_ = 0, lastPoll_ = 0;
   int      landX_ = 0, landY_ = 0, liveX_ = 0, liveY_ = 0, rawX_ = 0, rawY_ = 0;
 };

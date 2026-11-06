@@ -49,7 +49,10 @@ float scrollGain=1.0f;bool scrollCfgDirty=false;
 cydscroll::Tracker listTracker(scrollCfg);
 cydscroll::Coast listCoast(scrollCfg);
 ClassicScrollStats scrollStats{};
-bool flingActive=false,claimPending=false,scrollLinePending=false;
+bool flingActive=false,claimPending=false;
+ClassicScrollStats scrollQueue[2];
+uint8_t scrollRead=0,scrollCount=0;
+uint32_t scrollDropped=0;
 uint32_t claimAt=0,flingUnderruns=0,thumbUntil=0;
 int32_t coastStartPx=0,coastLastPx=0;float coastPlannedRows=0;
 #ifdef CYDPOD_CATALOG_HOST
@@ -60,23 +63,45 @@ std::vector<std::string> hostScrollLog;  // every release line printed (host tes
 struct ScrollDiag{
   uint16_t id=0,resets=0,pollGapMax=0,changedGapMax=0;
   uint32_t lastPoll=0,lastChange=0,runStart=0,restMs=0;
+  uint32_t lastPollDone=0,lastFrameDone=0,releasedAt=0;
+  uint32_t pollGaps=0,pollOver50=0,frameGaps=0,frameOver50=0,titleRows=0,titleMisses=0;
+  int32_t lastFrameOffset=0,coastPaintMs=-1;
+  bool drewMotion=false;
   int downRaw=0,lastRaw=0,runRaw=0,restRef=0,downFilt=0,lastFilt=0,ext=0;int8_t dir=0;  // runRaw: where the current run started; ext: its furthest point
 } diag;
 void applyScrollCfg(){listTracker=cydscroll::Tracker(scrollCfg);listCoast=cydscroll::Coast(scrollCfg);scrollCfgDirty=false;}
-// One line per release, printed once the coast has ended (or at once when there is no coast), never while a finger is down.
-void printScrollLine(){
-  if(!scrollLinePending)return;
-  scrollLinePending=false;
-  const ClassicScrollStats& s=scrollStats;char line[480];
+// Snapshot the release before a stopping touch starts the next gesture.
+void queueScrollLine(){
+  scrollStats.pollGaps=diag.pollGaps;scrollStats.pollOver50=diag.pollOver50;
+  scrollStats.frameGaps=diag.frameGaps;scrollStats.frameOver50=diag.frameOver50;
+  scrollStats.titleRows=diag.titleRows;scrollStats.titleMisses=diag.titleMisses;
+  scrollStats.coastPaintMs=diag.coastPaintMs;
+  if(scrollCount==2){++scrollDropped;return;}
+  scrollQueue[(scrollRead+scrollCount)%2]=scrollStats;
+  ++scrollCount;
+}
+void printScrollLine(const ClassicScrollStats& s){
+  char line[608];
   snprintf(line,sizeof(line),"stat: scroll id %u rawDy %d filtDy %d pollGapMax %u changedGapMax %u resets %u n %u spanMs %u vEst %.0f reject %s stillMs %u coastRows %.1f remRows %.1f aborted %u "
-    "frames %lu lastMs %lu maxMs %lu claimToPaintMs %lu flings %lu underruns %lu releaseV %.1f releaseGapMs %lu releasePauseMs %lu releaseSamples %lu",
+    "frames %lu lastMs %lu maxMs %lu claimToPaintMs %lu flings %lu underruns %lu releaseV %.1f releaseGapMs %lu releasePauseMs %lu releaseSamples %lu "
+    "pollGaps %lu pollOver50 %lu frameGaps %lu frameOver50 %lu coastPaintMs %ld titleRows %lu titleMisses %lu dropped %lu",
     s.id,s.rawDy,s.filtDy,s.pollGapMax,s.changedGapMax,s.resets,s.n,s.spanMs,double(s.vEst),s.reject,s.stillMs,double(s.coastRows),double(s.remRows),unsigned(s.aborted),
     (unsigned long)s.frames,(unsigned long)s.lastFrameMs,(unsigned long)s.maxFrameMs,(unsigned long)s.claimToPaintMs,(unsigned long)s.flings,(unsigned long)s.underruns,
-    double(s.releaseVelocity),(unsigned long)s.releaseGapMs,(unsigned long)s.releasePauseMs,(unsigned long)s.releaseSamples);
+    double(s.releaseVelocity),(unsigned long)s.releaseGapMs,(unsigned long)s.releasePauseMs,(unsigned long)s.releaseSamples,
+    (unsigned long)s.pollGaps,(unsigned long)s.pollOver50,(unsigned long)s.frameGaps,(unsigned long)s.frameOver50,
+    (long)s.coastPaintMs,(unsigned long)s.titleRows,(unsigned long)s.titleMisses,(unsigned long)scrollDropped);
   Serial.println(line);
+  scrollDropped=0;
 #ifdef CYDPOD_CATALOG_HOST
   hostScrollLine=line;hostScrollLog.push_back(line);
 #endif
+}
+void flushScrollLines(){
+  while(scrollCount){
+    printScrollLine(scrollQueue[scrollRead]);
+    scrollRead=(scrollRead+1)%2;
+    --scrollCount;
+  }
 }
 // The coast ended (finished, stopped by a touch-down, or the screen changed): complete the release record.
 void finishFling(uint32_t now,bool byDown=false){
@@ -84,13 +109,13 @@ void finishFling(uint32_t now,bool byDown=false){
   flingActive=false;scrollStats.underruns=audio_underruns()-flingUnderruns;
   const float rows=fabsf(float(coastLastPx-coastStartPx))/float(L::RowH);
   scrollStats.remRows=byDown&&coastPlannedRows>rows?coastPlannedRows-rows:0;scrollStats.aborted=byDown;
-  scrollLinePending=true;
+  queueScrollLine();
   thumbUntil=now+L::ThumbHoldMs;
 }
 // A list touch landed: start the per-gesture diagnostics.
 void diagDown(uint32_t ms,int y){
   const uint16_t id=uint16_t(diag.id+1);diag=ScrollDiag{};diag.id=id;
-  diag.lastPoll=diag.lastChange=diag.runStart=diag.restMs=ms;
+  diag.lastPoll=diag.lastChange=diag.runStart=diag.restMs=diag.lastPollDone=ms;
   diag.downRaw=diag.lastRaw=diag.runRaw=diag.restRef=diag.downFilt=diag.lastFilt=diag.ext=y;
 }
 // One touch sample for the list: raw y (claim and velocity) and filtered y (painting). Returns true once the touch is a drag.
@@ -128,10 +153,15 @@ const char* rejectReason(uint32_t releasedAt,uint32_t restNow){
 bool listDragging=false,listPress=false,thumbDrag=false,viewportPending=false,thumbVisible=false;
 int32_t dragOffset=0;int thumbGrab=0;
 
-constexpr int CacheSlots=L::MaxRows+1;
+constexpr int LookaheadRows=4, CacheSlots=L::MaxRows+1+LookaheadRows;
+static_assert(LookaheadRows*sizeof(Row)<=1024,"List lookahead RAM budget");
 Row cache[CacheSlots];
 String rowUtf8; // Reserved once; the legacy UTF-8 strip loader accepts String.
-static_assert(sizeof(cache)<=6*sizeof(Row)+512,"Viewport cache RAM budget");
+constexpr uint32_t MotionFrameMs=33;
+bool motionPainted=false, motionFetched=false;
+int32_t motionOffset=0;
+int motionDirection=0;
+uint32_t motionPaintAt=0;
 cydlib::Record playingInfo{};
 uint8_t dirty=0;
 int count=0,ready=-1,highlight=-1,dimmed=-1;
@@ -214,6 +244,13 @@ int topRow(){return page().offsetPx/L::RowH;}
 int visibleRows(){return rows()+(page().offsetPx%L::RowH?1:0);}
 Rect rowRect(int i){Rect r=L::row<Rect>(tft.width(),i);r.y-=page().offsetPx%L::RowH;return r;}
 Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
+bool rowReady(int absolute){const Row& r=cachedRow(absolute);return r.absolute==absolute&&r.valid;}
+bool musicList(){
+  switch(page().mode){
+    case Mode::Catalog:case Mode::Playlists:case Mode::Sources:case Mode::SourceSongs:case Mode::Search:return true;
+    default:return false;
+  }
+}
 
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
@@ -395,9 +432,9 @@ void paintRow(int i,bool pressed){
 // Cache-only seam for part 2: no row loading or catalogue reads here.
 void paintViewport(int32_t offsetPx){
   const uint32_t start=millis();
-  if(claimPending){scrollStats.claimToPaintMs=inputNow()-claimAt;claimPending=false;}
   if(page().mode==Mode::Search)searchSession.resumePx=-1;
   page().offsetPx=cydclassic::clampOffset(offsetPx,count,rows());
+  motionOffset=page().offsetPx;
   dirty=0;
   for(int i=0;i<visibleRows();++i){
     const int absolute=topRow()+i;const Row& r=cachedRow(absolute);
@@ -406,6 +443,54 @@ void paintViewport(int32_t offsetPx){
   }
   ++scrollStats.frames;scrollStats.lastFrameMs=millis()-start;
   scrollStats.maxFrameMs=max(scrollStats.maxFrameMs,scrollStats.lastFrameMs);
+  if(claimPending){scrollStats.claimToPaintMs=inputNow()-claimAt;claimPending=false;}
+}
+
+// Moving rows paint only their centre bands. Absolute clipping also covers
+// the partial first and last rows in both orientations.
+void paintMovingViewport(uint32_t now){
+  constexpr int BandH=16;
+  const Palette& p=theme();
+  const int w=tft.width()-L::RowInset,h=rows()*L::RowH;
+  const int textW=w-2*L::TextMargin;
+  const int32_t offset=page().offsetPx;
+  if(page().mode==Mode::Search)searchSession.resumePx=-1;
+  const uint32_t start=millis();
+  tft.setViewport(0,L::HeaderH,w,h,false);
+  if(!motionPainted){
+    tft.fillRect(0,L::HeaderH,w,h,p.bg);
+    titles_release();
+  }else{
+    const int y=L::HeaderH+L::RowH/2-motionOffset%L::RowH-BandH/2;
+    const int oldRows=rows()+(motionOffset%L::RowH?1:0);
+    for(int i=0;i<oldRows;++i)tft.fillRect(L::TextMargin,y+i*L::RowH,textW,BandH,p.bg);
+  }
+  const bool ordinary=!thumbDrag&&fabsf(flingActive?listCoast.velocity(now):listTracker.velocity())<=20*L::RowH;
+  for(int i=0;i<visibleRows();++i){
+    const int at=topRow()+i;
+    if(at>=count)break;
+    const Rect box=rowRect(i);
+    const Row& r=cachedRow(at);
+    const bool loaded=r.absolute==at&&r.valid&&r.label[0];
+    if(ordinary&&box.y>=L::HeaderH&&box.y+box.h<=L::HeaderH+h){
+      ++diag.titleRows;
+      if(!loaded||r.disabled)++diag.titleMisses;
+    }
+    if(loaded)rowText(r.label,box.cy(),textW,r.disabled?p.disabled:p.text,p.bg);
+    else tft.fillRoundRect(L::TextMargin,box.cy()-3,w/2,6,2,p.outlineSubtle);
+  }
+  tft.resetViewport();
+  const uint32_t done=inputNow();
+  if(!diag.drewMotion||offset!=diag.lastFrameOffset){
+    if(diag.drewMotion){++diag.frameGaps;if(done-diag.lastFrameDone>50)++diag.frameOver50;}
+    diag.drewMotion=true;diag.lastFrameDone=done;diag.lastFrameOffset=offset;
+  }
+  if(flingActive&&offset!=coastStartPx&&diag.coastPaintMs<0)
+    diag.coastPaintMs=int32_t(done-diag.releasedAt);
+  if(claimPending){scrollStats.claimToPaintMs=done-claimAt;claimPending=false;}
+  ++scrollStats.frames;scrollStats.lastFrameMs=millis()-start;
+  scrollStats.maxFrameMs=max(scrollStats.maxFrameMs,scrollStats.lastFrameMs);
+  motionOffset=offset;motionPaintAt=now;motionPainted=true;motionFetched=false;
 }
 // Evaluate once at wall-clock time. The coast clamps at the list ends by itself and finishes there.
 void advanceFling(uint32_t now){
@@ -426,6 +511,7 @@ void paintThumb(){
 void invalidate(){
   page().offsetPx=cydclassic::clampOffset(page().offsetPx,count,rows());dirty=uint8_t((1u<<visibleRows())-1);
   for(Row& r:cache){r.valid=false;r.absolute=-1;}
+  motionPainted=motionFetched=false;motionOffset=page().offsetPx;motionDirection=0;
   paintThumb();
 }
 void setRow(Row& r,const char* label,const String& detail=String(),bool navigate=false,bool disabled=false){
@@ -446,9 +532,9 @@ int rowCount(){
     default:return 0;
   }
 }
-void loadRow(int i){
-  const int at=topRow()+i;Row& r=cachedRow(at);r=Row{};r.absolute=at;
-  if(at>=count){r.valid=true;paintRow(i,false);return;}
+void fetchRow(int at){
+  Row& r=cachedRow(at);r=Row{};r.absolute=at;
+  if(at>=count){r.valid=true;return;}
   switch(page().mode){
     case Mode::Playlists:
       if(at<2)setRow(r,at?"Folders":"Favourites",String(),true);
@@ -482,7 +568,42 @@ void loadRow(int i){
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
     default:break;
   }
+}
+void loadRow(int i){
+  const int at=topRow()+i;
+  if(!rowReady(at))fetchRow(at);
   paintRow(i,highlight==i);
+}
+
+// The ring of cache keys holds the visible rows and four neighbours without
+// collision, even with a partial row at each edge. Fetch one missing key.
+int fetchNeighbour(int direction){
+  const int first=topRow(),end=min(count,first+visibleRows());
+  for(int at=first;at<end;++at)if(!rowReady(at)){fetchRow(at);return at;}
+  const int before=direction>0?1:direction<0?3:2;
+  for(int step=1;step<=3;++step){
+    for(int side=0;side<2;++side){
+      const bool forward=direction>=0?side==0:side==1;
+      if(step>(forward?LookaheadRows-before:before))continue;
+      const int at=forward?end+step-1:first-step;
+      if(at>=0&&at<count&&!rowReady(at)){fetchRow(at);return at;}
+    }
+  }
+  return -1;
+}
+void tickMotion(uint32_t now){
+  const int32_t offset=page().offsetPx;
+  if(offset!=motionOffset)motionDirection=offset>motionOffset?1:-1;
+  if(viewportPending&&(!motionPainted||now-motionPaintAt>=MotionFrameMs)){
+    viewportPending=false;
+    paintMovingViewport(now);paintThumb();
+  }else if(!motionFetched&&!audio_bufferLow()){
+    const int at=fetchNeighbour(motionDirection);
+    if(at>=0){
+      motionFetched=true;
+      if(at>=topRow()&&at<topRow()+visibleRows())viewportPending=true;
+    }
+  }
 }
 void message(const char* value);
 void external(ScreenId id){externalReturn=true;ui_go(id);}
@@ -666,6 +787,7 @@ void enter(){
 #endif
   finishFling(inputNow());claimPending=false;
   seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
+  motionPainted=motionFetched=false;motionOffset=page().offsetPx;motionDirection=0;
   if(page().mode==Mode::SourceSongs){
     if(!previewMatches(page().source)){
       tft.fillScreen(theme().bg);header();centred("Loading...",100,theme().dim,theme().bg);
@@ -693,7 +815,8 @@ void enter(){
   else {invalidate();if(!count){centred(storage_readOnly()?"SD card is read-only":storage_catalogStale()?"Library unavailable":"No entries",100,theme().dim,theme().bg);}}
 }
 void leave(){
-  finishFling(inputNow());claimPending=false;printScrollLine();
+  finishFling(inputNow());claimPending=false;
+  flushScrollLines();
   seekPreview=false;armVolumeSave();flushSettings();dirty=0;titles_release();
   // ui_go calls leave after a navigation push/pop: current() is the destination.
   // Retain only for this source page or its Player (including mini-player return).
@@ -716,9 +839,17 @@ void tick(uint32_t now){
   if(previewKey.source>=0&&(previewKey.crc!=storage_libraryCrc()||previewKey.tracks!=storage_trackCount()))freePreview();
   feedListSample();
   advanceFling(now);
+  if(musicList()&&((listPress&&listDragging)||thumbDrag||flingActive)){
+    tickMotion(now);
+    return;
+  }
+  if(motionPainted){
+    motionPainted=false;viewportPending=false;motionOffset=page().offsetPx;
+    dirty=uint8_t((1u<<visibleRows())-1);
+    paintThumb();
+  }
   const bool painted=viewportPending;
   if(viewportPending){viewportPending=false;paintViewport(page().offsetPx);paintThumb();}
-  // Drag frames are cache-only, including Search and UTF-8 titles. Load after release.
   if(listPress||thumbDrag)return;
   if(flingActive){
     // Fast motion is cache-only. At <200 px/s fill at most one missing row on
@@ -729,7 +860,7 @@ void tick(uint32_t now){
     return;
   }
   if(scrollCfgDirty)applyScrollCfg();
-  printScrollLine();
+  if(!touch_isDown())flushScrollLines();
   if(painted)return;
   if(thumbVisible&&int32_t(now-thumbUntil)>=0){thumbVisible=false;paintThumb();}
   if(savePending&&!(touch_isDown()&&gesture.target==Slider)&&int32_t(now-saveAt)>=0)flushSettings();
@@ -775,7 +906,7 @@ void tick(uint32_t now){
   // A single row per loop bounds SD and drawing work; audio/Bluetooth run between rows.
   if(dirty&&(!audio_bufferLow()||now-lastPaint>=120)){
     for(int i=0;i<visibleRows();++i)if(dirty&(1u<<i)){dirty&=~(1u<<i);loadRow(i);lastPaint=now;break;}
-  }
+  }else if(!dirty&&musicList()&&!audio_bufferLow())fetchNeighbour(0);
 }
 void sourceMenu(SourceKind kind,const char* label){show(Mode::Sources,label);page().sourceKind=kind;count=rowCount();invalidate();footer();}
 void cycleShuffle(){audio_setShuffle(!audio_shuffle());g_settings.shuffle=audio_shuffle();settings_save();invalidate();}
@@ -924,8 +1055,8 @@ bool swipeable(){return browse()&&navigation.depth>1&&gesture.target!=Slider&&ge
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
-    advanceFling(inputNow());
     const bool stopping=flingActive;
+    advanceFling(inputNow());
     ready=-1;dimmed=-1;gesture.down(x,y,topRow(),hit);
     listPress=browse()&&page().mode!=Mode::Home&&hit>=0&&hit<KeyBase&&count>rows();
     listDragging=false;thumbDrag=hit==Thumb;dragOffset=page().offsetPx;
@@ -997,8 +1128,10 @@ bool press(PressPhase phase,int x,int y){
         // lift minus the grace (sparse polls see a long rest for only a poll or two).
         const uint32_t releasedAt=touch_lastSeenMs(),now=inputNow();
         const uint32_t late=int32_t(now-releasedAt)>0?now-releasedAt:0;
-        const uint32_t restNow=releasedAt+(late>cydtouch::PressTracker::ReleaseGraceMs?late-cydtouch::PressTracker::ReleaseGraceMs:0);
-        printScrollLine();  // the previous release's line goes out before its fields are overwritten
+        uint32_t restNow=releasedAt+(late>cydtouch::PressTracker::ReleaseGraceMs?late-cydtouch::PressTracker::ReleaseGraceMs:0);
+        uint32_t firstZero=0;
+        if(touch_confirmedLift(firstZero))restNow=firstZero;
+        diag.releasedAt=releasedAt;
         const cydscroll::FlickEstimator& est=listTracker.samples();
         scrollStats.releaseGapMs=late;
         scrollStats.releasePauseMs=releasedAt-est.lastMs();
@@ -1017,8 +1150,9 @@ bool press(PressPhase phase,int x,int y){
             flingActive=true;++s.flings;flingUnderruns=audio_underruns();
             coastStartPx=coastLastPx=offset;coastPlannedRows=fabsf(listCoast.finalY()-float(offset))/float(L::RowH);
             s.coastRows=coastPlannedRows;s.reject="none";
-          }else{s.reject=rejectReason(releasedAt,restNow);scrollLinePending=true;}
+          }else{s.reject=rejectReason(releasedAt,restNow);}
           scrollStats.releaseVelocity=listTracker.releaseVelocity();
+          if(!flingActive)queueScrollLine();
         }
       }
       listPress=thumbDrag=false;
@@ -1076,7 +1210,19 @@ void classic_home(){searchSession.resumePx=-1;miniReturnDepth=0;flushSettings();
 // Back from a page outside Classic (the Bluetooth page): the page it was opened from when Settings opened it, otherwise Now Playing.
 ClassicScrollStats classic_scrollStats(){return scrollStats;}
 // Print the newest release line now (normally it goes out by itself when the list is idle).
-void classic_logScrollStats(){if(scrollStats.id)scrollLinePending=true;printScrollLine();}
+void classic_logScrollStats(){if(scrollStats.id)printScrollLine(scrollStats);}
+TouchListMode classic_touchMode(){
+  if(!musicList())return TouchListMode::Normal;
+  if(listPress&&listDragging)return TouchListMode::Drag;
+  if(flingActive)return TouchListMode::Coast;
+  return TouchListMode::Normal;
+}
+void classic_touchPollComplete(uint32_t now){
+  if(!listPress&&!flingActive)return;
+  ++diag.pollGaps;
+  if(now-diag.lastPollDone>50)++diag.pollOver50;
+  diag.lastPollDone=now;
+}
 // Serial debug line. Returns true when it was a `scroll` command; values change in RAM only.
 bool classic_command(const char* line){
   char out[128];bool changed=false;

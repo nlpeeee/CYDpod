@@ -307,7 +307,9 @@ void loop() {
   persistResume(now);
 
   int x = 0, y = 0;
-  const TouchEvent ev = touch_poll(&x, &y);
+  const bool classic = ui_current() == SCR_CLASSIC;
+  const TouchEvent ev = touch_poll(&x, &y, classic ? classic_touchMode() : TouchListMode::Normal);
+  if (classic) classic_touchPollComplete(millis());
   // A drag is routed like any other gesture -- ui_touch() swallows it -- even
   // when it ran long enough to read as the recalibrate hold.
   if (ev == TOUCH_RECALIBRATE && !ui_pressClaimed() && !sleep_touchBlocked()) {
@@ -317,11 +319,13 @@ void loop() {
     ui_touch(ev, x, y);
   }
 
-  ui_tick(now);
+  ui_tick(millis());
 
   static uint32_t lastStat = 0;
-  cpu_stats_tick(now, now - lastStat >= 10000); // DIAG-CPU: reuse stat cadence
-  if (now - lastStat >= 10000) {
+  const bool report = now - lastStat >= 10000 && !touch_isDown() &&
+    (ui_current() != SCR_CLASSIC || classic_touchMode() == TouchListMode::Normal);
+  cpu_stats_tick(now, report);
+  if (report) {
     const uint32_t nextMaxMs = audio_takeMaxReadMs();
     const AudioDiagnosticWindow diag = audio_takeDiagnosticWindow();
 #ifdef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS

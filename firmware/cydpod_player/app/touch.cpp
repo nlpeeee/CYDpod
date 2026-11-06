@@ -112,7 +112,9 @@ void     touch_position(int& x, int& y) { tracker.landing(x, y); }
 void     touch_livePosition(int& x, int& y) { tracker.live(x, y); }
 bool     touch_rawPosition(int& x, int& y) { tracker.raw(x, y); return tracker.down(); }
 
-TouchEvent touch_poll(int* x, int* y) {
+bool touch_confirmedLift(uint32_t&) { return false; }
+
+TouchEvent touch_poll(int* x, int* y, TouchListMode) {
   const uint32_t now = millis();
   int rx, ry, z, sx = 0, sy = 0;
   const bool valid = touch_readRaw(rx, ry, z);

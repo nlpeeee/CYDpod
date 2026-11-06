@@ -3,6 +3,7 @@
 [CmdletBinding()]
 param([switch]$FlacLegacy, [switch]$LargePcmRing, [switch]$LightAudioDiagnostics, [switch]$SkipProbe, [switch]$SkipHostMedia,
     [switch]$IncludeStock, [switch]$IncludeDiagnostics, [switch]$ListJobs,
+    [ValidatePattern('^[a-z0-9]+(-[a-z0-9]+)*$')][string]$BuildLabel,
     [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
 $ErrorActionPreference = 'Stop'
 if ($FlacLegacy -and $LargePcmRing) { throw 'The large PCM ring trial requires compact FLAC.' }
@@ -110,6 +111,7 @@ try {
     if ($FlacLegacy) { $playbackImage += '-legacy' }
     if ($LightAudioDiagnostics) { $playbackImage += '-light' }
     if ($LargePcmRing) { $playbackImage += '-ring4096' }
+    if ($BuildLabel) { $playbackImage += "-$BuildLabel" }
     $jobs += @{ Name = 'cydpod-uploader'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYD_UPLOADER' }
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {

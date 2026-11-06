@@ -10,6 +10,9 @@
 // every transaction is bounded, with no retries within a poll.
 namespace {
 cydtouch::PressTracker tracker;
+cst820::ListLift listLift;
+bool lastLiftConfirmed = false;
+uint32_t lastLiftMs = 0;
 enum class Recovery : uint8_t { Ready, ResetLow, Settling };
 Recovery recovery = Recovery::Ready;
 uint32_t resetAt = 0, lastReset = 0, errors = 0, lastErrorLog = 0;
@@ -71,10 +74,9 @@ void touch_begin() {
                 CYD_TOUCH_SDA_PIN, CYD_TOUCH_SCL_PIN, CYD_TOUCH_RST_PIN, CYD_TOUCH_INT_PIN, awake);
 }
 
-bool touch_readRaw(int& rx, int& ry, int& z) {
-  rx = ry = z = 0;
+static cst820::Report readReport() {
   const uint32_t now = millis();
-  if (!ready(now)) return false;
+  if (!ready(now)) return {};
   uint8_t bytes[6];
   const uint32_t started = micros();
   Wire.beginTransmission(uint8_t(CYD_TOUCH_I2C_ADDRESS));
@@ -83,12 +85,17 @@ bool touch_readRaw(int& rx, int& ry, int& z) {
   const size_t count = status == 0 ? Wire.requestFrom(uint8_t(CYD_TOUCH_I2C_ADDRESS), sizeof(bytes), true) : 0;
   const uint32_t elapsed = micros() - started;
   if (elapsed > maxReadUs) maxReadUs = elapsed;
-  if (status != 0 || count != sizeof(bytes)) { failed(now); return false; }
+  if (status != 0 || count != sizeof(bytes)) { failed(now); return {}; }
   for (size_t i = 0; i < sizeof(bytes); ++i) bytes[i] = uint8_t(Wire.read());
   failures = 0;
-  const cst820::Report r = cst820::decode(bytes, sizeof(bytes));
-  if (r.state != cst820::State::Contact) return false;
-  rx = r.x; ry = r.y; z = 1; // pressure-equivalent valid flag, no calibration
+  return cst820::decode(bytes, sizeof(bytes));
+}
+
+bool touch_readRaw(int& rx, int& ry, int& z) {
+  rx = ry = z = 0;
+  const cst820::Report report = readReport();
+  if (report.state != cst820::State::Contact) return false;
+  rx = report.x; ry = report.y; z = 1;
   return true;
 }
 
@@ -102,17 +109,29 @@ void touch_nativePoint(long rx, long ry, int& px, int& py) { px = int(rx); py = 
 void touch_screenPoint(long rx, long ry, int& sx, int& sy) {
   cst820::screenPoint(int(rx), int(ry), tft.getRotation(), sx, sy);
 }
-TouchEvent touch_poll(int* x, int* y) {
+bool touch_confirmedLift(uint32_t& firstZeroMs) {
+  firstZeroMs = lastLiftMs;
+  return lastLiftConfirmed;
+}
+
+TouchEvent touch_poll(int* x, int* y, TouchListMode mode) {
+  const cst820::Report report = readReport();
   const uint32_t now = millis();
-  int rx, ry, z, sx = 0, sy = 0;
-  const bool down = touch_readRaw(rx, ry, z);
-  if (down) touch_screenPoint(rx, ry, sx, sy);
-  const TouchEvent ev = tracker.update(now, down, sx, sy, x, y);
+  int sx = 0, sy = 0;
+  const bool down = report.state == cst820::State::Contact;
+  if (down) touch_screenPoint(report.x, report.y, sx, sy);
+  const auto liftState = mode == TouchListMode::Drag ? report.state : cst820::State::Invalid;
+  const bool confirmed = listLift.update(liftState, now);
+  const TouchEvent ev = tracker.update(now, down, sx, sy, x, y, confirmed, mode == TouchListMode::Coast);
   if (ev != TOUCH_NONE) {
-    int lx, ly; tracker.landing(lx, ly);
-    Serial.printf("touch: CST820 release landing=%d,%d event=%u\n", lx, ly, unsigned(ev));
+    lastLiftConfirmed = confirmed;
+    lastLiftMs = listLift.firstMs();
+    if (mode == TouchListMode::Normal) {
+      int lx, ly; tracker.landing(lx, ly);
+      Serial.printf("touch: CST820 release landing=%d,%d event=%u\n", lx, ly, (unsigned)ev);
+    }
   }
-  if (now - lastStat >= 10000) {
+  if (mode == TouchListMode::Normal && !tracker.down() && now - lastStat >= 10000) {
     Serial.printf("stat: CST820 readMaxUs=%lu errors=%lu\n", (unsigned long)maxReadUs, (unsigned long)errors);
     maxReadUs = 0; lastStat = now;
   }

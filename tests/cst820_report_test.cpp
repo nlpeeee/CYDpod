@@ -64,6 +64,18 @@ int main() {
   assert(feed(tracker,1400,tap,6,1)==TOUCH_NONE);
   assert(feed(tracker,5400,tap,6,1)==TOUCH_NONE);
   assert(feed(tracker,5460,none,6,1)==TOUCH_RECALIBRATE); // classifier unchanged
+  // Only consecutive valid zero-contact reports count toward an early lift.
+  cst820::ListLift lift;
+  const auto empty = cst820::decode(releaseWrap,6).state;
+  assert(!lift.update(empty,200));
+  assert(!lift.update(cst820::State::Invalid,205));
+  assert(!lift.update(empty,210));
+  assert(!lift.update(empty,217));
+  assert(lift.update(empty,218) && lift.firstMs()==210);
+  assert(!lift.update(cst820::State::Contact,219));
+  assert(!lift.update(empty,220));
+  assert(lift.update(empty,228) && lift.firstMs()==220);
+  puts("PASS CST820 valid lift confirmation survives an intermittent bad report");
   // Driver translates RECAL to LONG; capacitive calibrate_run is a no-op too.
   puts("PASS CST820 real decode -> shared classifier: release wrap, zero/edge coordinates, all rotations, glitches/NACK, landing/live, long/recal");
 }

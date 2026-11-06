@@ -30,7 +30,8 @@ static const char* reportPhase="";
 // Progress and a 1 ms yield (idle task and watchdog feed) for the long loops. total<0: percent.
 static void report(int done,int total){if(reportFn)reportFn(reportPhase,done,total);}
 static void phase(const char* name){reportPhase=name;report(0,-1);}
-static void breathe(){delay(1);}
+void (*storage_bootTick)()=nullptr; // optional boot-only observer; null preserves existing behaviour
+static void breathe(){if(storage_bootTick)storage_bootTick();delay(1);}
 static bool readOnly=false;  // card mounted but a folder could not be created: never write (CT-07)
 static int skipped=0;  // files left out of the catalogue: path too long or over MaxTracks
 // Shared boot scratch, not a whole-library cache. Heap-allocated by storage_begin for the

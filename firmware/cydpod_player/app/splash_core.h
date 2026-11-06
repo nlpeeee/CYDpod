@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <string.h>
 #include "splash_logo.h"
 
 #ifndef pgm_read_byte
@@ -71,4 +72,59 @@ void render(Sink& s, int sw, int sh) {
   }
 }
 
+// Progress never touches the wordmark or the version label. Sink adds rect() and
+// text(text, centreX, topY, font); text uses the existing TFT fonts, size 1.
+constexpr uint16_t TRACK = rgb565(0xE0, 0xB4, 0x00);
+constexpr uint32_t FRAME_MS = 125, MINIMUM_MS = 600;
+struct ProgressLayout { int x, y, w; int textY() const { return y + 12; } };
+inline ProgressLayout progressLayout(int sw, int sh) {
+  const Layout logo = layout(sw, sh);
+  return {sw / 10, logo.y + logo.h + 14, sw - 2 * (sw / 10)};
+}
+inline int fillWidth(int width, int percent) { return (width * percent + 50) / 100; }
+struct Progress {
+  char phase[64]{}, detail[48]{};
+  uint32_t last = 0, reported = 0;
+  int percent = 0;
+  bool active = false, warning = false, dirty = true, painted = false, clearDetail = false;
+  template<class Sink>
+  void tick(Sink& s, int sw, int sh, uint32_t now) {
+    if (!active || (painted && uint32_t(now - last) < FRAME_MS)) return;
+    last = now; painted = true;
+    const auto l = progressLayout(sw, sh);
+    s.rect(l.x, l.y, l.w, 6, warning ? BACKGROUND : TRACK);
+    if (!warning) {
+      // A stale percentage (e.g. merge comparisons) has no measurable length.
+      if (percent < 0 || uint32_t(now - reported) >= 250) {
+        const int block = l.w / 6;
+        const int x = int((now / FRAME_MS) % 16) * (l.w - block) / 15;
+        s.rect(l.x + x, l.y, block, 6, INK);
+      } else s.rect(l.x, l.y, fillWidth(l.w, percent), 6, INK);
+    }
+    if (dirty) {
+      s.rect(l.x, l.textY(), l.w, 17, BACKGROUND);
+      if (clearDetail) s.rect(l.x, l.textY() + 24, l.w, 8, BACKGROUND);
+      s.text(phase, sw / 2, l.textY(), 2);
+      if (warning) {
+        s.rect(l.x, l.textY() + 16, l.w, 1, INK); // readable underline, no low-contrast warn colour
+        s.text(detail, sw / 2, l.textY() + 24, 1);
+      }
+      dirty = false; clearDetail = false;
+    }
+  }
+  template<class Sink>
+  void update(Sink& s, int sw, int sh, const char* text, int pc, uint32_t now,
+              bool warn = false, const char* extra = "") {
+    if (strcmp(phase, text) || strcmp(detail, extra) || warning != warn) dirty = true;
+    strncpy(phase, text, sizeof phase - 1); phase[sizeof phase - 1] = 0;
+    strncpy(detail, extra, sizeof detail - 1); detail[sizeof detail - 1] = 0;
+    percent = pc >= 0 && pc <= 100 ? pc : -1;
+    clearDetail = clearDetail || warning || warn;
+    reported = now; warning = warn; active = true;
+    // Warnings must appear before their blocking dwell/retry delay.
+    if (warn) painted = false;
+    tick(s, sw, sh, now);
+  }
+};
+static_assert(sizeof(Progress) < 160, "bounded boot state");
 }  // namespace splash

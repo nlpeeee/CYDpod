@@ -88,6 +88,10 @@ static bool bluetoothPlanned = false;
 // ---------------------------------------------------------------------------
 
 static void centreMessage(const char* line1, const char* line2, uint16_t colour) {
+#ifndef CYD_UPLOADER
+  (void)colour;
+  splash_warning(line1, line2);
+#else
   const Palette& p = theme();
   tft.fillScreen(p.bg);
   tft.setTextDatum(MC_DATUM);
@@ -97,6 +101,7 @@ static void centreMessage(const char* line1, const char* line2, uint16_t colour)
     tft.setTextColor(p.dim, p.bg);
     tft.drawString(line2, tft.width() / 2, tft.height() / 2 + 18, 2);
   }
+#endif
 }
 
 // Where to pick up. Normally the saved track and position; but if the last run
@@ -120,27 +125,16 @@ static void resumePoint(int& track, uint32_t& ms) {
 }
 
 static void libraryProgress(const char* phase, int done, int total) {
-  const Palette& p = theme();
-  static char shown[24];
-  if (strcmp(shown, phase)) {                    // new phase: new screen text
-    strlcpy(shown, phase, sizeof(shown));
-    centreMessage("CYDpod", phase, p.accent);
-  }
-  tft.fillRect(0, tft.height() / 2 + 34, tft.width(), 20, p.bg);
-  tft.setTextColor(p.dim, p.bg);
-  tft.setTextDatum(MC_DATUM);
-  tft.drawString(total > 0 ? String(done) + " / " + String(total) : total < 0 ? String(done) + "%" : String(done) + " songs",
-                 tft.width() / 2, tft.height() / 2 + 44, 2);
+  // total < 0 is the storage API's percentage; positive totals are counts.
+  const int percent = done < 0 ? -1 : total < 0 ? done :
+                      total > 0 ? int(int64_t(done) * 100 / total) : -1;
+  splash_progress(phase, percent);
 }
 
 static void titleProgress(int done, int total) {
-  const Palette& p = theme();
-  if (done == 1) centreMessage("CYD MP3", "Preparing song titles", p.accent);
-  tft.fillRect(0, tft.height() / 2 + 34, tft.width(), 20, p.bg);
-  tft.setTextColor(p.dim, p.bg);
-  tft.setTextDatum(MC_DATUM);
-  tft.drawString(String(done) + " / " + String(total), tft.width() / 2, tft.height() / 2 + 44, 2);
+  libraryProgress("Preparing song titles", done, total);
 }
+extern void (*storage_bootTick)();
 
 void setup() {
   Serial.begin(115200);
@@ -166,9 +160,17 @@ void setup() {
   display_bootGesture();                 // blind panel-controller switch, 8 s hold
 
   splash_show(FIRMWARE_LABEL);              // wordmark on yellow, follows the rotation applied in display_begin()
+#ifndef CYD_UPLOADER
+  splash_start();
+#endif
   display_setBacklight(g_settings.brightness);
 
-  if (!touch_hasStoredCalibration()) calibrate_run();
+  if (!touch_hasStoredCalibration()) {
+    calibrate_run();
+#ifndef CYD_UPLOADER
+    splash_show(FIRMWARE_LABEL); splash_start();
+#endif
+  }
 
 #ifdef CYD_UPLOADER
   // The uploader image: WiFi file manager only. Does not return.
@@ -184,6 +186,8 @@ void loop() {}
 
 #else  // the player image
 
+  storage_bootTick = splash_tick;
+  splash_progress("Checking library", -1);
   while (!storage_begin(libraryProgress)) {
     centreMessage("No SD card", "insert a FAT32 card with /music", theme().warn);
     delay(2000);
@@ -202,9 +206,11 @@ void loop() {}
   }
 
   // Folders and playlists first: their names are rendered with the titles.
+  splash_progress("Preparing playlists", -1);
   playlist_begin();
   Serial.printf("heap: after playlist %u\n", ESP.getFreeHeap());
   // Both need RAM only available before Bluetooth starts: see the header.
+  splash_progress("Preparing song titles", -1);
   titles_prepareAll(titleProgress);
   Serial.printf("heap before audio + bt: %u  largest %u\n",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -213,11 +219,12 @@ void loop() {}
   int track;
   uint32_t ms;
   resumePoint(track, ms);
+  splash_progress("Starting audio", -1);
   audio_begin(track, ms, g_settings.volume, g_settings.shuffle, g_settings.repeat);
   playlist_restore(track);
   audio_start();
   const uint32_t audioWaitAt = millis();
-  while (!audio_startupComplete() && millis() - audioWaitAt < 5000) delay(10);
+  while (!audio_startupComplete() && millis() - audioWaitAt < 5000) { splash_tick(); delay(10); }
   Serial.printf("heap: after audio startup %u largest %u ready %d\n",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap(), audio_startupComplete());
   if (bluetoothPlanned) {
@@ -236,6 +243,8 @@ void loop() {}
                 ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
   const bool needSpeaker = bluetoothStarted && g_settings.outRoute == OUT_BT &&
                            (bt_pairing() || bt_speakerName().isEmpty());
+  storage_bootTick = nullptr;
+  splash_finish();
   classic_home();
   ui_go(needSpeaker ? SCR_BLUETOOTH : SCR_CLASSIC);
 }

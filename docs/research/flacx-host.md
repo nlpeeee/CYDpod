@@ -16,8 +16,7 @@ copies <=1152 frames, trims total and supports overlap.
 |History (32 int32)|128|
 |Coefficients (32 int16)|64|
 |17-bit side plane|512|
-|Reader/frame/CRC counters|88|
-|Reserved bookkeeping/seek allowance|528|
+|Reader/seek/CRC storage, including reserved allowance|616|
 |**sizeof(state), caller-owned input excluded**|**1320**|
 |Caller PCM block|16384|
 |**Combined, compile-time asserted**|**19752**|

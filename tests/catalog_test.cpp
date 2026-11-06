@@ -226,12 +226,14 @@ int main(){try{
    hostReadOnly=true;check(playlist_toggleFavourite(currentTrack)&&playlist_favouriteFailed()&&playlist_isFavourite(currentTrack),"failed favourite removal preserves RAM and old file");hostReadOnly=false;
    check(!playlist_toggleFavourite(currentTrack)&&!playlist_favouriteFailed()&&!playlist_isFavourite(currentTrack),"favourite removal committed");
   }
+  // CY-116A2 stages with a fixed 256-ID stack window and SD file, not an N-ID
+  // heap arena. At the 10,240 B free-heap margin, small/fragmented heaps must
+  // still admit catalogue playback; catalog_canAllocate guards remaining heap users.
+  hostFreeHeap=10240;check(playlist_playView(songs,0)&&!playlist_memoryRefused(),"bounded staging succeeds at the free-heap margin (CT-08)");hostFreeHeap=64000;
+  check(catalog_canAllocate(16)&&!catalog_canAllocate(60000)&&(hostFreeHeap=13000,catalog_canAllocate(16))&&(hostFreeHeap=12300,!catalog_canAllocate(16)),"heap allocations retain the 12 KiB plus staged bytes floor (CT-08)");hostFreeHeap=64000;
+  hostLargestBlock=4000;check(!catalog_canAllocate(16)&&playlist_playView(songs,0)&&!playlist_memoryRefused(),"bounded staging needs no contiguous ID arena");hostLargestBlock=64000;
   std::vector<uint16_t> original(liveQueue,liveQueue+liveLength);int before=audioCalls;
-  hostFreeHeap=12000;check(!playlist_playView(songs,0)&&playlist_memoryRefused(),"heap floor refuses staging, reported as memory (CT-08)");hostFreeHeap=64000;
-  check(catalog_canAllocate(16)&&!catalog_canAllocate(60000)&&(hostFreeHeap=13000,catalog_canAllocate(16))&&(hostFreeHeap=12300,!catalog_canAllocate(16)),"floor is 12 KiB plus the staged bytes (CT-08)");hostFreeHeap=64000;
-  hostLargestBlock=4000;check(!playlist_playView(songs,0)&&playlist_memoryRefused(),"contiguous margin kept");hostLargestBlock=64000;
-  check(audioCalls==before&&std::equal(original.begin(),original.end(),liveQueue),"low-memory selection preserves playback");
-  hostReadBudget=0;check(!playlist_playView(songs,0),"failed queue read rejected");hostReadBudget=-1;
+  hostReadBudget=0;check(!playlist_playView(songs,0)&&!playlist_memoryRefused(),"failed queue read rejected as I/O, not memory");hostReadBudget=-1;
   check(audioCalls==before&&std::equal(original.begin(),original.end(),liveQueue),"failed queue read preserves playback");
   uint16_t staged[20];check(playlist_preview(2,staged,20)>0,"preview folder");
   check(audioCalls==before&&std::equal(original.begin(),original.end(),liveQueue),"preview leaves live queue untouched");

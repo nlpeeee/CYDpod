@@ -1397,7 +1397,11 @@ int main(){try{
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");
   int before=calls;tx=80;ty=160;down=true;ui_tick(clockNow+=130);ty=60;ui_tick(clockNow+=5000);
   check(ui_pressClaimed(),"long drag claims recalibration hold");down=false;ui_touch(TOUCH_RECALIBRATE,80,198);pump();check(calls==before,"drag does not play");
-  tap(80,66);check(label("Song 02")&&playing,"select track");
+  // CY-98b/108: drag tracks pixels (100 - 7 px slop), not whole rows.
+  // Song 02 is the partial first row; y=66 now hits Song 03. A separate tap selects.
+  check(classic_offset()==93&&classic_top()==2,"drag retains its pixel offset");
+  tap(80,cydclassic::layout::HeaderH+2*cydclassic::layout::RowH+20-classic_offset());
+  check(label("Song 02")&&playing,"select track");
   tap(120,246);check(!playing,"pause transport hit target");tap(120,246);check(playing,"play transport hit target");
   int was=current;tap(182,246);check(current!=was,"next transport hit target");tap(40,246);check(playing,"previous transport hit target");snapshot("ui-player.svg");
   int seeks=seekCalls;tap(120,190);check(seekCalls==seeks+1&&lastSeek>119000&&lastSeek<121000,"progress tap seeks halfway");

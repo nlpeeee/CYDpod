@@ -400,6 +400,18 @@ int storage_browseTracks(CatalogView v,uint16_t* out,int capacity){
   xSemaphoreGive(mutex);return ok?g.count:0;
 }
 
+// Read sorted IDs without materialising records or requiring the whole view.
+int storage_browseTrackIds(CatalogView v,int first,uint16_t* out,int capacity){
+  if(!out||active<0||first<0||capacity<=0)return 0;
+  if(v.kind==CatalogKind::Artists||v.kind==CatalogKind::Albums||v.kind==CatalogKind::ArtistAlbums)return 0;
+  xSemaphoreTake(mutex,portMAX_DELAY);
+  Group g{0,0,header.tracks,0,0};uint32_t order=header.songsAt;
+  bool ok=cat&&(v.kind==CatalogKind::Songs||viewGroup(cat,v,g,order));
+  const int n=ok&&first<g.count?min(capacity,int(g.count)-first):0;
+  for(int i=0;ok&&i<n;++i)ok=idAt(cat,order,g.first+first+i,out[i]);
+  xSemaphoreGive(mutex);return ok?n:0;
+}
+
 // CY-50: an expendable search cache, always under /.sys. The catalogue remains
 // authoritative. Header is published last, tied to its checksum and exact size.
 namespace {

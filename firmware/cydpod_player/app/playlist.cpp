@@ -24,6 +24,7 @@ static const int   MAX_M3U      = 1000;       // entries read from one playlist
 
 static PlaylistQueue queue;
 static const char* QUEUE_FILES[] = {"/.sys/queue-a.ids", "/.sys/queue-b.ids"};
+static const char* PREVIEW_FILES[] = {"/.sys/preview-a.ids", "/.sys/preview-b.ids"};
 static File queueOut;
 static uint16_t* previewOut = nullptr;
 static bool queueOk = true;
@@ -63,9 +64,9 @@ static int getId(int pos) {
   if (!queueOk || !queueOut.seek(pos * sizeof(id)) || queueOut.read((uint8_t*)&id, sizeof(id)) != sizeof(id)) { queueOk = false; return -1; }
   return id;
 }
-static bool stageQueue() {
+static bool stageQueue(const char* path = nullptr) {
   queueOk = true;
-  stagedPath = queue.path == QUEUE_FILES[0] ? QUEUE_FILES[1] : QUEUE_FILES[0];
+  stagedPath = path ? path : queue.path == QUEUE_FILES[0] ? QUEUE_FILES[1] : QUEUE_FILES[0];
   queueOut = openSmallFile(stagedPath, "w+");
   queueOk = bool(queueOut);
   return queueOk;
@@ -323,9 +324,9 @@ static int buildIds(int i, bool* identity) {
   return buildM3u(path);
 }
 
-static int build(int i, bool* identity) {
+static int build(int i, bool* identity, const char* path = nullptr) {
   if (i == 0) { *identity = true; return storage_trackCount(); }
-  if (!previewOut && !stageQueue()) return 0;
+  if (!previewOut && !stageQueue(path)) return 0;
   const int n = buildIds(i, identity);
   queueOut.close();
   return queueOk ? n : 0;
@@ -420,6 +421,36 @@ int playlist_preview(int source, uint16_t* tracks, int capacity) {
   return n;
 }
 
+bool playlist_preview(int source, PlaylistQueue& preview) {
+  if (source < 0 || source >= sourceCount) return false;
+  const char* path = preview.path == PREVIEW_FILES[0] ? PREVIEW_FILES[1] : PREVIEW_FILES[0];
+  bool identity = false;
+  const int n = build(source, &identity, path);
+  if (n <= 0) return false;
+  preview.path = identity ? nullptr : path;
+  preview.count = n; preview.first = -1; preview.cached = 0;
+  return true;
+}
+
+bool playlist_playPreview(PlaylistQueue& preview, int row, int source) {
+  const int n = preview.queueCount();
+  if (!audio_ready() || n <= 0 || n > queueCap || row < 0 || row >= n) return false;
+  if (!stageQueue()) return false;
+  int selected = -1;
+  for (int j = 0; queueOk && j < n; ++j) {
+    const int id = preview.queueAt(j);
+    if (id < 0 || id >= storage_trackCount()) { queueOk = false; break; }
+    putId(j, id);
+    if (j == row) selected = id;
+  }
+  queueOut.close();
+  if (!queueOk || selected < 0) return false;
+  remember(source);
+  bindQueue(n, selected, false);
+  audio_playTrack(selected);
+  return true;
+}
+
 bool playlist_playTracks(const uint16_t* tracks, int n, int row, int source) {
   if (!audio_ready() || !tracks || n <= 0 || n > queueCap || row < 0 || row >= n) return false;
   for (int j = 0; j < n; ++j) if (tracks[j] >= storage_trackCount()) return false;
@@ -442,15 +473,26 @@ bool playlist_playView(CatalogView view, int row) {
   memoryRefusal = false;
   const int n = storage_browseCount(view);
   if (n <= 0 || n > queueCap || row < 0 || row >= n) return false;
-  const size_t bytes = n * sizeof(uint16_t);
-  catalog_logStage("queue", "before", bytes);
-  uint16_t* staged = catalog_canAllocate(bytes) ? (uint16_t*)malloc(bytes) : nullptr;
-  if (!staged) { memoryRefusal = true; catalog_logStage("queue", "refused", bytes); return false; }
-  const int got = storage_browseTracks(view, staged, n);
-  const bool ok = got == n && playlist_playTracks(staged, n, row, -1);
-  free(staged);
-  catalog_logStage("queue", ok ? "after" : "failed", bytes);
+  if (!audio_ready() || !stageQueue()) return false;
+  int selected = -1;
+  catalog_logStage("queue", "before", 0);
+  uint16_t ids[256];
+  for (int first = 0; queueOk && first < n; first += 256) {
+    const int wanted = min(256, n - first);
+    if (storage_browseTrackIds(view, first, ids, wanted) != wanted) { queueOk = false; break; }
+    for (int j = 0; queueOk && j < wanted; ++j) {
+      if (ids[j] >= storage_trackCount()) { queueOk = false; break; }
+      putId(first + j, ids[j]);
+      if (first + j == row) selected = ids[j];
+    }
+  }
+  queueOut.close();
+  const bool ok = queueOk && selected >= 0;
+  catalog_logStage("queue", ok ? "after" : "failed", 0);
   if (ok) {
+    current = -1; g_settings.srcKind = SRC_CATALOG;
+    bindQueue(n, selected, false);
+    audio_playTrack(selected);
     g_settings.catalogKind = uint8_t(view.kind); g_settings.catalogGroup = view.group;
     g_settings.catalogCrc = storage_libraryCrc(); settings_save();
   }

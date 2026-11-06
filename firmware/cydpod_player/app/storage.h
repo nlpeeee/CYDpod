@@ -38,3 +38,7 @@ String storage_trackLabel(int i);
 // Read every entry in order with one pass over the index (boot-time jobs).
 typedef void (*StorageEachFn)(int i, const String& path, const String& label);
 void storage_forEach(StorageEachFn fn);
+
+struct CatalogView;
+// Bounded slice of a song view; zero means invalid view/range or SD failure.
+int storage_browseTrackIds(CatalogView view, int first, uint16_t* out, int capacity);

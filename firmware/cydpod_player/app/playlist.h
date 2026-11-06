@@ -72,3 +72,7 @@ struct PlaylistQueue {
   int queueFind(int trackId);
   int queueCount() const { return count; }
 };
+
+// Independent preview files; caller retains the bounded cursor, never an ID pointer.
+bool playlist_preview(int source, PlaylistQueue& preview);
+bool playlist_playPreview(PlaylistQueue& preview, int row, int source);

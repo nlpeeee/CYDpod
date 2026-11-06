@@ -135,7 +135,8 @@ static_assert(sizeof(cache)<=6*sizeof(Row)+512,"Viewport cache RAM budget");
 cydlib::Record playingInfo{};
 uint8_t dirty=0;
 int count=0,ready=-1,highlight=-1,dimmed=-1;
-uint16_t* preview=nullptr;
+PlaylistQueue preview;
+bool previewFailed=false;
 int previewCount=0;
 uint32_t lastPaint=0,lastPlayer=0,shownSerial=UINT32_MAX,saveAt=0;
 uint32_t seenError=0,lastStatus=0;
@@ -210,7 +211,7 @@ Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
 
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
-void freePreview(){free(preview);preview=nullptr;previewCount=0;}
+void freePreview(){preview.path=nullptr;preview.count=0;preview.first=-1;preview.cached=0;previewCount=0;previewFailed=false;}
 void text(const char* s,const Rect& r,uint16_t fg,uint16_t bg,TypeRole role=TYPE_BODY){ui_text(String(s),r.x+L::TextMargin,r.cy(),ML_DATUM,fg,bg,r.w-2*L::TextMargin,role);}
 void centred(const String& s,int y,uint16_t fg,uint16_t bg,int width=0){ui_text(s,tft.width()/2,y,MC_DATUM,fg,bg,width?width:tft.width()-2*L::TextMargin);}
 const char* pageTitle(const Page& value){
@@ -452,7 +453,7 @@ void loadRow(int i){
       }else setRow(r,searchWaiting()?"Searching...":"No matches",String(),false,true);
       break;
     case Mode::Sources:{int source=sourceId(at);setRow(r,playlist_name(source).c_str(),String(),true,source<0);r.source=source;break;}
-    case Mode::SourceSongs:{String title,artist;if(preview&&at<previewCount&&storage_trackSummary(preview[at],title,artist)){setRow(r,title.c_str(),artist);r.track=preview[at];}else setRow(r,"Track unavailable",String(),false,true);break;}
+    case Mode::SourceSongs:{String title,artist;const int id=previewFailed?-1:preview.queueAt(at);if(id<0)previewFailed=true;if(id>=0&&storage_trackSummary(id,title,artist)){setRow(r,title.c_str(),artist);r.track=id;}else setRow(r,"Track unavailable",String(),false,true);break;}
     case Mode::Settings:{const char* names[]={"Audio Output","Bluetooth","Playback","Display","Library & System","About"};setRow(r,names[at],String(),true);break;}
     case Mode::System:{const char* names[]={"Refresh Library","Upload music","Web passcode","Language"};
       setRow(r,names[at],at==2?g_settings.webPin:at==3?String(tr(T_LANG_NAME)):String(),at<2);break;}
@@ -484,16 +485,8 @@ void catalog(CatalogView view,const char* name){
   if(navigation.push(next))ui_go(SCR_CLASSIC);
 }
 bool buildPreview(int source){
-  const size_t bytes=max(1,storage_trackCount())*sizeof(uint16_t);
-  const size_t scratch=playlist_kind(source)==SRC_M3U?min(storage_trackCount(),1000)*sizeof(uint32_t):0;
-  catalog_logStage("preview","before",bytes+scratch);
-  if(!catalog_canAllocate(bytes+scratch)){catalog_logStage("preview","refused",bytes+scratch);return false;}
-  uint16_t* candidate=(uint16_t*)malloc(max(1,storage_trackCount())*sizeof(uint16_t));
-  if(!candidate){catalog_logStage("preview","refused",bytes+scratch);return false;}
-  int n=playlist_preview(source,candidate,max(1,storage_trackCount()));
-  catalog_logStage("preview","after",bytes+scratch);
-  if(n<=0){free(candidate);return false;}
-  freePreview();preview=candidate;previewCount=n;previewDirty=false;
+  if(!playlist_preview(source,preview))return false;
+  previewCount=preview.queueCount();previewDirty=false;previewFailed=false;
   return true;
 }
 void openSource(int source){
@@ -651,7 +644,7 @@ void enter(){
 #endif
   finishFling(inputNow());claimPending=false;
   seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
-  if(page().mode==Mode::SourceSongs&&(previewDirty||!preview)){
+  if(page().mode==Mode::SourceSongs&&(previewDirty||preview.queueCount()==0)){
     if(!buildPreview(page().source)){message("Unable to reload list. Check SD card or try again.");return;}
   }
   // Same-query reloads temporarily report zero hits. Keep the saved pixel bookmark
@@ -798,7 +791,7 @@ void activate(int at){
       }break;
     case Mode::Sources:openSource(selected.source);break;
     case Mode::SourceSongs:
-      if(playlist_playTracks(preview,previewCount,at,page().source)){settings_save();show(Mode::Player);}else message("Unable to start this list.");break;
+      if(!previewFailed&&playlist_playPreview(preview,at,page().source)){settings_save();show(Mode::Player);}else message("Unable to start this list.");break;
     case Mode::Settings:
       if(at==0)show(Mode::Output);else if(at==1)external(SCR_BLUETOOTH);else if(at==2)show(Mode::Playback);else if(at==3)show(Mode::Display);
       else if(at==4)show(Mode::System);else show(Mode::About);break;

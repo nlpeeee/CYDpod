@@ -153,7 +153,7 @@ try {
         $stageName = 'compile ' + $job.Name
         $stageTimer.Restart()
         $imageName = $job.Name
-        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v34-jc2432w328c' }
+        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v35-jc2432w328c' }
         if ($job.ImageName) { $imageName = $job.ImageName }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.

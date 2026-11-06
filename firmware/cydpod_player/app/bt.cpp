@@ -50,6 +50,8 @@ static bool isKnownPeer(const uint8_t* a){
 
 
 // Diagnostic snapshots only; BtAppT writes, loop reads aligned scalar values.
+// ESP32-A2DP 1.8.11 BluetoothA2DPSource.cpp:21 (not exported by its header).
+static constexpr uint16_t SOURCE_HEART_BEAT_EVT=0xff00;
 static volatile esp_a2d_audio_state_t streamAudio=ESP_A2D_AUDIO_STATE_SUSPEND;
 static volatile int streamMedia=0;
 static uint32_t intentSeen=0,intentPulls=0,intentFrames=0;
@@ -156,9 +158,9 @@ class CydSource : public BluetoothA2DPSource {
     // No virtual media-send hook: mirror the pinned library's dispatch branches.
     // rc=-1 means unavailable; these lines infer sends, never issue commands.
     if(s_a2d_state==APP_AV_STATE_CONNECTING&&
-       (event==ESP_A2D_AUDIO_STATE_EVT||event==ESP_A2D_AUDIO_CFG_EVT||event==ESP_A2D_MEDIA_CTRL_ACK_EVT||event==BT_APP_HEART_BEAT_EVT))inferCommand(ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY);
+       (event==ESP_A2D_AUDIO_STATE_EVT||event==ESP_A2D_AUDIO_CFG_EVT||event==ESP_A2D_MEDIA_CTRL_ACK_EVT||event==SOURCE_HEART_BEAT_EVT))inferCommand(ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY);
     else if(s_a2d_state==APP_AV_STATE_CONNECTED){
-      if(event==BT_APP_HEART_BEAT_EVT&&s_media_state==0)inferCommand(ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY);
+      if(event==SOURCE_HEART_BEAT_EVT&&s_media_state==0)inferCommand(ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY);
       if(diag&&event==ESP_A2D_MEDIA_CTRL_ACK_EVT){
         if(s_media_state==0&&diag->media_ctrl_stat.cmd==ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY&&diag->media_ctrl_stat.status==ESP_A2D_MEDIA_CTRL_ACK_SUCCESS)inferCommand(ESP_A2D_MEDIA_CTRL_START);
         if(s_media_state==3&&!(diag->media_ctrl_stat.cmd==ESP_A2D_MEDIA_CTRL_SUSPEND&&diag->media_ctrl_stat.status==ESP_A2D_MEDIA_CTRL_ACK_SUCCESS))inferCommand(ESP_A2D_MEDIA_CTRL_SUSPEND);

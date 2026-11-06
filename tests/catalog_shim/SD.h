@@ -6,6 +6,7 @@
 #define FILE_WRITE "w"
 #define FILE_APPEND "a"
 inline uint64_t hostOpenCalls=0,hostReadCalls=0,hostWriteCalls=0,hostCloseCalls=0;
+inline uint64_t hostReadBytes=0;
 inline int64_t hostWriteBudget=-1;
 inline int64_t hostReadBudget=-1;
 inline bool hostReadOnly=false;  // write-protected card: mkdir, remove, rename and any non-read open fail
@@ -41,7 +42,7 @@ class File {
   size_t size(){if(!h||!h->file)return 0;long p=ftell(h->file);fseek(h->file,0,SEEK_END);long n=ftell(h->file);fseek(h->file,p,SEEK_SET);return size_t(n);}
   size_t position(){return h&&h->file?size_t(ftell(h->file)):0;}
   bool seek(uint32_t p){return h&&h->file&&fseek(h->file,long(p),SEEK_SET)==0;}
-  size_t read(uint8_t* p,size_t n){++hostReadCalls;if(hostReadBudget>=0){n=std::min<size_t>(n,size_t(hostReadBudget));hostReadBudget-=n;}return h&&h->file?fread(p,1,n,h->file):0;}
+  size_t read(uint8_t* p,size_t n){++hostReadCalls;if(hostReadBudget>=0){n=std::min<size_t>(n,size_t(hostReadBudget));hostReadBudget-=n;}size_t got=h&&h->file?fread(p,1,n,h->file):0;hostReadBytes+=got;return got;}
   size_t write(const uint8_t* p,size_t n){++hostWriteCalls;if(!h||!h->file)return 0;if(hostWriteBudget>=0){n=std::min<size_t>(n,size_t(hostWriteBudget));hostWriteBudget-=n;}return fwrite(p,1,n,h->file);}
   size_t print(const char* p){return write((const uint8_t*)p,strlen(p));}
   size_t println(const String& s){size_t n=print(s.c_str());return n+print("\r\n");}

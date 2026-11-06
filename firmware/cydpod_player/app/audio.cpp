@@ -48,7 +48,8 @@ static volatile uint32_t framesPlayed = 0;    // pulled since posBaseMs
 static volatile uint32_t durationMs = 0;
 static volatile uint32_t trackSerial = 0;
 static volatile uint32_t underruns = 0;
-static volatile bool     starting = false;    // opening a track: no underrun counting
+static volatile bool     starting = false;    // opening a track: no underrun counting; clears on the first PULLED frame
+static volatile bool     opening = false;     // decodeTask is inside openTrack/seek for a consumed request (CY-118)
 static volatile uint32_t lastPullMs = 0;
 
 static TaskHandle_t decodeHandle = nullptr;
@@ -250,6 +251,7 @@ static void decodeTask(void*) {
     const int t = reqTrack;
     const int32_t seek = reqSeekMs;
     const uint32_t startMs = reqStartMs, serial = commandSerial;
+    if (t >= 0) opening = true;  // in the same critical section: no gap in which the request is neither queued nor opening
     reqTrack = -1; reqSeekMs = -1;
     portEXIT_CRITICAL(&stateLock);
     if (t >= 0) {
@@ -261,6 +263,7 @@ static void decodeTask(void*) {
         else finishCommand(serial);
       }
       startupComplete = true;
+      opening = false;
       continue;
     }
     if (seek >= 0) {
@@ -551,7 +554,7 @@ uint32_t audio_positionMs() {
 
 AudioCommands audio_commands(){
   portENTER_CRITICAL(&stateLock);
-  AudioCommands out{int(reqTrack),int32_t(reqSeekMs),uint32_t(commandSerial),bool(starting),bool(seeking),bool(decodeBlocked)};
+  AudioCommands out{int(reqTrack),int32_t(reqSeekMs),uint32_t(commandSerial),bool(opening),bool(seeking),bool(decodeBlocked)};
   portEXIT_CRITICAL(&stateLock);return out;
 }
 uint32_t audio_decodeStackFree() {

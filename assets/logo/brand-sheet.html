@@ -1,0 +1,322 @@
+<title>CYDpod Brand Sheet</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a quiet, Apple-catalogue brand sheet; one typeface throughout, big white space, each rule shown rather than described. */
+:root {
+  --bg: #ffffff;
+  --panel: #f5f5f7;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --line: #e2e2e5;
+  --link: #8a6a00;
+
+  /* brand colours: fixed */
+  --ink: #1d1d1f;
+  --white: #fbfbfb;
+  --graphite: #2a2b2e;
+  --steel: #c7cace;
+  --yellow: #ffd21f;
+  --yellow-deep: #e0b400;
+
+  --f-brand: "Source Sans 3", "Myriad Pro", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f0f10; --panel: #1b1b1d; --fg: #f2f2f4; --muted: #a1a1a6; --line: #2e2e31; --link: #ffd21f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f0f10; --panel: #1b1b1d; --fg: #f2f2f4; --muted: #a1a1a6; --line: #2e2e31; --link: #ffd21f; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 400 17px/1.5 var(--f-brand);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 80px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 88px; }
+
+/* wordmark */
+.wm { font-family: var(--f-brand); font-weight: 400; letter-spacing: -.025em; line-height: 1; white-space: nowrap; display: inline-flex; align-items: baseline; }
+.wm .o { display: inline-block; width: .5em; height: .5em; margin: 0 .02em 0 .03em; transform: translateY(.01em); flex: none; }
+
+/* hero */
+.hero { background: var(--white); color: var(--ink); border-radius: 22px; padding: clamp(56px, 10vw, 120px) 24px clamp(48px, 8vw, 96px); display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; border: 1px solid var(--line); }
+.hero .wm { font-size: clamp(68px, 15vw, 168px); }
+.hero .tagline { font-size: clamp(19px, 2.4vw, 26px); font-weight: 300; color: #6e6e73; margin: 0; }
+
+/* section heads */
+section { display: flex; flex-direction: column; gap: 26px; }
+.sh { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 8px 40px; }
+.sh h2 { font-size: 30px; font-weight: 600; line-height: 1.1; margin: 0; letter-spacing: -.01em; }
+.sh p { margin: 0; color: var(--muted); max-width: 62ch; }
+
+.panel { background: var(--panel); border-radius: 18px; position: relative; overflow: hidden; }
+.cap { font: 500 11.5px/1.3 var(--f-mono); color: var(--muted); }
+
+/* construction */
+.construct { padding: 70px 24px 60px; display: grid; place-items: center; overflow-x: auto; }
+.construct .stage { position: relative; color: var(--fg); }
+.construct .wm { font-size: clamp(80px, 14vw, 160px); position: relative; z-index: 1; }
+.guide { position: absolute; left: -24px; right: -24px; height: 0; border-top: 1px dashed #d08c00; z-index: 0; }
+.guide span { position: absolute; right: 0; top: -17px; font: 500 10.5px/1 var(--f-mono); color: #b07800; white-space: nowrap; }
+.rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.rules div { border-top: 1px solid var(--line); padding-top: 12px; }
+.rules b { display: block; font-weight: 600; margin-bottom: 2px; }
+.rules p { margin: 0; color: var(--muted); font-size: 15px; }
+
+/* variants */
+.variants { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.v { border-radius: 16px; min-height: 190px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 30px 16px 18px; position: relative; }
+.v .wm { font-size: clamp(40px, 5vw, 56px); }
+.v .cap { position: absolute; left: 14px; bottom: 12px; color: inherit; opacity: .62; }
+.v-primary { background: var(--white); color: var(--ink); border: 1px solid var(--line); }
+.v-rev { background: var(--graphite); color: var(--white); }
+.v-yellow { background: var(--yellow); color: var(--ink); --dot: var(--ink); }
+.v-steel { background: linear-gradient(158deg, #f7f8f9 0%, #c7cace 22%, #eef0f2 40%, #a8acb1 62%, #e4e6e9 80%, #b6b9be 100%); color: #84888d; --dot: #84888d; }
+.v-steel .wm { text-shadow: 0 1px 0 rgba(255,255,255,.75), 0 -1px 0 rgba(0,0,0,.12); }
+.v-steel .o { filter: drop-shadow(0 1px 0 rgba(255,255,255,.75)); }
+.v-steel .cap { color: #2f3236; }
+.v-mono { background: var(--white); color: var(--ink); --dot: var(--ink); border: 1px solid var(--line); }
+.v-knock { background: var(--ink); color: var(--white); --dot: var(--white); }
+
+/* mark + icons */
+.markrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; }
+.markrow .panel { padding: 40px 20px 44px; display: flex; align-items: flex-end; justify-content: center; gap: 26px; flex-wrap: wrap; }
+.markrow figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.markrow .cap.abs { position: absolute; left: 16px; bottom: 14px; }
+.bigmark { color: var(--fg); }
+
+/* clear space */
+.space { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; }
+.space .panel { padding: 48px 20px 50px; display: grid; place-items: center; }
+.cs { position: relative; padding: .5em; outline: 1px dashed #d08c00; font-size: clamp(44px, 6vw, 64px); color: var(--fg); }
+.cs .wm { font-size: 1em; display: flex; }
+.cs .unit { position: absolute; top: 0; left: 0; width: .5em; height: .5em; background: rgba(255, 210, 31, .45); }
+.cs .unit.br { left: auto; top: auto; right: 0; bottom: 0; }
+.mins { display: flex; flex-direction: column; gap: 22px; align-items: flex-start; color: var(--fg); }
+.mins div { display: flex; align-items: center; gap: 14px; }
+
+/* applications */
+.apps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.app { border-radius: 16px; position: relative; overflow: hidden; min-height: 260px; display: grid; place-items: center; padding: 30px 18px 40px; }
+.app .cap { position: absolute; left: 14px; bottom: 12px; color: inherit; opacity: .65; }
+.app-back { background: linear-gradient(158deg, #f7f8f9 0%, #c7cace 22%, #eef0f2 40%, #a8acb1 62%, #e4e6e9 80%, #b6b9be 100%); color: #84888d; --dot: #84888d; }
+.app-back .stack { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; text-shadow: 0 1px 0 rgba(255,255,255,.75), 0 -1px 0 rgba(0,0,0,.12); }
+.app-back svg { filter: drop-shadow(0 1px 0 rgba(255,255,255,.75)); }
+.app-back .wm { font-size: 42px; }
+.app-back .fine { font-size: 11px; line-height: 1.5; letter-spacing: .02em; }
+.app-back .cap { color: #2f3236; }
+.app-boot { background: #2b2c2f; color: #e8e8e8; }
+.screen { width: 100%; max-width: 320px; aspect-ratio: 4 / 3; background: #000; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--white); box-shadow: 0 0 0 10px #111, 0 0 0 11px #3a3a3d; }
+.screen .wm { font-size: 34px; }
+.screen .bar { width: 96px; height: 3px; border-radius: 2px; background: #333; position: relative; overflow: hidden; }
+.screen .bar::after { content: ""; position: absolute; inset: 0 58% 0 0; background: var(--yellow); }
+.app-sticker { background: var(--panel); color: var(--fg); }
+.sticker { width: 190px; height: 190px; border-radius: 50%; background: var(--yellow); color: var(--ink); --dot: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+.sticker .wm { font-size: 34px; }
+.app-readme { background: var(--graphite); color: var(--white); }
+.banner { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 440px; }
+.banner .wm { font-size: clamp(44px, 6vw, 60px); }
+.banner p { margin: 0; color: #a1a1a6; font-weight: 300; font-size: 18px; }
+.banner .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.banner .chips span { font: 500 11px/1 var(--f-mono); color: #d8d8dc; border: 1px solid #4a4b4f; border-radius: 4px; padding: 5px 7px; }
+
+/* palette + voice */
+.palette { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.chip { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
+.chip i { display: block; height: 84px; }
+.chip div { padding: 10px 12px 12px; }
+.chip b { display: block; font-weight: 600; font-size: 15px; }
+.chip span { font: 400 11.5px/1.4 var(--f-mono); color: var(--muted); display: block; }
+.voice { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.voice div { background: var(--panel); border-radius: 16px; padding: 22px; }
+.voice q { display: block; font-size: 22px; font-weight: 300; line-height: 1.25; quotes: none; margin-bottom: 10px; }
+
+@media (max-width: 860px) {
+  .sh, .markrow, .space, .apps, .rules, .voice { grid-template-columns: minmax(0, 1fr); }
+  .variants { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .palette { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .variants { grid-template-columns: minmax(0, 1fr); }
+  .palette { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="wheel-o" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" stroke-width="16"/>
+      <circle cx="50" cy="50" r="12.5" style="fill: var(--dot, #ffd21f)"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+
+  <div class="hero">
+    <span class="wm" role="img" aria-label="CYDpod">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span>
+    <p class="tagline">A thousand songs on a cheap yellow board.</p>
+  </div>
+
+  <!-- construction -->
+  <section aria-labelledby="s-construct">
+    <div class="sh"><h2 id="s-construct">The wordmark</h2><p>"CYDpod" is set in Source Sans 3 Regular. The "o" is a click wheel drawn to the same size and weight as a real "o", so the word still reads normally at any size. The centre button is the one place CYD yellow appears.</p></div>
+    <div class="panel construct">
+      <div class="stage" id="stage">
+        <div class="guide" data-g="cap"><span>cap height</span></div>
+        <div class="guide" data-g="x"><span>x-height · wheel top</span></div>
+        <div class="guide" data-g="base"><span>baseline · wheel bottom</span></div>
+        <span class="wm" id="construct-wm">CYDp<svg class="o" id="construct-o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span>
+      </div>
+    </div>
+    <div class="rules">
+      <div><b>Ring = stem weight</b><p>The ring is 16% of the wheel's width, which matches Source Sans Regular stems. It sits on the x-height and baseline, with the same small overshoot as a real o.</p></div>
+      <div><b>Centre button = 25%</b><p>The dot is a quarter of the wheel's diameter. It stays yellow on white and graphite, and turns ink on yellow or in one-colour use.</p></div>
+      <div><b>Casing is fixed</b><p>Always write CYDpod: CYD in capitals, pod in lowercase. Never cydpod, CYDPod or CYD Pod, in the logo or in text.</p></div>
+    </div>
+  </section>
+
+  <!-- variants -->
+  <section aria-labelledby="s-var">
+    <div class="sh"><h2 id="s-var">Colourways</h2><p>There are six versions, and they cover everything from the case to a GitHub README. Use the primary or reversed version unless the background decides for you.</p></div>
+    <div class="variants">
+      <div class="v v-primary"><span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span><span class="cap">Primary · ink on white</span></div>
+      <div class="v v-rev"><span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span><span class="cap">Reversed · white on graphite</span></div>
+      <div class="v v-yellow"><span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span><span class="cap">On CYD yellow · ink dot</span></div>
+      <div class="v v-steel"><span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span><span class="cap">Engraved · stainless or aluminium</span></div>
+      <div class="v v-mono"><span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span><span class="cap">One colour · print, vinyl cut</span></div>
+      <div class="v v-knock"><span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span><span class="cap">One colour reversed</span></div>
+    </div>
+  </section>
+
+  <!-- mark + icons -->
+  <section aria-labelledby="s-mark">
+    <div class="sh"><h2 id="s-mark">The wheel</h2><p>Lifted out of the wordmark, the "o" becomes the standalone mark. Use it for the app icon, the favicon, a case badge or anywhere the full name won't fit.</p></div>
+    <div class="markrow">
+      <div class="panel">
+        <svg class="bigmark" width="150" height="150" aria-label="CYDpod wheel mark" role="img"><use href="#wheel-o"/></svg>
+        <span class="cap abs">Mark</span>
+      </div>
+      <div class="panel">
+        <figure><svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"><rect width="120" height="120" rx="27" fill="#2a2b2e"/><use href="#wheel-o" x="30" y="30" width="60" height="60" style="color:#fbfbfb"/></svg><figcaption class="cap">120</figcaption></figure>
+        <figure><svg width="76" height="76" viewBox="0 0 76 76" aria-hidden="true"><rect width="76" height="76" rx="17" fill="#ffd21f"/><use href="#wheel-o" x="19" y="19" width="38" height="38" style="color:#1d1d1f; --dot:#1d1d1f"/></svg><figcaption class="cap">76</figcaption></figure>
+        <figure><svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="9" fill="#2a2b2e"/><use href="#wheel-o" x="9" y="9" width="22" height="22" style="color:#fbfbfb"/></svg><figcaption class="cap">40</figcaption></figure>
+        <figure><svg width="20" height="20" class="bigmark" aria-hidden="true"><use href="#wheel-o" width="20" height="20" style="--dot:#e0b400"/></svg><figcaption class="cap">20</figcaption></figure>
+        <figure><svg width="16" height="16" class="bigmark" aria-hidden="true"><use href="#wheel-o" width="16" height="16" style="--dot:#e0b400"/></svg><figcaption class="cap">16</figcaption></figure>
+        <span class="cap abs">Icon and favicon sizes · the wheel fills 50% of the tile</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- clear space -->
+  <section aria-labelledby="s-space">
+    <div class="sh"><h2 id="s-space">Space and size</h2><p>Leave at least one wheel's width of empty space on every side. Below the minimum sizes, the centre dot fills in, so switch to the mark on its own.</p></div>
+    <div class="space">
+      <div class="panel">
+        <div class="cs"><i class="unit"></i><i class="unit br"></i><span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span></div>
+      </div>
+      <div class="panel">
+        <div class="mins">
+          <div><span class="wm" style="font-size:22px">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span><span class="cap">wordmark min · 22px type / 20mm wide in print</span></div>
+          <div><svg width="16" height="16" aria-hidden="true"><use href="#wheel-o" style="--dot:#e0b400"/></svg><span class="cap">mark min · 16px / 4mm</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- applications -->
+  <section aria-labelledby="s-apps">
+    <div class="sh"><h2 id="s-apps">In use</h2><p>Four places the identity will actually show up. The back of the case gets the full engraved treatment, with the same small print the iPod had.</p></div>
+    <div class="apps">
+      <div class="app app-back">
+        <div class="stack">
+          <svg width="48" height="48" aria-hidden="true"><use href="#wheel-o"/></svg>
+          <span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span>
+          <span class="fine">Designed by hand. Built on a Cheap Yellow Display.<br>Model ESP32-2432S028 · microSD</span>
+        </div>
+        <span class="cap">Case back · laser-etched</span>
+      </div>
+      <div class="app app-boot">
+        <div class="screen">
+          <svg width="44" height="44" aria-hidden="true" style="color:#fbfbfb"><use href="#wheel-o"/></svg>
+          <span class="wm">CYDp<svg class="o" aria-hidden="true" style="color:#fbfbfb"><use href="#wheel-o"/></svg>d</span>
+          <i class="bar"></i>
+        </div>
+        <span class="cap">Boot logo · 320 × 240</span>
+      </div>
+      <div class="app app-sticker">
+        <div class="sticker">
+          <svg width="56" height="56" aria-hidden="true"><use href="#wheel-o"/></svg>
+          <span class="wm">CYDp<svg class="o" aria-hidden="true"><use href="#wheel-o"/></svg>d</span>
+        </div>
+        <span class="cap">Die-cut sticker · 50mm</span>
+      </div>
+      <div class="app app-readme">
+        <div class="banner">
+          <span class="wm">CYDp<svg class="o" aria-hidden="true" style="color:#fbfbfb"><use href="#wheel-o"/></svg>d</span>
+          <p>A thousand songs on a cheap yellow board.</p>
+          <div class="chips"><span>ESP32</span><span>2.8″ touch</span><span>320×240</span><span>microSD</span></div>
+        </div>
+        <span class="cap">README banner</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- palette -->
+  <section aria-labelledby="s-pal">
+    <div class="sh"><h2 id="s-pal">Colour</h2><p>Mostly white, ink and metal, like the original. Yellow is the accent and stays small: a dot, a sticker, a progress bar.</p></div>
+    <div class="palette">
+      <div class="chip"><i style="background:#fbfbfb; border-bottom:1px solid var(--line)"></i><div><b>White</b><span>#FBFBFB</span></div></div>
+      <div class="chip"><i style="background:#1d1d1f"></i><div><b>Ink</b><span>#1D1D1F</span></div></div>
+      <div class="chip"><i style="background:#2a2b2e"></i><div><b>Graphite</b><span>#2A2B2E</span></div></div>
+      <div class="chip"><i style="background:linear-gradient(158deg,#f7f8f9,#c7cace 40%,#a8acb1 70%,#e4e6e9)"></i><div><b>Stainless</b><span>#C7CACE</span></div></div>
+      <div class="chip"><i style="background:#ffd21f"></i><div><b>CYD Yellow</b><span>#FFD21F</span></div></div>
+      <div class="chip"><i style="background:#e0b400"></i><div><b>Deep Yellow</b><span>#E0B400 · dot under 24px</span></div></div>
+    </div>
+  </section>
+
+  <!-- voice -->
+  <section aria-labelledby="s-voice">
+    <div class="sh"><h2 id="s-voice">Taglines</h2><p>Short and plain, borrowing the iPod's rhythm. The first is the one on the hero.</p></div>
+    <div class="voice">
+      <div><q>A thousand songs on a cheap yellow board.</q><span class="cap">Primary · riffs on "1,000 songs in your pocket"</span></div>
+      <div><q>Click. Wheel. Built.</q><span class="cap">Short · for stickers and the boot logo</span></div>
+      <div><q>The pocket player you build yourself.</q><span class="cap">Descriptive · for the README and store listings</span></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  function place() {
+    var stage = document.getElementById('stage');
+    var o = document.getElementById('construct-o');
+    var wm = document.getElementById('construct-wm');
+    if (!stage || !o || !wm) return;
+    var s = stage.getBoundingClientRect();
+    var r = o.getBoundingClientRect();
+    var fs = parseFloat(getComputedStyle(wm).fontSize);
+    var over = fs * 0.01;
+    var base = r.bottom - s.top - over;
+    var xh = r.top - s.top + over;
+    var cap = base - fs * 0.66;
+    stage.querySelector('[data-g="cap"]').style.top = cap + 'px';
+    stage.querySelector('[data-g="x"]').style.top = xh + 'px';
+    stage.querySelector('[data-g="base"]').style.top = base + 'px';
+  }
+  place();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(place);
+  window.addEventListener('resize', place);
+  window.addEventListener('load', place);
+})();
+</script>

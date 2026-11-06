@@ -62,9 +62,23 @@ preview heap assertion; icon verify cascaded. W328C compile-only exit 0,
 `PASS: compile-only checks completed; no device commands were run.`
 No second-board rerun requested in F2c.
 
-## Remaining blocker
-Both UI variants now reach a later assertion:
-`FAIL firmware UI: a true vertical drag scrolls the list instead of activating a row`.
-Stopped corrections as instructed; did not investigate or chain fixes.
-Full host green is **not achieved**. Optional real samples SKIP (absent).
-Orca checkpoint update: `selector_not_found` for this Git-created worktree.
+## F2d: enumeration and one-pass fix
+Non-aborting mode: `CYDPOD_UI_CONTINUE=1` makes `check` print `FAIL classic_ui_test.cpp:<line>: <msg>`
+and continue; exit stays 1 (`FAIL firmware UI: N assertion(s) failed`). Default remains fail-fast.
+Enumeration (normal and wired, identical): **5 failing assertions**, not a long tail.
+
+| Assertion (line before fix) | Class | Evidence | Fix |
+|---|---|---|---|
+| 266 true vertical drag scrolls the list instead of activating a row | stale test | Old: `top==2`. Now pixel drag (CY-98b, 7 px slop) 113 px, then CY-99 release coast: offset 160 = 4 rows of RowH 40, depth 2, no row call | expect `classic_offset()==160`, `top==4`, `calls==songCalls` |
+| 461 swipe, 90 px travel, 5 px jitter (x4, one per rotation) | stale test | List claims at |dy|>7 slop and |dy|>=|dx| (`classic_screen.cpp` PRESS_MOVE). At 10 ms polling the 10 px p-p jitter reaches dy=10 with dx=4.5: list owns the press, depth 2, no play, offset 0. At 80 ms dx=36: Back | 10 ms: expect list ownership (no Back, no play, offset 0); 80 ms: Back as before; added 2 px jitter case (below slop) expecting Back at both periods |
+
+Line 461 fired four times (one per rotation, 10 ms period only). No firmware bug found; no
+firmware or golden change. Real-hardware CST820 jitter is still unmeasured (cy97-tracker.md).
+
+## Final host check (F2d tip)
+`powershell -NoProfile -File tools/check.ps1 -SkipProbe`, **exit 0**, log `.tools/logs/f2d-full-host.log`.
+`PASS: compile-only checks completed; no device commands were run.`
+Suites: pairing_session, speaker_lifecycle, catalog, touch_gesture, scroll_core (818 rows),
+cst820_report, classic_ui, classic_ui wired, icon verify (CY90_PIXELS_OK), build_codec_pool,
+i2s_tone, wired_fade, i2s_diag, bt_policy, catalog_sort, playlist_queue (N=10,000), audio_order,
+catalog_validation, media_check: **all PASS**. Optional real samples SKIP (absent).

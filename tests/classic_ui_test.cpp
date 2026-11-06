@@ -13,6 +13,7 @@
 #include "output_switch.h"
 #include "audio.h"
 #include "calibrate.h"
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -124,7 +125,14 @@ bool titles_load(const String&){return false;}
 void titles_release(){}
 int titles_width(){return 0;}
 void titles_draw(const Rect&,int,int,uint16_t,uint16_t){}
-static void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
+// CYDPOD_UI_CONTINUE=1 enumerates every failing assertion (file:line + message) instead of stopping at the first; exit stays non-zero.
+static int g_failures=0;
+static void check_at(bool value,const char* message,int line){
+  if(value)return;
+  if(!std::getenv("CYDPOD_UI_CONTINUE"))throw std::runtime_error(message);
+  ++g_failures;std::cerr<<"FAIL classic_ui_test.cpp:"<<line<<": "<<message<<"\n";
+}
+#define check(value,message) check_at((value),(message),__LINE__)
 static void pump(){for(int i=0;i<10;++i)ui_tick(clockNow+=130);}
 static void tap(int x,int y){tx=x;ty=y;down=true;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,x,y);pump();}
 static bool label(const char* s){return std::find(tft.labels.begin(),tft.labels.end(),s)!=tft.labels.end();}
@@ -255,7 +263,9 @@ static void touchRegression(){
   check(classic_depth()==2&&calls==songCalls,"a mostly vertical 14 px move claims the press");
   toSongs();check(classic_top()==0,"Songs page starts at the top");
   pressRun(300,10,0,[](uint32_t t,int& x,int& y){x=80;y=int(150-std::min<uint32_t>(t,200)*120/200);});
-  check(classic_top()==2&&classic_depth()==2,"a true vertical drag scrolls the list instead of activating a row");
+  // CY-98b/CY-99: the list follows the finger in pixels (120 px travel minus the 7 px slop = 113 px), then the CY-99 release
+  // coast carries on from the 600 px/s lift; the host result is a deterministic 160 px = 4 rows of RowH 40. Not "top == 2 rows".
+  check(classic_offset()>=113&&classic_offset()==160&&classic_top()==4&&classic_depth()==2&&calls==songCalls,"a true vertical drag scrolls the list instead of activating a row");
   std::cout<<"PASS CY-62 lists: jitter under 16 px keeps the row tap, sideways/vertical drags claim, vertical drag scrolls\n";
 
   // Wake: the whole touch is swallowed, the next one works.
@@ -450,7 +460,15 @@ static void homeTilesRegression(){
     for(uint32_t period:{10u,80u}){
       toSongs();before=calls;
       pressRun(300,period,0,[=](uint32_t tm,int& x,int& y){x=sx+int(std::min<uint32_t>(tm,200)*90/200);y=sy+((tm/10)%2?5:-5);});
-      check(classic_depth()==1&&calls==before,"swipe with 90 px travel and 5 px jitter goes Back once without playing");
+      // CY-98b: the list claims a press once vertical travel passes the 7 px slop and |dy|>=|dx| (classic_screen.cpp press MOVE).
+      // With 10 ms polling the 10 px peak-to-peak jitter reaches dy=10 while dx is only 4.5, so the list owns the press and
+      // nothing happens (no Back, no play, no net scroll). At 80 ms polling the first moved sample has dx=36 and the swipe wins.
+      if(period==10u)check(classic_depth()==2&&calls==before&&classic_offset()==0,"swipe with 90 px travel and 5 px jitter at 10 ms polling is claimed by the list: no Back, no play, no net scroll");
+      else check(classic_depth()==1&&calls==before,"swipe with 90 px travel and 5 px jitter goes Back once without playing");
+      // Jitter below the slop (2 px, 4 px peak-to-peak) keeps the swipe working at 10 ms polling too.
+      toSongs();before=calls;
+      pressRun(300,period,0,[=](uint32_t tm,int& x,int& y){x=sx+int(std::min<uint32_t>(tm,200)*90/200);y=sy+((tm/10)%2?2:-2);});
+      check(classic_depth()==1&&calls==before,"swipe with 90 px travel and 2 px jitter goes Back once without playing");
       toSongs();before=calls;
       pressRun(300,period,0,[=](uint32_t tm,int& x,int& y){x=sx+((tm/10)%2?6:-6);y=int(sy+60-std::min<uint32_t>(tm,200)*100/200);});
       check(classic_depth()==2&&classic_top()>0&&calls==before,"vertical scroll with sideways jitter stays on the list");
@@ -1397,7 +1415,11 @@ int main(){try{
   tap(80,110);check(label("Song 00"),"album tracks");snapshot("ui-songs.svg");
   int before=calls;tx=80;ty=160;down=true;ui_tick(clockNow+=130);ty=60;ui_tick(clockNow+=5000);
   check(ui_pressClaimed(),"long drag claims recalibration hold");down=false;ui_touch(TOUCH_RECALIBRATE,80,198);pump();check(calls==before,"drag does not play");
-  tap(80,66);check(label("Song 02")&&playing,"select track");
+  // CY-98b/108: drag tracks pixels (100 - 7 px slop), not whole rows.
+  // Song 02 is the partial first row; y=66 now hits Song 03. A separate tap selects.
+  check(classic_offset()==93&&classic_top()==2,"drag retains its pixel offset");
+  tap(80,cydclassic::layout::HeaderH+2*cydclassic::layout::RowH+20-classic_offset());
+  check(label("Song 02")&&playing,"select track");
   tap(120,246);check(!playing,"pause transport hit target");tap(120,246);check(playing,"play transport hit target");
   int was=current;tap(182,246);check(current!=was,"next transport hit target");tap(40,246);check(playing,"previous transport hit target");snapshot("ui-player.svg");
   int seeks=seekCalls;tap(120,190);check(seekCalls==seeks+1&&lastSeek>119000&&lastSeek<121000,"progress tap seeks halfway");
@@ -1467,13 +1489,23 @@ int main(){try{
 #endif
   // Folder preview must be dropped above the source page, then rebuilt at its old scroll position.
   home();tapTile(3);tap(80,96);tap(80,66);
-  tap(225,220);tap(80,66);check(playing,"folder preview starts playback");
+  tap(225,220);const int sourceOffset=classic_offset();
+  tap(80,66);check(playing,"folder preview starts playback");
+  const auto liveIds=sourceIds;const int liveTrack=current;
   before=calls;hostFreeHeap=10000;tap(20,20);
-  check(label("Unable to reload list. Check SD card or try again."),"Back rebuild is gated after preview release");
-  check(calls==before,"failed preview rebuild preserves active playback queue");
-  hostFreeHeap=64000;tap(20,20);check(label("Song 04"),"Back rebuild restores source scroll position");
-  tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable");
-  std::cout<<"PASS CY-43: output failure preserves route; preview release, memory refusal, Back rebuild, scroll and queue preservation\n";
+  // CY-116A2 uses a fixed 256-ID cursor, not a whole-list heap allocation.
+  // Low reported heap alone cannot refuse rebuilding; SD staging can still fail.
+  check(label("Song 04")&&classic_offset()==sourceOffset,"low-heap Back rebuild serves rows at the saved scroll position");
+  check(calls==before&&sourceIds==liveIds&&current==liveTrack,"low-heap preview rebuild preserves active playback queue");
+  tap(80,66);check(playing&&calls>before,"low-heap rebuilt preview remains playable");
+  before=calls;hostWriteBudget=0;tap(20,20);
+  check(label("Unable to reload list. Check SD card or try again."),"SD write failure refuses preview rebuild without crashing");
+  check(calls==before&&sourceIds==liveIds&&current==liveTrack,"failed preview rebuild preserves active playback queue");
+  hostWriteBudget=-1;tap(20,20);
+  check(label("Song 04")&&classic_offset()==sourceOffset,"Back retries SD rebuild and restores source scroll position");
+  tap(80,66);check(playing&&calls>before,"rebuilt preview remains playable after SD recovery");
+  hostFreeHeap=64000;
+  std::cout<<"PASS CY-43: output failure preserves route; preview release, low-heap Back rebuild, SD failure/recovery, scroll and queue preservation\n";
   classic_home();ui_go(SCR_CLASSIC);pump();before=calls;
   tapTile(4);check(label("Search Songs")&&label("a")&&label("z"),"Home Search opens alphabet keyboard");snapshot("ui-search-keyboard.svg");
   typeQuery("song");tapRect(cydclassic::layout::keyAction<Rect>(tft.width(),tft.height(),1));
@@ -1526,6 +1558,7 @@ int main(){try{
   searchSessionRegression();
   for(unsigned r:{0u,1u,2u,3u}){navRotation=r;navigationGraph();}navRotation=0;tft.setRotation(0);g_settings.rotation=0;
   g_settings.screenTimeout=2;sleep_begin(UINT32_MAX-1000);sleep_tick(uint32_t(UINT32_MAX-1000)+30000,false);check(backlight==20,"timeout survives millis rollover");
+  if(g_failures){std::cerr<<"FAIL firmware UI: "<<g_failures<<" assertion(s) failed (CYDPOD_UI_CONTINUE)\n";return 1;}
   std::cout<<"PASS CY-50 UI: large targets, keyboard letters/digits/space/delete/clear/done, incremental search and queue commit, sleep settings, dim/off, swallowed wake, timer fade, timeout Off and millis rollover\n";
   std::cout<<"PASS firmware UI: Home, Artist/Album/Song routes, track selection, queue isolation during drag, 5-second drag suppression, button cancellation, volume and Back position; SVG snapshots recorded\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL firmware UI: "<<e.what()<<"\n";return 1;}}

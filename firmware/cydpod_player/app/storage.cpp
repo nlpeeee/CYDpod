@@ -2,6 +2,7 @@
 #include "catalog.h"
 #include "small_file.h"
 #include "search_fold.h"
+#include "catalog_sort.h"
 #ifndef CYDPOD_CATALOG_HOST
 #include "board.h"
 #include <SPI.h>
@@ -127,71 +128,48 @@ static void scanDir(const String& path,int depth,File* output,StorageProgressFn 
   dir.close();
 }
 static bool writeAll(File& f,const void* p,size_t n){return f.write((const uint8_t*)p,n)==n;}
-// CT-03: sort on a 24 B in-RAM key per track instead of reading two 712 B records for
-// every comparison (about 130 k comparisons for 2,000 tracks). The records are read only
-// when the keys cannot settle an order. Without enough heap the keys are skipped and the
-// old record-by-record comparison is used, slower but identical.
-struct SortKey{uint32_t title,artist,album,artistCrc,albumCrc;uint16_t disc,track;};
-// First four bytes folded like compareText (ASCII case, zero padded), big endian: the
-// integer order equals the string order whenever the prefixes differ.
-static uint32_t foldPrefix(const char* s){
-  uint32_t v=0;bool end=false;
-  for(int i=0;i<4;++i){unsigned c=0;if(!end){c=(uint8_t)s[i];if(!c)end=true;else if(c<128)c=unsigned(tolower(int(c)));}v=(v<<8)|c;}
-  return v;
-}
-static uint32_t foldCrc(uint32_t value,const char* s){
-  for(;;++s){unsigned c=(uint8_t)*s;if(c<128)c=unsigned(tolower(int(c)));const uint8_t b=uint8_t(c);value=crc(value,&b,1);if(!*s)return value;}
-}
-// -1/+1 when the keys settle the order exactly as compare() would, 0 when only the records can.
-static int keyCompare(const SortKey& a,const SortKey& b,Order order){
-  if(order==Order::Artist){
-    if(a.artist!=b.artist)return a.artist<b.artist?-1:1;
-    if(a.artistCrc!=b.artistCrc)return 0;
-  }
-  if(order!=Order::Title){
-    if(a.albumCrc!=b.albumCrc)return a.album!=b.album?(a.album<b.album?-1:1):0;
-    if(a.disc!=b.disc)return a.disc<b.disc?-1:1;
-    if(a.track!=b.track)return a.track<b.track?-1:1;
-  }
-  return a.title!=b.title?(a.title<b.title?-1:1):0;
-}
-static SortKey* buildKeys(File& f,int n){
-  const size_t bytes=size_t(std::max(1,n))*sizeof(SortKey);
-  if(ESP.getMaxAllocHeap()<bytes+24u*1024u)return nullptr;
-  SortKey* keys=(SortKey*)malloc(bytes);if(!keys)return nullptr;
-  phase("Preparing to sort");
-  Record& r=work[0];
-  for(int i=0;i<n;++i){
-    if(!fileRecord(f,i,r)){free(keys);return nullptr;}
+// CY-115: the three orders come from catalog_sort.h, an external merge sort whose RAM is one
+// bounded arena whatever the track count. Keys (CT-03) travel with the ids through the temp
+// files, so merging reads no records unless the keys cannot settle an order; then it reads two
+// (work[0], work[1]). Open files during a sort: the catalogue plus one or two temp files.
+struct SdSortHost:SortHost{
+  File& f;Order mode;uint32_t putAt;File tmp[2];uint32_t compares=0;
+  SdSortHost(File& file,Order o,uint32_t at):f(file),mode(o),putAt(at){}
+  static const char* path(int i){return i?"/.sys/sort-b.tmp":"/.sys/sort-a.tmp";}
+  bool key(uint16_t id,SortKey& k) override{
+    Record& r=work[0];if(!fileRecord(f,id,r))return false;
     r.path[sizeof(r.path)-1]=r.title[sizeof(r.title)-1]=r.artist[sizeof(r.artist)-1]=r.album[sizeof(r.album)-1]=r.albumArtist[sizeof(r.albumArtist)-1]=0;
-    albumFolder(r,work[1].path);
-    SortKey& k=keys[i];k.title=foldPrefix(r.title);k.artist=foldPrefix(r.artist);k.album=foldPrefix(r.album);
-    k.artistCrc=foldCrc(0,r.artist);
-    k.albumCrc=foldCrc(foldCrc(foldCrc(0,r.album),albumOwner(r)),work[1].path);
-    k.disc=r.disc;k.track=r.track;
-    if(!(i&63)){breathe();report(i*100/n,-1);}
+    makeSortKey(k,r,crc);return true;
   }
-  return keys;
-}
-static bool appendOrder(File& f,Header& h,Order mode,uint16_t* ids,uint32_t& offset,const SortKey* keys,const char* name){
-  for(int i=0;i<h.tracks;++i)ids[i]=i;
+  bool less(const SortEntry& a,const SortEntry& b,bool& result) override{
+    if(!(++compares&255))breathe();
+    int c=keyCompare(a.key,b.key,mode);
+    if(!c){if(!fileRecord(f,a.id,work[0])||!fileRecord(f,b.id,work[1]))return false;c=compare(work[0],work[1],mode);}
+    result=c?c<0:a.id<b.id;return true;
+  }
+  bool open(int i,bool truncate) override{
+    tmp[i].close();tmp[i]=SD.open(path(i),truncate?"w+":"r+");
+    if(tmp[i])tmp[i].setBufferSize(kCatBuffer);return bool(tmp[i]);
+  }
+  void close(int i) override{tmp[i].close();}
+  bool read(int i,uint32_t at,void* p,size_t n) override{return tmp[i]&&tmp[i].seek(at)&&tmp[i].read((uint8_t*)p,n)==n;}
+  bool write(int i,uint32_t at,const void* p,size_t n) override{return tmp[i]&&tmp[i].seek(at)&&writeAll(tmp[i],p,n);}
+  bool put(const uint16_t* ids,size_t n) override{
+    if(!f.seek(putAt)||!writeAll(f,ids,n*2))return false;putAt+=uint32_t(n*2);return true;}
+  void progress(uint32_t done,uint32_t total) override{if(!(done&63)){breathe();report(int(uint64_t(done)*100/total),-1);}}
+};
+// The sort arena: 36 KB, or less when the heap is short (smaller runs, more merge passes).
+static const size_t kSortArena=36*1024;  // 921 entries of 40 B per run
+static bool appendOrder(File& f,Header& h,Order mode,uint32_t& offset,const char* name){
   phase(name);
-  int bits=0;for(int v=h.tracks;v;v>>=1)++bits;
-  const uint64_t estimate=std::max<uint64_t>(1,uint64_t(h.tracks)*bits*2);  // heapsort: about 2 n log2 n comparisons
-  uint32_t compares=0;
-  // At most 4 KB of IDs plus the key table. IDs and keys are released before BT.
-  const bool ok=sortIds(ids,h.tracks,[&](uint16_t x,uint16_t y,bool& less){
-    if(!(++compares&255)){breathe();report(int(std::min<uint64_t>(99,compares*100/estimate)),-1);}
-    int c=keys?keyCompare(keys[x],keys[y],mode):0;
-    if(!c){
-      if(!fileRecord(f,x,work[0])||!fileRecord(f,y,work[1]))return false;
-      c=compare(work[0],work[1],mode);
-    }
-    less=c?c<0:x<y;return true;
-  });
-  if(!ok)return false;
-  const uint32_t end=offset;offset+=h.tracks*2;
-  return f.seek(end)&&writeAll(f,ids,h.tracks*2);
+  const size_t heap=ESP.getMaxAllocHeap();
+  const size_t arena=heap>kSortArena+24u*1024u?kSortArena:heap>24u*1024u+8192u?heap-24u*1024u:0;
+  SdSortHost host(f,mode,offset);SortStats stats;
+  struct Cleanup{SdSortHost& h;~Cleanup(){h.close(0);h.close(1);SD.remove(SdSortHost::path(0));SD.remove(SdSortHost::path(1));}} cleanup{host};  // every exit path
+  SD.remove(SdSortHost::path(0));SD.remove(SdSortHost::path(1));
+  if(!externalSort(host,h.tracks,arena,stats))return false;
+  Serial.printf("catalog: %s sorted, %u runs, %u merge passes, arena %u B\n",name,(unsigned)stats.runs,(unsigned)stats.passes,(unsigned)stats.arenaBytes);
+  offset+=h.tracks*2;return host.putAt==offset;
 }
 static bool buildGroups(File& f,const Header& h,uint32_t orderAt,bool artist,bool subgroups,
                         File& groups,int& count,File* sub,int& subCount){
@@ -225,14 +203,10 @@ static bool buildCatalog(int slot,uint32_t signature,uint32_t generation,Storage
   bool ok=writeAll(f,&h,sizeof(h));scanned=0;scanCrc=0;scanOk=true;skipped=0;
   if(ok)scanDir("/music",0,&f,progress);
   h.tracks=scanned;ok=ok&&scanOk&&scanCrc==signature;
-  uint16_t* ids=(uint16_t*)malloc(std::max<int>(1,h.tracks)*2);
-  if(!ids)ok=false;
   uint32_t at=sizeof(Header)+h.tracks*sizeof(Record);
-  SortKey* keys=ok?buildKeys(f,h.tracks):nullptr;
-  if(ok){h.songsAt=at;ok=appendOrder(f,h,Order::Title,ids,at,keys,"Sorting songs");}
-  if(ok){h.artistsAt=at;ok=appendOrder(f,h,Order::Artist,ids,at,keys,"Sorting artists");}
-  if(ok){h.albumsAt=at;ok=appendOrder(f,h,Order::Album,ids,at,keys,"Sorting albums");}
-  free(keys);free(ids);
+  if(ok){h.songsAt=at;ok=appendOrder(f,h,Order::Title,at,"Sorting songs");}
+  if(ok){h.artistsAt=at;ok=appendOrder(f,h,Order::Artist,at,"Sorting artists");}
+  if(ok){h.albumsAt=at;ok=appendOrder(f,h,Order::Album,at,"Sorting albums");}
   const char* ag="/.sys/groups.tmp",*al="/.sys/albums.tmp",*aa="/.sys/artistalbums.tmp";
   SD.remove(ag);SD.remove(al);SD.remove(aa);
   if(ok)phase("Grouping artists");

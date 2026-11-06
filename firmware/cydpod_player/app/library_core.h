@@ -25,7 +25,7 @@
 #include <ctype.h>
 
 namespace cydlib {
-constexpr uint16_t MaxTracks = 2000;
+constexpr uint16_t MaxTracks = 10000;  // CY-115: sort RAM no longer depends on it; the format allows 65,535
 constexpr uint32_t fcc(unsigned a,unsigned b,unsigned c,unsigned d) {
   return (a<<24)|(b<<16)|(c<<8)|d;
 }

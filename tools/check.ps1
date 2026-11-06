@@ -240,6 +240,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Wired-route host checks failed.' }
         & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_i2s_diag.sh')
         if ($LASTEXITCODE -ne 0) { throw 'I2S diagnostic host checks failed.' }
+        & wsl.exe -d Debian -- sh -c ('cd ' + ('/mnt/' + $root.Substring(0,1).ToLowerInvariant() + $root.Substring(2).Replace([char]92,[char]47)) + '; sh tests/build_catalog_sort.sh')
+        if ($LASTEXITCODE -ne 0) { throw 'Catalogue sort host checks failed.' }
         & python tools/media_check.py
         if ($LASTEXITCODE -ne 0) { throw 'Host media checks failed. See output above.' }
     }

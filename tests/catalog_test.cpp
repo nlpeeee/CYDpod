@@ -165,7 +165,7 @@ int main(){try{
   put("music/Mix/two.m4a",tagged("Mix B","Artist B","Summer",2,1,"Various Artists"));
   check(storage_begin(nullptr)&&storage_catalogReady()&&storage_catalogRebuilt(),"initial catalogue build");
   check(storage_trackCount()==7,"track count");
-  auto finishSearch=[](){for(int i=0;i<2000&&storage_searchBusy();++i)storage_searchTick();check(!storage_searchBusy()&&!storage_searchFailed(),"bounded search completes");};
+  auto finishSearch=[](){for(int i=0;i<5000&&storage_searchBusy();++i)storage_searchTick();check(!storage_searchBusy()&&!storage_searchFailed(),"bounded search completes");};
   storage_searchStart("ALPHA artist b");check(storage_searchBuilding(),"first search builds compact index");
   storage_searchTick();storage_searchStart("zEB artist a");finishSearch();check(storage_searchCount()==1,"new key cancels old scan during build; case-insensitive words");
   check(storage_trackLabel(storage_searchTracks()[0])=="Zebra","title and artist matched");
@@ -198,7 +198,7 @@ int main(){try{
   // Damage newest B header; A remains readable and can be used without rewriting music.
   put(".sys/library-b.cat",Bytes(12,0));check(storage_begin(nullptr)&&storage_catalogReady()&&storage_trackCount()==7,"damaged newest falls back");
   put("music/B/new.m4a",tagged("A new song","Artist B","Greatest Hits",3));check(storage_begin(progressSeen)&&storage_catalogRebuilt()&&storage_trackCount()==8,"new file triggers rebuild");
-  {const std::vector<std::string> want={"Reading song tags","Preparing to sort","Sorting songs","Sorting artists","Sorting albums","Grouping artists","Grouping albums","Finishing","Checking library"};
+  {const std::vector<std::string> want={"Reading song tags","Sorting songs","Sorting artists","Sorting albums","Grouping artists","Grouping albums","Finishing","Checking library"};
    check(phasesSeen==want,"progress names every rebuild phase (CT-03)");}
   // CT-07: a card that mounts but cannot create a folder is used read-only.
   std::filesystem::remove_all(SD.root/"bg");put("music/B/readonly.m4a",tagged("Added while read-only","Artist B","Greatest Hits",4));
@@ -244,8 +244,8 @@ int main(){try{
   check(storage_browseEntry(songs,0,e)&&e.label=="Song 0000","large title index");
   check(storage_begin(nullptr)&&!storage_catalogRebuilt(),"large warm boot");
   {const std::vector<int> withKeys=libraryOrder();
-   hostLargestBlock=1000;check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"rebuild without sort keys");hostLargestBlock=64000;
-   check(libraryOrder()==withKeys&&withKeys.size()>1000,"key sort and record sort give the same order (CT-03)");}
+   hostLargestBlock=34000;check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"rebuild with a small sort arena (10 KB, more runs)");hostLargestBlock=64000;
+   check(libraryOrder()==withKeys&&withKeys.size()>1000,"full-size and small sort arenas give the same order (CT-03)");}
   // CT-03: varied titles, artists, albums (short, mixed case, shared prefixes): keys and records must order identically.
   SD.root=std::filesystem::current_path()/("catalog-mixed-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   {unsigned seed=12345;auto next=[&](unsigned n){seed=seed*1103515245u+12345u;return (seed>>16)%n;};
@@ -255,7 +255,7 @@ int main(){try{
      put(path,tagged(word(10),artistNames[next(12)],albumNames[next(20)],int(1+next(6)),int(1+next(2)),next(5)==0?artistNames[next(12)]:""));}
    check(storage_begin(nullptr)&&storage_trackCount()==400,"mixed catalogue");
    const std::vector<int> withKeys=libraryOrder();
-   hostLargestBlock=1000;check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"mixed rebuild without keys");hostLargestBlock=64000;
+   hostLargestBlock=34000;check(storage_refreshNextBoot()&&storage_begin(nullptr)&&storage_catalogRebuilt(),"mixed rebuild with a small sort arena");hostLargestBlock=64000;
    check(libraryOrder()==withKeys,"mixed data: key sort equals record sort (CT-03)");}
   // CY-64 fixtures use a separate card so existing ordering/group expectations remain intact.
   SD.root=std::filesystem::current_path()/("catalog-fold-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -280,19 +280,19 @@ int main(){try{
    check(storage_searchCount()==1,"old-version cache rebuilt and matches");
    storage_searchStart("beyonce");check(!storage_searchBuilding(),"new cache reused after one rebuild");finishSearch();}
   std::cout<<"PASS CY-64 folding: Latin accents/case/ligatures, combining marks, CJK/Cyrillic exact, 35/25/31 boundaries, malformed UTF-8, CYDSRCH1 rejected/rebuilt\n";
-  // CT-02: 2,002 files: the extra two are skipped and counted, the library still builds. (A 256+ character path cannot be created by the MSVC host shim, so that branch is covered by reading only.)
+  // CT-02 (CY-115: cap 10,000): MaxTracks+2 files: the extra two are skipped and counted, the library still builds. (A 256+ character path cannot be created by the MSVC host shim, so that branch is covered by reading only.)
   SD.root=std::filesystem::current_path()/("catalog-limit-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-  for(int i=0;i<2002;++i){char path[64],name[32];snprintf(path,sizeof(path),"music/G%d/%04d.m4a",i/200,i);snprintf(name,sizeof(name),"L%04d",i);put(path,tagged(name,"Limit Artist","Limit Album",i%99+1));}
-  check(storage_begin(nullptr)&&storage_catalogReady()&&storage_trackCount()==2000&&storage_skippedCount()==2,"files beyond 2000 skipped and counted, library still built (CT-02)");
-  storage_searchStart("LIMIT");finishSearch();check(storage_searchCount()==50,"search bounded to 50 results in 2000 tracks");
-  check(std::filesystem::file_size(SD.root/".sys/search.idx")==20+2000*64,"search index is 64 bytes per track plus header");
+  for(int i=0;i<cydlib::MaxTracks+2;++i){char path[64],name[32];snprintf(path,sizeof(path),"music/G%d/%04d.m4a",i/200,i);snprintf(name,sizeof(name),"L%04d",i);put(path,tagged(name,"Limit Artist","Limit Album",i%99+1));}
+  check(storage_begin(nullptr)&&storage_catalogReady()&&storage_trackCount()==cydlib::MaxTracks&&storage_skippedCount()==2,"files beyond MaxTracks (10,000) skipped and counted, library still built (CT-02)");
+  storage_searchStart("LIMIT");finishSearch();check(storage_searchCount()==50,"search bounded to 50 results in 10,000 tracks");
+  check(std::filesystem::file_size(SD.root/".sys/search.idx")==20+cydlib::MaxTracks*64,"search index is 64 bytes per track plus header");
   storage_searchStart("limit");hostReadBudget=0;storage_searchTick();check(storage_searchFailed(),"index read failure clears partial results");hostReadBudget=-1;
   SD.root=std::filesystem::current_path()/("catalog-codecs-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   put("music/a.MP3",Bytes(12,0));put("music/b.WAV",Bytes(12,0));put("music/c.m4a",tagged("AAC","Artist","Album",1));put("music/d.FLAC",Bytes(12,0));
   put("music/._ignored.mp3",Bytes(12,0));put("music/._ignored.flac",Bytes(12,0));put("music/no.txt",Bytes(12,0));
   check(storage_begin(nullptr)&&storage_trackCount()==4,"MP3/WAV/M4A/FLAC case-insensitive file filter with fallback titles");
   std::cout<<"PASS catalogue codec filter: MP3/WAV/M4A/FLAC listed, dotfiles ignored, filename fallback titles\n";
-  std::cout<<"PASS search: streamed 64-byte keys, word/substrings, case folding, query cancellation, warm reuse, 2000 tracks/50 results, failed writes and read-only fallback\n";
+  std::cout<<"PASS search: streamed 64-byte keys, word/substrings, case folding, query cancellation, warm reuse, 10,000 tracks/50 results, failed writes and read-only fallback\n";
   std::cout<<"PASS catalogue: real/synthetic M4A tags, artists/albums/titles, multidisc, compilations, 1000 tracks, warm cache, full-card recovery, corrupt generation, refresh, queue isolation, gestures and bounded navigation\n";
   return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL catalogue: "<<e.what()<<"\n";return 1;}}

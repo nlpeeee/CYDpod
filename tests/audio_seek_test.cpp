@@ -128,6 +128,8 @@ int main(int argc,char** argv){
  assert(audio_bufferPct()>=80);audio_next();audio_next();audio_prev();waitIdle();
  assert(audio_currentTrack()==1&&!audio_isPlaying());
  const auto commands=audio_commands();assert(commands.track==-1&&commands.seekMs==-1&&!commands.seeking);
+ for(int i=0;i<1000&&audio_commands().opening;++i)std::this_thread::sleep_for(std::chrono::milliseconds(2));
+ assert(!audio_commands().opening); // CY-118: opened, paused, nothing pulling is settled; the output switch quiesce waits on this
  // The timer multiplier changes samples, never the user's volume setting.
  assert(audio_seekTo(2000));waitIdle();audio_togglePause();
  for(int i=0;i<100&&audio_bufferPct()<30;++i)std::this_thread::sleep_for(std::chrono::milliseconds(2));

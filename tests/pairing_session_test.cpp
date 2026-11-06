@@ -40,5 +40,10 @@ int main(){try{const uint8_t old[6]{1},next[6]{2},none[6]{};
  {PairingSession p;Radio r;r.busy=true;memcpy(r.addr,next,6);ck(p.page(old,0));p.drive(1,r);ck(r.pageErrors==1&&r.drops==0&&r.connects==0&&p.phase==PairingSession::Normal);}
  {PairingSession p;Radio r;r.fail=true;ck(p.page(old,0));p.drive(1,r);ck(r.pageErrors==1&&r.errors==0&&p.phase==PairingSession::Normal);}
  {PairingSession p;p.begin(old,0);ck(!p.page(old,1));PairingSession q;q.select(next,0);ck(!q.page(old,1)&&!q.accepts(old,true));}
+ // CY-118: erased settings (no saved speaker): Pair new while the library's own boot inquiry is running reaches Scanning,
+ // takes a list pick and connects.
+ {PairingSession p;Radio r;const uint8_t pick[6]{5};r.scan=true;p.begin(none,0);p.drive(1,r);ck(r.stops==1&&r.scans==0&&p.phase==PairingSession::Disconnecting);
+  r.scan=false;p.stopped();p.drive(2,r);ck(r.scans==1&&p.phase==PairingSession::Scanning&&p.accepts(pick)&&p.pairing);
+  p.select(pick,3);p.drive(4,r);ck(r.connects==1&&p.accepts(pick));p.connected();ck(!p.pairing&&p.phase==PairingSession::Normal&&r.errors==0);}
  std::cout<<"PASS live pairing: 20 cycles, disconnect/inquiry start+stop acknowledgment, peer filtering, cancellation, timeout and API failure; no restart transport exists\n";return 0;
  }catch(...){std::cerr<<"FAIL live pairing\n";return 1;}}

@@ -1,7 +1,7 @@
 # Fast path: powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia
 # Compile-only. There is deliberately no upload, monitor, port or erase option.
 [CmdletBinding()]
-param([switch]$FlacLegacy, [switch]$SkipProbe, [switch]$SkipHostMedia,
+param([switch]$FlacLegacy, [switch]$LightAudioDiagnostics, [switch]$SkipProbe, [switch]$SkipHostMedia,
     [switch]$IncludeStock, [switch]$IncludeDiagnostics, [switch]$ListJobs,
     [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
 $ErrorActionPreference = 'Stop'
@@ -103,6 +103,10 @@ try {
     # Only MP3 C is staged: the stock wrapper's second AAC core conflicts with MiniAAC.
     $jobs[-1].Flags += ' -fwrapv -fno-strict-aliasing'
     if ($FlacLegacy) { $jobs[-1].Flags += ' -DCYDPOD_FLAC_LEGACY' }
+    if ($LightAudioDiagnostics) { $jobs[-1].Flags += ' -DCYDPOD_LIGHT_AUDIO_DIAGNOSTICS' }
+    $playbackImage = 'codec-pool-v36-headroom'
+    if ($FlacLegacy) { $playbackImage += '-legacy' }
+    if ($LightAudioDiagnostics) { $playbackImage += '-light' }
     $jobs += @{ Name = 'cydpod-uploader'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYD_UPLOADER' }
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
@@ -136,7 +140,7 @@ try {
         # CY-71: the same player forced onto the wired I2S route at every boot (board.h CYD_DEFAULT_OUT_ROUTE, 2 = OUT_WIRED),
         # for testing before the Settings row exists. The saved route in NVS is not overwritten.
         $jobs += @{ Name = 'cydpod-player-wired'; Sketch = $jobs[0].Sketch; Flags = ($jobs[0].Flags + ' -DCYD_DEFAULT_OUT_ROUTE=2'); Library = $jobs[0].Library
-            ImageName = 'codec-pool-v33-wired-jc2432w328c' }
+            ImageName = "$playbackImage-wired-jc2432w328c" }
         if ($IncludeDiagnostics) {
         # CY-70: standalone I2S test tone (no TFT, SD, touch or Bluetooth). The second image is the
         # 32-bit-slot fallback (BCK = 64 x fS) in case the PCM5100A PLL does not lock at 32 x fS.
@@ -154,7 +158,7 @@ try {
         $stageName = 'compile ' + $job.Name
         $stageTimer.Restart()
         $imageName = $job.Name
-        if ($Board -eq 'jc2432w328c') { $imageName = if ($FlacLegacy) { 'codec-pool-v36-legacy-jc2432w328c' } else { 'codec-pool-v36-jc2432w328c' } }
+        if ($Board -eq 'jc2432w328c') { $imageName = "$playbackImage-jc2432w328c" }
         if ($job.ImageName) { $imageName = $job.ImageName }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.

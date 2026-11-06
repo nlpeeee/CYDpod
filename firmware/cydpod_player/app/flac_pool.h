@@ -32,11 +32,11 @@ struct FlacState {
   bool io, coarse;
 
   static bool readAt(File& f, uint32_t at, uint8_t* out, uint32_t n) {
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(CYDPOD_LIGHT_AUDIO_DIAGNOSTICS)
     const int64_t start = esp_timer_get_time();
 #endif
     const bool ok = WavState::readAt(f, at, out, n);
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(CYDPOD_LIGHT_AUDIO_DIAGNOSTICS)
     audio_flacReadTime(uint32_t(esp_timer_get_time() - start));
 #endif
     return ok;
@@ -285,11 +285,11 @@ struct FlacState {
   bool coarse;
   struct Context { FlacState* state; File* file; int (*hook)(void*); void* user; };
   static bool readAt(File& f, uint32_t at, uint8_t* out, uint32_t n) {
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(CYDPOD_LIGHT_AUDIO_DIAGNOSTICS)
     const int64_t start = esp_timer_get_time();
 #endif
     const bool ok = WavState::readAt(f, at, out, n);
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(CYDPOD_LIGHT_AUDIO_DIAGNOSTICS)
     audio_flacReadTime(uint32_t(esp_timer_get_time() - start));
 #endif
     return ok;

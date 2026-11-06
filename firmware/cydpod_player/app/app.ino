@@ -324,6 +324,10 @@ void loop() {
   if (now - lastStat >= 10000) {
     const uint32_t nextMaxMs = audio_takeMaxReadMs();
     const AudioDiagnosticWindow diag = audio_takeDiagnosticWindow();
+#ifdef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
+    Serial.printf("stat: pull missingFrames=%u calls=%u detail=off\n",
+                  unsigned(diag.pull.missingFrames), unsigned(diag.pull.calls));
+#else
     Serial.printf("diag: sd read max %u ms  dac stalls %u (sd only)\n", (unsigned)(diag.flac.sdMaxUs/1000), speaker_stalls());
     if (diag.flac.active) {
       const auto& f = diag.flac;
@@ -340,6 +344,7 @@ void loop() {
     Serial.printf("stat: sched layout=A sdMaxUs=%u nextMaxUs=%u pullGapMaxUs=%u lockMaxUs=%u\n",
                   (unsigned)diag.flac.sdMaxUs, (unsigned)diag.flac.nextMaxUs, (unsigned)diag.pull.gapMaxUs,
                   (unsigned)max(diag.pull.lockWaitUs, diag.pull.lockHoldUs));
+#endif
     const AudioCommands commands=audio_commands();
     Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u pullMax %d pendingTrack %d pendingSeek %ld cmdSerial %lu starting %d seeking %d blocked %d  "
                   "%s  %s  pulls %u frames %u\n",

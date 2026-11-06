@@ -118,9 +118,13 @@ void audio_pull(int16_t* out, int32_t frames) {
   lastPullMs = millis();
   pullCalls++;
   if (frames > maxRequest) maxRequest = frames;
+#ifndef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
   const int64_t callAt = esp_timer_get_time();
+#endif
   portENTER_CRITICAL(&stateLock);
+#ifndef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
   const int64_t lockedAt = esp_timer_get_time();
+#endif
   uint32_t missing = 0;
   int32_t i = 0;
   if (rb && playing && !seeking) {
@@ -140,6 +144,11 @@ void audio_pull(int16_t* out, int32_t frames) {
     if (n < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
     missing = uint32_t(frames - n); // excludes intentional paused/seeking silence
   }
+#ifdef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
+  ++diagnostic.pull.calls;
+  diagnostic.pull.missingFrames += missing;
+  portEXIT_CRITICAL(&stateLock);
+#else
   portEXIT_CRITICAL(&stateLock);
   // One timer read inside the PCM lock. Hold is an upper bound: includes unlock
   // and any preemption before this outside read; diagnostic publication is separate.
@@ -161,6 +170,7 @@ void audio_pull(int16_t* out, int32_t frames) {
   p.missingFrames += missing;
   if (holdUs > p.lockHoldUs) p.lockHoldUs = holdUs;
   portEXIT_CRITICAL(&stateLock);
+#endif
   memset(out + i * 2, 0, (frames - i) * 2 * sizeof(int16_t));
 }
 
@@ -332,17 +342,23 @@ static void decodeTask(void*) {
     if (!file || decodeBlocked || seeking) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
 
     if (m4a.pending() == 0) {
+#ifndef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
       const bool flac = m4a.isFlac(), frameDue = m4a.flacNeedsFrame();
       portENTER_CRITICAL(&stateLock);
       const uint64_t sdBefore = flacSdTotalUs;
       const uint32_t ringStart = rbUsed();
       portEXIT_CRITICAL(&stateLock);
-      const uint32_t r0 = millis();
       const int64_t nextAt = esp_timer_get_time();
+#endif
+      const uint32_t r0 = millis();
       const CodecTrack::Pull pull = m4a.next();
-      const uint32_t nextUs = uint32_t(esp_timer_get_time() - nextAt), took = millis() - r0;
+      const uint32_t took = millis() - r0;
+#ifndef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
+      const uint32_t nextUs = uint32_t(esp_timer_get_time() - nextAt);
+#endif
       portENTER_CRITICAL(&stateLock);
       if (took > diagMaxReadMs) diagMaxReadMs = took;
+#ifndef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
       if (flac) {
         auto& f = diagnostic.flac; f.active = true;
         const uint64_t sdUs = flacSdTotalUs - sdBefore;
@@ -354,6 +370,7 @@ static void decodeTask(void*) {
           if (ringStart < f.ringStartMin) f.ringStartMin = ringStart;
         }
       }
+#endif
       portEXIT_CRITICAL(&stateLock);
       if (pull == CodecTrack::Pull::error) {
         reportError(m4a.name(), curTrack);
@@ -470,6 +487,17 @@ static void advance(bool trackFinished) {
 // ---------------------------------------------------------------------------
 void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle, uint8_t repeat) {
   playing = false;
+  Serial.printf("cmd: audio config ring=%u flac=%s diagnostics=%s\n", unsigned(RB_FRAMES),
+#ifdef CYDPOD_FLAC_LEGACY
+                "legacy",
+#else
+                "compact",
+#endif
+#ifdef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
+                "light");
+#else
+                "full");
+#endif
   rb = (int16_t*)malloc(RB_FRAMES * 2 * sizeof(int16_t));
   orderLen = storage_trackCount();
   if (!rb) {

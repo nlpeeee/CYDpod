@@ -54,11 +54,11 @@ PoolLayout& pool() { return codecPool.layout; }
 miniaac_status CodecTrack::begin(File& file) {
   end(); pool().fir.reset(); pool().file=&file; pool().error="ok"; pool().rate=44100;
   uint8_t magic[4]={};
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(CYDPOD_LIGHT_AUDIO_DIAGNOSTICS)
   const int64_t magicAt = esp_timer_get_time();
 #endif
   const bool magicOk = WavState::readAt(file,0,magic,4);
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(CYDPOD_LIGHT_AUDIO_DIAGNOSTICS)
   const uint32_t magicUs = uint32_t(esp_timer_get_time() - magicAt);
   if (!memcmp(magic,"fLaC",4)) audio_flacReadTime(magicUs);
 #endif

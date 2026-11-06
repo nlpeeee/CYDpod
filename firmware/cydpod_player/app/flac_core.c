@@ -3,6 +3,11 @@
 // a corrupt stream returns an error code instead of aborting the firmware.
 #ifndef CYD_UPLOADER
 #define NDEBUG
+// Arduino uses -Os globally. Keep O2 local to this C unit (including all
+// upstream decoder functions); vendor sources remain byte-identical.
+#if defined(__GNUC__)
+#pragma GCC optimize ("O2")
+#endif
 #define MINIFLAC_IMPLEMENTATION
 #include "miniflac.h"
 #endif

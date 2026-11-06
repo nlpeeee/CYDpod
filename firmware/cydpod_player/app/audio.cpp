@@ -83,6 +83,7 @@ bool audio_ready() { return rb && decodeHandle; }
 static volatile int32_t maxRequest = 0;
 static volatile uint32_t pullCalls = 0;       // diagnostics: how often Bluetooth pulled, and how many frames it took
 static volatile uint32_t pullFrames = 0;
+static volatile uint32_t ringLow = RB_FRAMES;  // CY-119: fewest frames left in the ring after a pull, since the last stat: audio line
 
 void audio_pull(int16_t* out, int32_t frames) {
   if (!rb) { memset(out, 0, frames * 2 * sizeof(int16_t)); return; }
@@ -104,6 +105,7 @@ void audio_pull(int16_t* out, int32_t frames) {
     framesPlayed += n;
     pullFrames += n;
     if (n > 0) starting = false;
+    { const uint32_t left = (rbHead - tail) & (RB_FRAMES - 1); if (!starting && framesPlayed >= RB_FRAMES && left < ringLow) ringLow = left; }
     if (n < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
   }
   portEXIT_CRITICAL(&stateLock);
@@ -538,6 +540,8 @@ uint32_t audio_durationMs()   { return durationMs; }
 uint32_t audio_trackSerial()  { return trackSerial; }
 uint32_t audio_underruns()    { return underruns; }
 uint32_t audio_takeMaxReadMs() { const uint32_t v = diagMaxReadMs; diagMaxReadMs = 0; return v; }
+uint32_t audio_takeRingLow() { const uint32_t v = ringLow; ringLow = RB_FRAMES; return v; }  // RB_FRAMES: no pull measured
+uint32_t audio_ringFrames() { return RB_FRAMES; }
 int32_t  audio_maxRequest()   { return maxRequest; }
 uint32_t audio_pullCalls()    { return pullCalls; }
 uint32_t audio_pullFrames()   { return pullFrames; }

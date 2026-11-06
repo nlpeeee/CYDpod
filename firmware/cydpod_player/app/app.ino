@@ -319,8 +319,8 @@ void loop() {
 
   static uint32_t lastStat = 0;
   if (now - lastStat >= 10000) {
-    Serial.printf("diag: sd read max %u ms  dac stalls %u\n",
-                  audio_takeMaxReadMs(), speaker_stalls());
+    const uint32_t nextMaxMs = audio_takeMaxReadMs();
+    Serial.printf("diag: sd read max %u ms  dac stalls %u\n", nextMaxMs, speaker_stalls());
     const AudioCommands commands=audio_commands();
     Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u pullMax %d pendingTrack %d pendingSeek %ld cmdSerial %lu starting %d seeking %d blocked %d  "
                   "%s  %s  pulls %u frames %u\n",
@@ -341,6 +341,9 @@ void loop() {
     const AudioPcmStats pcm=audio_pcmStats();
     Serial.printf("stat: pcm input %lu output 44100 pumpMaxMs %lu yields %lu resampleBlockUs %lu resampleMaxUs %lu taps 32 phases 256\n",
                   (unsigned long)pcm.inputRate,(unsigned long)pcm.maxPumpMs,(unsigned long)pcm.yields,(unsigned long)pcm.blockUs,(unsigned long)pcm.maxBlockUs);
+    // CY-119: stutter evidence. nextMax = SD read + whole-frame decode; the ring holds audio_ringFrames() frames.
+    Serial.printf("stat: audio in %lu Hz ringLow %u/%u nextMax %u ms underruns %u\n",
+                  (unsigned long)pcm.inputRate, (unsigned)audio_takeRingLow(), (unsigned)audio_ringFrames(), (unsigned)nextMaxMs, (unsigned)audio_underruns());
     // Touch: longest gap between polls since the last report (stat: loop above is
     // stack, not time), then cumulative reasons a recognised touch did nothing.
     cydtouch::Stats& ts = cydtouch::stats();

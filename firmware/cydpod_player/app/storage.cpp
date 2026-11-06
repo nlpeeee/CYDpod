@@ -261,7 +261,9 @@ bool storage_mount(){
 #ifndef CYDPOD_CATALOG_HOST
   static SPIClass sdSPI(VSPI);sdSPI.begin(CYD_SD_SCK_PIN,CYD_SD_MISO_PIN,CYD_SD_MOSI_PIN,CYD_SD_CS_PIN);
   bool ok=SD.begin(CYD_SD_CS_PIN,sdSPI,20000000,"/sd",kMaxFiles);
-  if(!ok){SD.end();ok=SD.begin(CYD_SD_CS_PIN,sdSPI,4000000,"/sd",kMaxFiles);}if(!ok)return false;
+  uint32_t sdHz=20000000;  // CY-119: log the clock in use; the 4 MHz fallback is otherwise silent
+  if(!ok){SD.end();sdHz=4000000;ok=SD.begin(CYD_SD_CS_PIN,sdSPI,sdHz,"/sd",kMaxFiles);}if(!ok)return false;
+  Serial.printf("sd: clock %lu Hz\n",(unsigned long)sdHz);
 #endif
   readOnly=false;
   for(const char* d:{"/music","/bg","/playlists","/.sys"})if(!SD.exists(d)&&!SD.mkdir(d))readOnly=true;

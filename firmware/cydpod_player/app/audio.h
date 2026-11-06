@@ -127,7 +127,9 @@ void audio_pull(int16_t* stereo, int32_t frames);
 
 // Diagnostics for the serial stat line.
 uint32_t audio_underruns();
-uint32_t audio_takeMaxReadMs();     // slowest SD read since last call
+uint32_t audio_takeMaxReadMs();     // slowest m4a.next() (SD read + whole-frame decode) since last call
+uint32_t audio_takeRingLow();       // CY-119: ring low-water in frames since last call (audio_ringFrames() = none measured)
+uint32_t audio_ringFrames();
 uint32_t audio_pullCalls();        // diagnostics: Bluetooth pulls so far, and frames it actually took from the ring
 uint32_t audio_pullFrames();
 int32_t  audio_maxRequest();       // largest frame count Bluetooth asked for at once

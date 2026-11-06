@@ -1,5 +1,8 @@
 #pragma once
 #include "wav_track.h"
+#ifdef ARDUINO
+#include "audio.h"
+#endif
 #include "miniflac.h" // declarations only; the implementation is flac_core.c
 // Native FLAC, 16-bit mono/stereo, block size <= 4608, no heap. miniflac decodes
 // one whole frame into the two int32 channel arrays below (the dominant pool
@@ -90,17 +93,33 @@ struct FlacState {
     spent += n; bufAt = at; inPos = 0; inLen = uint16_t(n);
     return true;
   }
-  // 1 decoded, 0 truncated, -1 corrupt (skippable), -2 unsupported or I/O (fatal).
-  int attempt(File& f, uint8_t* in, const char*& why, bool resyncing) {
+  // No retained callback/state: the audio command snapshot exposes the same
+  // pending track/seek condition as audio.cpp's private requestPending().
+  static bool cooperate(int (*hook)(void*), void* user) {
+    if (hook && hook(user)) return false;
+#ifdef ARDUINO
+    const auto command = audio_commands();
+    if (command.track >= 0 || command.seekMs >= 0) return false;
+    taskYIELD(); // no tick delay added to the valid-frame runway
+#endif
+    return true;
+  }
+  // 1 decoded, 0 truncated, -1 corrupt, -2 fatal, -3 command cancellation.
+  int attempt(File& f, uint8_t* in, const char*& why, bool resyncing, int (*hook)(void*) = nullptr, void* user = nullptr) {
     arm(); bool header = false; int32_t* out[2] = {block, right};
     for (;;) {
       if (inPos >= inLen && !fill(f, in)) { if (io) { why = "flac_read"; return -2; } return 0; }
+      const unsigned channel = dec.frame.cur_subframe;
       uint32_t used32 = 0;
       const uint32_t len = header && inLen - inPos > feedStep ? feedStep : inLen - inPos;
       const MINIFLAC_RESULT r = header ? miniflac_decode(&dec, in + inPos, len, &used32, out)
                                        : miniflac_sync(&dec, in + inPos, len, &used32);
       inPos += uint16_t(used32);
       if (header && dec.frame.subframe.residual.residual_total > dec.frame.header.block_size) { why = "flac_frame"; return -1; }
+      // Eight-byte guarded feeds already resume miniflac in place. At a
+      // channel boundary LPC prediction is complete, so yield without a new
+      // decoder state machine or publishing PCM before the frame CRC passes.
+      if (header && channel != dec.frame.cur_subframe && !cooperate(hook, user)) return -3;
       if (r == MINIFLAC_CONTINUE) continue;
       if (r != MINIFLAC_OK) { why = r == MINIFLAC_FRAME_CRC16_INVALID || r == MINIFLAC_FRAME_CRC8_INVALID ? "flac_crc" : "flac_frame"; return -1; }
       if (header) return 1;
@@ -109,9 +128,10 @@ struct FlacState {
     }
   }
   // Finds the next 0xFF 0xF8/0xF9 at or after `from`; 1 found, 0 end of file, -1 none within the cap.
-  int resync(File& f, uint8_t* in, uint32_t from) {
+  int resync(File& f, uint8_t* in, uint32_t from, int (*hook)(void*) = nullptr, void* user = nullptr) {
     bufAt = from; inPos = inLen = 0; uint32_t scanned = 0; int prev = -1;
     while (scanned < resyncScan) {
+      if (!cooperate(hook, user)) return -2; // bounded to one existing 2048 B fill
       if (inPos >= inLen && !fill(f, in)) return io ? -1 : 0;
       while (inPos < inLen && scanned < resyncScan) {
         const uint8_t c = in[inPos];
@@ -121,13 +141,15 @@ struct FlacState {
     }
     return -1;
   }
-  // 1 frame in block[], 0 end of stream, -1 error (err set). Bad frames are skipped, boundedly.
-  int frame(File& f, uint8_t* in, const char*& err) {
+  // 1 frame, 0 EOF, -1 error (err set), -3 cancelled. Bad frames are skipped, boundedly.
+  int frame(File& f, uint8_t* in, const char*& err, int (*hook)(void*) = nullptr, void* user = nullptr) {
     bool resyncing = false;
     for (;;) {
       if ((total && nextSample >= total) || bufAt + inPos >= end) return 0;
       const uint32_t start = bufAt + inPos; const char* why = "flac_frame";
-      const int r = attempt(f, in, why, resyncing);
+      if (resyncing && !cooperate(hook, user)) return -3;
+      const int r = attempt(f, in, why, resyncing, hook, user);
+      if (r == -3) return -3;
       if (r == 1) {
         const uint64_t s = sampleOf(dec.frame.header);
         blockSize = uint16_t(dec.frame.header.block_size); used = 0; skipped = 0;
@@ -137,7 +159,8 @@ struct FlacState {
       if (r == 0) { err = "flac_truncated"; return -1; }
       if (r == -2) { err = why; return -1; }
       if (++skipped > 8 || ++drops > 64) { err = why; return -1; }
-      const int s = resync(f, in, start + 1);
+      const int s = resync(f, in, start + 1, hook, user);
+      if (s == -2) return -3;
       if (s == 0) return 0;      // damaged tail with no further frame: stop cleanly
       if (s < 0) { err = why; return -1; }
       resyncing = true;
@@ -222,7 +245,8 @@ struct FlacState {
     bufAt = lo; inPos = inLen = 0; nextSample = loS;
     for (;;) {
       if (hook && hook(user)) return Seek::cancelled;
-      const int r = frame(f, in, err);
+      const int r = frame(f, in, err, hook, user);
+      if (r == -3) return Seek::cancelled;
       if (r < 0) return Seek::error;
       if (r == 0) { blockSize = used = 0; return Seek::ok; }
       if (curStart + blockSize > target) { used = uint16_t(target > curStart ? target - curStart : 0); return Seek::ok; }

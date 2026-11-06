@@ -5,6 +5,8 @@
 #include <fstream>
 #include <iostream>
 #include <malloc.h>
+#include <regex>
+#include <unistd.h>
 Settings g_settings;
 static std::vector<String> library;
 static int total=0, playingTrack=0, scans=0;
@@ -18,6 +20,8 @@ void* operator new(size_t n){if(void* p=malloc(n))return p;throw std::bad_alloc(
 void operator delete(void* p) noexcept {free(p);}
 void operator delete(void* p,size_t) noexcept {free(p);}
 bool settings_save(){return true;}
+static bool activePlayback = true;
+bool audio_isPlaying(){return activePlayback;}
 bool audio_ready(){return true;}
 int audio_currentTrack(){return playingTrack;}
 void audio_playTrack(int i){playingTrack=i;}
@@ -36,6 +40,29 @@ int storage_browseTrackIds(CatalogView,int first,uint16_t* out,int cap){
   const int n=std::min(cap,total-first);for(int i=0;i<n;++i)out[i]=total-1-first-i;return n;
 }
 static void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
+// Capture the existing serial shim without changing production logging or the shim.
+struct SerialCapture {
+  FILE* file = std::tmpfile();
+  int saved = -1;
+  SerialCapture() {
+    check(file != nullptr, "serial capture file");
+    std::fflush(stdout); saved = dup(fileno(stdout));
+    check(saved >= 0 && dup2(fileno(file), fileno(stdout)) >= 0, "serial capture redirect");
+  }
+  std::string finish() {
+    std::fflush(stdout); dup2(saved, fileno(stdout)); close(saved); saved = -1;
+    std::rewind(file); char bytes[1024]; std::string text;
+    while (const size_t n = std::fread(bytes, 1, sizeof(bytes), file)) text.append(bytes, n);
+    return text;
+  }
+  ~SerialCapture() { if (saved >= 0) { dup2(saved, fileno(stdout)); close(saved); } std::fclose(file); }
+};
+static void telemetryCheck(const std::string& text, const char* prefix, const char* role, int records, const char* status, bool playing) {
+  const std::string pattern = std::string(prefix) + " role=" + role +
+    " scan=[0-9]+ records=" + std::to_string(records) + " total=[0-9]+ status=" + status +
+    " playing=" + (playing ? "1" : "0") + "\n";
+  check(std::regex_match(text, std::regex(pattern)), "exact telemetry fields, visited records, role/status/playing and one line");
+}
 static const char* crate[] = {
   "Tracks/01 - Britpop and 90s Indie/01-01 - Pulp - Disco 2000.m4a","Tracks/01 - Britpop and 90s Indie/01-02 - Blur - Girls & Boys.m4a","Tracks/01 - Britpop and 90s Indie/01-03 - Blur - Parklife.m4a","Tracks/01 - Britpop and 90s Indie/01-04 - Oasis - Some Might Say.m4a",
   "Tracks/01 - Britpop and 90s Indie/01-05 - Oasis - She's Electric.m4a","Tracks/01 - Britpop and 90s Indie/01-06 - Suede - Beautiful Ones.m4a","Tracks/01 - Britpop and 90s Indie/01-07 - Suede - Trash.m4a","Tracks/01 - Britpop and 90s Indie/01-08 - Supergrass - Alright.m4a",
@@ -90,9 +117,11 @@ static void m3uChecks(){
     {std::ofstream f(SD.root/"playlists/list.m3u",std::ios::binary);f<<text;}
     File catalogue=SD.open("/.sys/fav.txt"),audio=SD.open("/.sys/sources.txt");
     allocationMax=0;const int before=scans;
+    SerialCapture serial;
     check(playlist_select(playlist_sourceAt(SRC_M3U,0))==(found>0),"M3U selection result");
     check((found==0||length==found)&&scans==before+1,"M3U found count/single library pass");
     check(allocationMax<=4000,"M3U key allocation remains at most 4 KB");
+    telemetryCheck(serial.finish(), "cmd: playlist list n=[0-9]+ found=[0-9]+ missing=[0-9]+ ambiguous=[0-9]+", "queue cache=miss", total, "ok", true);
     return playlist_lastMatchStats();
   };
   std::string first="\xEF\xBB\xBF#EXTM3U\r\n",all=first;
@@ -132,7 +161,12 @@ int main(){try{
     check(q->queueAt(-1)==-1&&q->queueAt(n)==-1&&q->queueFind(n-1)==n-1&&q->queueFind(n)==-1&&q->queueCount()==n,"find/count/range");
     q->first=-1;q->cached=0;hostReadBudget=0;check(q->queueAt(0)==-1,"SD short read unavailable");hostReadBudget=-1;check(q->queueAt(0)==0,"retry after SD failure");
     const char* oldPath=q->path;hostWriteBudget=0;check(!playlist_select(2)&&q->path==oldPath&&q->queueAt(0)==0,"failed stage preserves live source");hostWriteBudget=-1;
-    brokenScan=true;check(!playlist_select(2),"partial catalogue scan refused");brokenScan=false;
+    {
+      brokenScan=true; SerialCapture serial;
+      check(!playlist_select(2),"partial catalogue scan refused");
+      telemetryCheck(serial.finish(), "cmd: source folder 2", "queue", n-1, "fail", true);
+      brokenScan=false;
+    }
     check(playlist_select(1)&&length==2&&at(0)==2&&at(1)==7,"favourites library order");
     check(playlist_select(3)&&length==3&&at(0)==7&&at(1)==2&&at(2)==7,"M3U duplicates/order/missing");
     check(playlist_select(2),"restore folder");q=static_cast<PlaylistQueue*>(live.context);
@@ -150,7 +184,12 @@ int main(){try{
     check(playlist_playPreview(preview,n-1,2)&&playingTrack==n-1&&at(n-1)==n-1,"play selected far row");
     const char* playingPath=q->path;
     check(playlist_preview(1,preview)&&preview.queueAt(0)==2&&q->path==playingPath&&at(n-1)==n-1,"preview never overwrites live files");
-    check(playlist_preview(3,preview)&&preview.queueCount()==3&&preview.queueAt(0)==7&&preview.queueAt(1)==2&&preview.queueAt(2)==7,"preview M3U parity");
+    {
+      activePlayback=false; SerialCapture serial;
+      check(playlist_preview(3,preview)&&preview.queueCount()==3&&preview.queueAt(0)==7&&preview.queueAt(1)==2&&preview.queueAt(2)==7,"preview M3U parity");
+      telemetryCheck(serial.finish(), "cmd: playlist list n=4 found=3 missing=1 ambiguous=0", "preview cache=miss", n, "ok", false);
+      activePlayback=true;
+    }
     const char* previewPath=preview.path;
     hostWriteBudget=0;check(!playlist_preview(2,preview)&&preview.path==previewPath,"failed preview retains descriptor");hostWriteBudget=-1;
     check(playlist_preview(2,preview),"reload preview");
@@ -172,6 +211,17 @@ int main(){try{
   PlaylistQueue one;one.count=1;check(one.queueAt(0)==0&&one.queueAt(1)==-1&&one.queueFind(0)==0,"one identity");
   total=1;playlist_begin();check(playlist_select(2)&&length==1&&at(0)==0,"one SD source");
   total=0;playlist_begin();check(!playlist_select(2),"empty source refused");
+  {
+    total=10; std::ofstream(SD.root/".sys/fav.txt"); playlist_begin();
+    SerialCapture serial;
+    check(!playlist_select(1), "empty favourites unchanged");
+    telemetryCheck(serial.finish(), "cmd: source favourites 1", "queue", 0, "ok", true);
+  }
+  {
+    SerialCapture serial; check(playlist_select(0), "All identity");
+    check(serial.finish().empty(), "All has no build telemetry");
+  }
+  std::cout<<"PASS telemetry exact fields/roles/status/playing; playlist records equal fixture library; partial scan/empty favourites/All identity\n";
   std::cout<<"PASS queue empty/one-track sources\n";
 }catch(const std::exception& e){std::cerr<<"FAIL queue: "<<e.what()<<'\n';return 1;}}
 

@@ -154,7 +154,7 @@ try {
         $stageName = 'compile ' + $job.Name
         $stageTimer.Restart()
         $imageName = $job.Name
-        if ($Board -eq 'jc2432w328c') { $imageName = 'codec-pool-v35-jc2432w328c' }
+        if ($Board -eq 'jc2432w328c') { $imageName = if ($FlacLegacy) { 'codec-pool-v36-legacy-jc2432w328c' } else { 'codec-pool-v36-jc2432w328c' } }
         if ($job.ImageName) { $imageName = $job.ImageName }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.
@@ -286,7 +286,7 @@ try {
         $wslRoot = (& wsl.exe -d Debian -- wslpath -a ($root.Replace([char]92,[char]47))).Trim()
         if ($LASTEXITCODE -ne 0 -or !$wslRoot) { throw 'Failed to resolve worktree path for WSL.' }
         Complete-CheckStage $null
-        foreach ($suite in @('build_cpu_stats.sh', 'build_audio_diagnostics.sh', 'build_codec_pool.sh', 'build_flacx_host.sh', 'flac_fast_smoke.sh', 'build_i2s_tone.sh', 'build_wired_fade.sh', 'build_i2s_diag.sh', 'build_bt_policy.sh', 'build_catalog_sort.sh', 'build_playlist_queue.sh', 'build_audio_order.sh', 'build_catalog_validation.sh', 'build_splash.sh')) {
+        foreach ($suite in @('build_cpu_stats.sh', 'build_audio_diagnostics.sh', 'build_codec_pool.sh', 'build_flacx_host.sh', 'flac_fast_smoke.sh', 'build_i2s_tone.sh', 'build_wired_fade.sh', 'build_i2s_diag.sh', 'build_bt_policy.sh', 'build_bt_stream_policy.sh', 'build_catalog_sort.sh', 'build_playlist_queue.sh', 'build_audio_order.sh', 'build_catalog_validation.sh', 'build_splash.sh')) {
             $stageName = 'host ' + $suite
             $stageTimer.Restart()
             & wsl.exe -d Debian --cd $wslRoot -- sh ('tests/' + $suite)

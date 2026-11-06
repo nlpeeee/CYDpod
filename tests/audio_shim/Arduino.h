@@ -14,16 +14,28 @@ using TaskHandle_t=HostAudioTask*;
 inline thread_local HostAudioTask* currentTask=nullptr;
 struct StopAudioTask{};
 inline std::atomic<unsigned> hostOneTickYields{0};
-inline void vTaskDelay(unsigned n){
- if(currentTask&&n==1)++hostOneTickYields;
+inline void hostPausePoint() {
  if(currentTask){
    while(currentTask->pause&&!currentTask->stop){currentTask->atPause=true;std::this_thread::sleep_for(std::chrono::milliseconds(1));}
    currentTask->atPause=false;if(currentTask->stop)throw StopAudioTask{};
  }
+}
+inline void vTaskDelay(unsigned n){
+ if(currentTask&&n==1)++hostOneTickYields;
+ hostPausePoint();
  std::this_thread::sleep_for(std::chrono::milliseconds(n));
  if(currentTask&&currentTask->stop)throw StopAudioTask{};
 }
-inline unsigned ulTaskNotifyTake(unsigned,unsigned){std::unique_lock<std::mutex> lock(currentTask->mutex);currentTask->cv.wait(lock,[]{return currentTask->notified||currentTask->stop;});if(currentTask->stop)throw StopAudioTask{};currentTask->notified=false;return 1;}
+inline unsigned ulTaskNotifyTake(unsigned, unsigned ticks) {
+ hostPausePoint();
+ std::unique_lock<std::mutex> lock(currentTask->mutex);
+ const auto ready = [] { return currentTask->notified || currentTask->stop; };
+ if (ticks == portMAX_DELAY) currentTask->cv.wait(lock, ready);
+ else if (!currentTask->cv.wait_for(lock, std::chrono::milliseconds(ticks), ready)) return 0;
+ if (currentTask->stop) throw StopAudioTask{};
+ currentTask->notified = false;
+ return 1;
+}
 inline unsigned xTaskNotifyGive(TaskHandle_t t){{std::lock_guard<std::mutex> lock(t->mutex);t->notified=true;}t->cv.notify_one();return 1;}
 inline int xTaskCreatePinnedToCore(void(*fn)(void*),const char*,unsigned stack,void* arg,int,TaskHandle_t* out,int core){
  if(stack!=4096||core!=1)throw std::runtime_error("decode stack/core changed");

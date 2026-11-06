@@ -1,10 +1,11 @@
 # Fast path: powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia
 # Compile-only. There is deliberately no upload, monitor, port or erase option.
 [CmdletBinding()]
-param([switch]$FlacLegacy, [switch]$LightAudioDiagnostics, [switch]$SkipProbe, [switch]$SkipHostMedia,
+param([switch]$FlacLegacy, [switch]$LargePcmRing, [switch]$LightAudioDiagnostics, [switch]$SkipProbe, [switch]$SkipHostMedia,
     [switch]$IncludeStock, [switch]$IncludeDiagnostics, [switch]$ListJobs,
     [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
 $ErrorActionPreference = 'Stop'
+if ($FlacLegacy -and $LargePcmRing) { throw 'The large PCM ring trial requires compact FLAC.' }
 $totalTimer = [Diagnostics.Stopwatch]::StartNew()
 $stageTimer = [Diagnostics.Stopwatch]::StartNew()
 $timings = New-Object 'System.Collections.Generic.List[string]'
@@ -104,9 +105,11 @@ try {
     $jobs[-1].Flags += ' -fwrapv -fno-strict-aliasing'
     if ($FlacLegacy) { $jobs[-1].Flags += ' -DCYDPOD_FLAC_LEGACY' }
     if ($LightAudioDiagnostics) { $jobs[-1].Flags += ' -DCYDPOD_LIGHT_AUDIO_DIAGNOSTICS' }
+    if ($LargePcmRing) { $jobs[-1].Flags += ' -DCYDPOD_PCM_RING_4096' }
     $playbackImage = 'codec-pool-v36-headroom'
     if ($FlacLegacy) { $playbackImage += '-legacy' }
     if ($LightAudioDiagnostics) { $playbackImage += '-light' }
+    if ($LargePcmRing) { $playbackImage += '-ring4096' }
     $jobs += @{ Name = 'cydpod-uploader'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYD_UPLOADER' }
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {

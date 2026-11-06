@@ -12,19 +12,21 @@
 // ---------------------------------------------------------------------------
 // Ring buffer: one producer (decode task), one consumer (audio_pull)
 // ---------------------------------------------------------------------------
-// 2048 stereo frames = 46 ms, 8 KB. 1024 was tried in stage 2 and underran
-// ~80 times a second with a background playing. Not because Bluetooth asks
-// for much at once -- it pulls 128 frames per call (audio_maxRequest()) -- but
-// because the background's .anim reads share the SD card with this task, and
-// 23 ms is not enough cushion to wait out them plus a frame decode. The same
-// run showed background frames taking 300 ms instead of ~95.
-static const uint32_t RB_FRAMES = 2048;
+// The default 8 KiB holds ~46 ms. Compact FLAC can trial 16 KiB (~93 ms).
+#ifdef CYDPOD_PCM_RING_4096
+static constexpr uint32_t RB_FRAMES = 4096;
+#else
+static constexpr uint32_t RB_FRAMES = 2048;
+#endif
+static constexpr uint32_t PCM_BATCH_FRAMES = 128;
+static_assert(sizeof(M4aStereo) == 2 * sizeof(int16_t), "packed stereo PCM");
 static int16_t*          rb = nullptr;
 static volatile uint32_t rbHead = 0;          // producer only
 static volatile uint32_t rbTail = 0;          // consumer only
 // One short lock covers ring publication, consumer copies, commands and clock epochs.
 // Never hold it across SD/decoder operations or waits.
 static portMUX_TYPE stateLock = portMUX_INITIALIZER_UNLOCKED;
+static bool producerWaiting = false; // armed under stateLock only when the ring is full
 
 // All diagnostics, including 64-bit SD totals, are copied/reset under stateLock.
 static AudioDiagnosticWindow diagnostic;
@@ -82,6 +84,8 @@ static volatile bool     opening = false;     // decodeTask is inside openTrack/
 static volatile uint32_t lastPullMs = 0;
 
 static TaskHandle_t decodeHandle = nullptr;
+static bool decoderReleased = false; // control task only, keeps pre-start requests behind the startup barrier
+static void wakeDecoder() { if (decoderReleased && decodeHandle) xTaskNotifyGive(decodeHandle); }
 static volatile bool startupComplete = false;
 static volatile uint32_t pcmInputRate=0, pcmMaxPumpMs=0, pcmYields=0;
 static volatile uint32_t pcmBlockUs=0, pcmMaxBlockUs=0;
@@ -126,23 +130,29 @@ void audio_pull(int16_t* out, int32_t frames) {
   const int64_t lockedAt = esp_timer_get_time();
 #endif
   uint32_t missing = 0;
-  int32_t i = 0;
+  int32_t gain = 0, copied = 0;
+  bool wake = false;
   if (rb && playing && !seeking) {
-    const int32_t gain = (int32_t)volumePct * volumePct * sleepGain / 100;   // perceptual-ish, /10000
-    uint32_t tail = rbTail;
-    const int32_t n = min<int32_t>(frames, (rbHead - tail) & (RB_FRAMES - 1));
-    for (; i < n; i++) {
-      out[i * 2]     = (int16_t)((int32_t)rb[tail * 2]     * gain / 10000);
-      out[i * 2 + 1] = (int16_t)((int32_t)rb[tail * 2 + 1] * gain / 10000);
-      tail = (tail + 1) & (RB_FRAMES - 1);
+    const int32_t volume = volumePct;
+    gain = volume * volume * sleepGain / 100; // perceptual-ish, /10000
+    const uint32_t tail = rbTail;
+    copied = min<int32_t>(frames, rbUsed());
+    const uint32_t first = min<uint32_t>(copied, RB_FRAMES - tail);
+    memcpy(out, rb + tail * 2, first * 2 * sizeof(int16_t));
+    if (first < uint32_t(copied))
+      memcpy(out + first * 2, rb, (copied - first) * 2 * sizeof(int16_t));
+    rbTail = (tail + copied) & (RB_FRAMES - 1);
+    framesPlayed += copied;
+    pullFrames += copied;
+    if (copied > 0) {
+      starting = false;
+      wake = producerWaiting;
+      producerWaiting = false;
     }
-    rbTail = tail;
-    framesPlayed += n;
-    pullFrames += n;
-    if (n > 0) starting = false;
-    { const uint32_t left = (rbHead - tail) & (RB_FRAMES - 1); if (!starting && framesPlayed >= RB_FRAMES && left < ringLow) ringLow = left; }
-    if (n < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
-    missing = uint32_t(frames - n); // excludes intentional paused/seeking silence
+    const uint32_t left = rbUsed();
+    if (!starting && framesPlayed >= RB_FRAMES && left < ringLow) ringLow = left;
+    if (copied < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
+    missing = uint32_t(frames - copied); // excludes intentional paused/seeking silence
   }
 #ifdef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
   ++diagnostic.pull.calls;
@@ -171,32 +181,61 @@ void audio_pull(int16_t* out, int32_t frames) {
   if (holdUs > p.lockHoldUs) p.lockHoldUs = holdUs;
   portEXIT_CRITICAL(&stateLock);
 #endif
-  memset(out + i * 2, 0, (frames - i) * 2 * sizeof(int16_t));
+  if (wake) xTaskNotifyGive(decodeHandle);
+  for (int32_t i = 0; i < copied * 2; ++i)
+    out[i] = int16_t(int32_t(out[i]) * gain / 10000);
+  memset(out + copied * 2, 0, (frames - copied) * 2 * sizeof(int16_t));
 }
 
 // ---------------------------------------------------------------------------
 // Producer: resampler and PCM callback
 // ---------------------------------------------------------------------------
-static volatile bool abortDecode = false;     // a request arrived mid-buffer
-
-static void pushFrame(int16_t l, int16_t r) {
-  for (;;) {
+// Called by the decoder with at most PCM_BATCH_FRAMES frames. Commands and
+// publication share a lock, so a seek or track change can invalidate a batch.
+static bool pushFrames(const M4aStereo* pcm, uint32_t count) {
+  while (count) {
     portENTER_CRITICAL(&stateLock);
-    if (requestPending()) { abortDecode = true; portEXIT_CRITICAL(&stateLock); return; }
-    if (rbFree()) {
-      const uint32_t h = rbHead;
-      rb[h * 2] = l; rb[h * 2 + 1] = r;
-      rbHead = (h + 1) & (RB_FRAMES - 1);
-      portEXIT_CRITICAL(&stateLock); return;
+    if (requestPending()) {
+      producerWaiting = false;
+      portEXIT_CRITICAL(&stateLock);
+      return false;
     }
+    const uint32_t n = min(count, rbFree());
+    if (n) {
+      const uint32_t head = rbHead;
+      const uint32_t first = min(n, RB_FRAMES - head);
+      memcpy(rb + head * 2, pcm, first * sizeof(*pcm));
+      if (first < n) memcpy(rb, pcm + first, (n - first) * sizeof(*pcm));
+      rbHead = (head + n) & (RB_FRAMES - 1);
+      producerWaiting = false;
+      portEXIT_CRITICAL(&stateLock);
+      pcm += n;
+      count -= n;
+      continue;
+    }
+    producerWaiting = true;
     portEXIT_CRITICAL(&stateLock);
-    const uint32_t waitAt=micros();
-    vTaskDelay(pdMS_TO_TICKS(4));
-    pcmSinkWaitUs+=micros()-waitAt;
+    const uint32_t waitAt = micros();
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    pcmSinkWaitUs += micros() - waitAt;
   }
+  return true;
 }
 
-static bool ringSink(void*,int16_t l,int16_t r) { pushFrame(l,r);return !abortDecode; }
+struct PcmBatch {
+  M4aStereo frames[PCM_BATCH_FRAMES];
+  uint32_t used = 0;
+  bool flush() {
+    const uint32_t count = used;
+    used = 0;
+    return pushFrames(frames, count);
+  }
+  static bool sink(void* user, int16_t l, int16_t r) {
+    auto& batch = *static_cast<PcmBatch*>(user);
+    batch.frames[batch.used++] = {l, r};
+    return batch.used < PCM_BATCH_FRAMES || batch.flush();
+  }
+};
 static CodecTrack m4a;                        // stateless facade over the single 40 KiB pool
 static File     file;
 
@@ -313,8 +352,8 @@ static void decodeTask(void*) {
   // The loop task releases this barrier only after playlist_restore().
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   if (reqTrack < 0) startupComplete = true; // empty library
+  PcmBatch batch;
   for (;;) {
-    abortDecode = false;
     portENTER_CRITICAL(&stateLock);
     const int t = reqTrack;
     const int32_t seek = reqSeekMs;
@@ -339,7 +378,7 @@ static void decodeTask(void*) {
       else { Serial.println("cmd: seek ignored (no open track)"); finishCommand(serial); } // raced with closeTrack()
       continue;
     }
-    if (!file || decodeBlocked || seeking) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
+    if (!file || decodeBlocked || seeking) { ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20)); continue; }
 
     if (m4a.pending() == 0) {
 #ifndef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
@@ -381,9 +420,9 @@ static void decodeTask(void*) {
         continue;
       }
       if (pull == CodecTrack::Pull::eof) {
-        m4a.drain(ringSink,nullptr);
+        if (!m4a.drain(PcmBatch::sink, &batch) || !batch.flush()) continue;
         // End of track: let what is buffered play out, then say so.
-        while ((rbUsed() > 0 || !playing) && !requestPending()) vTaskDelay(pdMS_TO_TICKS(10));
+        while ((rbUsed() > 0 || !playing) && !requestPending()) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
         if (!requestPending()) {
           closeTrack();
           endedCommand=serial; endedSerial++;
@@ -391,22 +430,31 @@ static void decodeTask(void*) {
         continue;
       }
     }
-    const uint32_t pumpAt=millis(),pumpAtUs=micros();pcmSinkWaitUs=0;
-    while (m4a.pending() > 0 && !abortDecode) {
+    if (m4a.sampleRate() == 44100) {
+      while (m4a.pending()) {
+        const uint32_t n = min<size_t>(m4a.pending(), PCM_BATCH_FRAMES);
+        if (!pushFrames(m4a.pcm(), n)) break;
+        m4a.consume(n);
+      }
+      continue;
+    }
+
+    const uint32_t pumpAt = millis(), pumpAtUs = micros();
+    pcmSinkWaitUs = 0;
+    while (m4a.pending()) {
       const M4aStereo* f = m4a.pcm();
-      m4a.output(f->l, f->r,ringSink,nullptr);
-      if (abortDecode) break;
+      if (!m4a.output(f->l, f->r, PcmBatch::sink, &batch)) break;
       m4a.consume(1);
     }
-    if(m4a.sampleRate()!=44100 && !abortDecode) {
-      pcmBlockUs=micros()-pumpAtUs-pcmSinkWaitUs;
-      if(pcmBlockUs>pcmMaxBlockUs)pcmMaxBlockUs=pcmBlockUs;
-      const uint32_t took=millis()-pumpAt;if(took>pcmMaxPumpMs)pcmMaxPumpMs=took;
-      // FIR work can be slower than the consumer, so the ring may NEVER fill.
-      // A priority-5 producer must still sleep to release core 1 to loop/idle;
-      // taskYIELD alone would only admit tasks at the same priority.
-      ++pcmYields;vTaskDelay(1);
-    }
+    if (m4a.pending() || !batch.flush()) continue; // superseded by a command
+    pcmBlockUs = micros() - pumpAtUs - pcmSinkWaitUs;
+    if (pcmBlockUs > pcmMaxBlockUs) pcmMaxBlockUs = pcmBlockUs;
+    const uint32_t took = millis() - pumpAt;
+    if (took > pcmMaxPumpMs) pcmMaxPumpMs = took;
+    // FIR work can be slower than the consumer, leaving no ring-space wait.
+    // Sleep one tick so the lower-priority loop and idle can run on core 1.
+    ++pcmYields;
+    vTaskDelay(1);
   }
 }
 
@@ -458,6 +506,7 @@ static void request(int track, uint32_t startMs = 0) {
   decodeBlocked = false;
   const uint32_t serial=commandSerial;
   portEXIT_CRITICAL(&stateLock);
+  wakeDecoder();
   if(superseded>=0)Serial.printf("cmd: track %d superseded by track %d (latest wins)\n",superseded,track);
   Serial.printf("cmd: track %d queued serial %lu start %lu\n",track,(unsigned long)serial,(unsigned long)startMs);
 }
@@ -519,7 +568,10 @@ void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle,
   }
 }
 
-void audio_start() { if (decodeHandle) xTaskNotifyGive(decodeHandle); }
+void audio_start() {
+  decoderReleased = true;
+  wakeDecoder();
+}
 bool audio_startupComplete() { return !decodeHandle || startupComplete; }
 
 void audio_tick() {
@@ -593,6 +645,7 @@ bool audio_seekTo(uint32_t ms) {
   ++commandSerial; seeking = true;
   const uint32_t goal=seekGoalMs,serial=commandSerial;
   portEXIT_CRITICAL(&stateLock);
+  wakeDecoder();
   Serial.printf("cmd: seek %lu queued serial %lu (latest wins)\n",(unsigned long)goal,(unsigned long)serial);
   return true;
 }
@@ -644,7 +697,13 @@ uint32_t audio_durationMs()   { return durationMs; }
 uint32_t audio_trackSerial()  { return trackSerial; }
 uint32_t audio_underruns()    { return underruns; }
 uint32_t audio_takeMaxReadMs() { portENTER_CRITICAL(&stateLock); const uint32_t v = diagMaxReadMs; diagMaxReadMs = 0; portEXIT_CRITICAL(&stateLock); return v; }
-uint32_t audio_takeRingLow() { const uint32_t v = ringLow; ringLow = RB_FRAMES; return v; }  // RB_FRAMES: no pull measured
+uint32_t audio_takeRingLow() {
+  portENTER_CRITICAL(&stateLock);
+  const uint32_t v = ringLow;
+  ringLow = RB_FRAMES;
+  portEXIT_CRITICAL(&stateLock);
+  return v;
+}
 uint32_t audio_ringFrames() { return RB_FRAMES; }
 int32_t  audio_maxRequest()   { return maxRequest; }
 uint32_t audio_pullCalls()    { return pullCalls; }

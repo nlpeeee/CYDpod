@@ -28,7 +28,7 @@ static int seekFormat(const char* path){
  audio_seekRelative(1);waitIdle();assert(audio_positionMs()>=1751&&audio_positionMs()<=1753);
  assert(audio_seekTo(UINT32_MAX));waitIdle();assert(audio_positionMs()<=reference.size()*1000/44100);
  assert(audio_seekTo(100));waitIdle();assert(!audio_commands().blocked);
- decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);
+ decodeHandle->stop=true;xTaskNotifyGive(decodeHandle);decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);
  printf("PASS production WAV/MP3 seek: paused, relative, backwards, clamped EOF, exact PCM, truthful position: %s\n",path);return 0;
 }
 static int resampleTask(const char* path,bool expectReject){
@@ -49,7 +49,7 @@ static int resampleTask(const char* path,bool expectReject){
   audio_setPlaying(false);assert(audio_seekTo(100));waitIdle();
   printf("PASS production 48k task: fast consumer, %u voluntary yields, command acknowledged\n",unsigned(hostOneTickYields));
  }
- decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);return 0;
+ decodeHandle->stop=true;xTaskNotifyGive(decodeHandle);decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);return 0;
 }
 int main(int argc,char** argv){
  // CY-72: a fresh process models boot after an output-switch restart. The
@@ -63,7 +63,7 @@ int main(int argc,char** argv){
    int16_t out[256];const auto pos=audio_positionMs();
    for(int i=0;i<10;++i){audio_pull(out,128);assert(silent(out,256));}
    assert(audio_positionMs()==pos&&!audio_isPlaying());
-   decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);
+   decodeHandle->stop=true;xTaskNotifyGive(decodeHandle);decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);
    puts("OUTPUT_RESTART_RESUME_OK: same track 1, queue position and 8456 ms; paused pulls stay silent without advancing");return 0;
  }
  if(argc>2)return resampleTask(argv[1],!strcmp(argv[2],"reject"));
@@ -171,6 +171,6 @@ int main(int argc,char** argv){
    std::this_thread::sleep_for(std::chrono::milliseconds(2));
  }
  hostReadBudget=-1;retryTerminalFailure();
- decodeHandle->stop=true;decodeHandle->cv.notify_one();decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);rb=nullptr;
+ decodeHandle->stop=true;xTaskNotifyGive(decodeHandle);decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);rb=nullptr;
  puts("PASS production audio: saved resume, paused/disconnected seek, coalescing, stale-ring removal, track supersession, paused EOF, read failure, Play recovery, stale completion/failure rejection, full-ring commands, sleep gain, idempotent intent, pending skip retained on Play, terminal open/begin/decode retry; queue/play intent retained");
 }

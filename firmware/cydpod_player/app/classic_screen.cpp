@@ -1070,7 +1070,7 @@ bool press(PressPhase phase,int x,int y){
     const bool stopping=flingActive;
     advanceFling(inputNow());
     ready=-1;dimmed=-1;gesture.down(x,y,topRow(),hit);
-    listPress=browse()&&page().mode!=Mode::Home&&hit>=0&&hit<KeyBase&&count>rows();
+    listPress=browse()&&page().mode!=Mode::Home&&hit>=0&&count>rows();
     listDragging=false;thumbDrag=hit==Thumb;dragOffset=page().offsetPx;
     if(listPress){
       if(scrollCfgDirty&&!stopping)applyScrollCfg();

@@ -1429,7 +1429,7 @@ static void playlistBackRegression(){
   select();hostReadBudget=0;tap(20,20);
   check(classic_previewCursor()->queueCount()==0,"SD row read error frees retained cursor");hostReadBudget=-1;
   ui_redraw();pump();check(classic_previewBuilds()==++builds,"SD recovery rebuilds discarded cursor");
-  select();tapRect(L::favourite<Rect>(tft.width()));hostWriteBudget=0;tap(20,20);
+  openList(2);select();tapRect(L::favourite<Rect>(tft.width()));hostWriteBudget=0;tap(20,20);
   check(label("Unable to reload list. Check SD card or try again.")&&classic_previewCursor()->queueCount()==0,"failed rebuild retains no cursor");
   hostWriteBudget=-1;tap(20,20);check(classic_mode()==4,"Back retries a failed rebuild");independent();
   home();check(classic_previewCursor()->queueCount()==0,"Home frees cursor for PC playlist refresh");

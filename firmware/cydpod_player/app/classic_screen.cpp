@@ -218,7 +218,10 @@ Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
 Rect transportRect(int action){return L::transport<Rect>(tft.width(),tft.height(),action==Prev?0:action==Play?1:2);}
 void flushSettings(){if(savePending){g_settings.volume=audio_volume();settings_save();savePending=false;}}
 void freePreview(){preview.path=nullptr;preview.count=0;preview.first=-1;preview.cached=0;previewCount=0;previewFailed=false;previewKey=PreviewKey{};}
-bool previewMatches(int source){return previewKey.source==source&&previewKey.kind==playlist_kind(source)&&
+// Source IDs are All, Favourites, folders, then M3Us (playlist.h). Count access
+// avoids readSource's transient files/Strings just to validate a retained key.
+SourceKind previewKind(int source){return source<2?SourceKind(source):source<2+playlist_sourceCount(SRC_FOLDER)?SRC_FOLDER:SRC_M3U;}
+bool previewMatches(int source){return previewKey.source==source&&previewKey.kind==previewKind(source)&&
   previewKey.crc==storage_libraryCrc()&&previewKey.tracks==storage_trackCount()&&preview.queueCount()>0&&!previewFailed;}
 void text(const char* s,const Rect& r,uint16_t fg,uint16_t bg,TypeRole role=TYPE_BODY){ui_text(String(s),r.x+L::TextMargin,r.cy(),ML_DATUM,fg,bg,r.w-2*L::TextMargin,role);}
 void centred(const String& s,int y,uint16_t fg,uint16_t bg,int width=0){ui_text(s,tft.width()/2,y,MC_DATUM,fg,bg,width?width:tft.width()-2*L::TextMargin);}
@@ -498,7 +501,7 @@ bool buildPreview(int source){
   ++hostPreviewBuilds;
 #endif
   if(!playlist_preview(source,preview)){freePreview();return false;}
-  previewKey={storage_libraryCrc(),storage_trackCount(),int16_t(source),playlist_kind(source)};
+  previewKey={storage_libraryCrc(),storage_trackCount(),int16_t(source),previewKind(source)};
   previewCount=preview.queueCount();previewFailed=false;
   return true;
 }
@@ -520,8 +523,8 @@ void openPlaying(){
   page()=Page{};page().mode=Mode::Player;ui_go(SCR_CLASSIC);
 }
 void backToPage(){
-  const bool list=page().mode==Mode::SourceSongs;
-  const int source=page().source;const bool rebuilt=list&&!previewMatches(source);const uint32_t started=millis();
+  const uint32_t started=millis();const bool list=page().mode==Mode::SourceSongs;
+  const int source=page().source;const bool rebuilt=list&&!previewMatches(source);
   ui_go(SCR_CLASSIC);
   if(list)Serial.printf("cmd: back list rebuild ms=%lu rebuilt=%u source=%d\n",(unsigned long)(millis()-started),unsigned(rebuilt),source);
 }

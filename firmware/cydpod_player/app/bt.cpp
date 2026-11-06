@@ -49,6 +49,21 @@ static bool isKnownPeer(const uint8_t* a){
 }
 
 
+// Diagnostic snapshots only; BtAppT writes, loop reads aligned scalar values.
+static volatile esp_a2d_audio_state_t streamAudio=ESP_A2D_AUDIO_STATE_SUSPEND;
+static volatile int streamMedia=0;
+static uint32_t intentSeen=0,intentPulls=0,intentFrames=0;
+static const char* audioName(esp_a2d_audio_state_t s){return s==ESP_A2D_AUDIO_STATE_STARTED?"STARTED":"SUSPEND";}
+static const char* mediaName(int s){
+  switch(s){case 0:return "IDLE";case 1:return "STARTING";case 2:return "STARTED";case 3:return "STOPPING";default:return "UNKNOWN";}
+}
+static const char* connName(esp_a2d_connection_state_t s){
+  switch(s){case ESP_A2D_CONNECTION_STATE_DISCONNECTED:return "DISCONNECTED";case ESP_A2D_CONNECTION_STATE_CONNECTING:return "CONNECTING";case ESP_A2D_CONNECTION_STATE_CONNECTED:return "CONNECTED";case ESP_A2D_CONNECTION_STATE_DISCONNECTING:return "DISCONNECTING";default:return "UNKNOWN";}
+}
+static const char* avName(APP_AV_STATE s){
+  switch(s){case APP_AV_STATE_IDLE:return "IDLE";case APP_AV_STATE_DISCOVERING:return "DISCOVERING";case APP_AV_STATE_DISCOVERED:return "DISCOVERED";case APP_AV_STATE_UNCONNECTED:return "UNCONNECTED";case APP_AV_STATE_CONNECTING:return "CONNECTING";case APP_AV_STATE_CONNECTED:return "CONNECTED";case APP_AV_STATE_DISCONNECTING:return "DISCONNECTING";default:return "UNKNOWN";}
+}
+
 class CydSource : public BluetoothA2DPSource {
  public:
   enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page };
@@ -101,19 +116,22 @@ class CydSource : public BluetoothA2DPSource {
   // A background page ended without a link: counted, never shown as an error.
   void pageFailed(const char* operation){POLICY(pageFailed(millis()));Serial.printf("bt: page failed: %s\n",operation);}
  protected:
-  void app_a2d_callback(esp_a2d_cb_event_t event,esp_a2d_cb_param_t* param) override {
-    if(param&&event==ESP_A2D_AUDIO_STATE_EVT)Serial.printf("bt: audio state %d  heap %u\n",int(param->audio_stat.state),ESP.getFreeHeap());
-    if(param&&event==ESP_A2D_MEDIA_CTRL_ACK_EVT)Serial.printf("bt: media ack cmd %d status %d  heap %u\n",int(param->media_ctrl_stat.cmd),int(param->media_ctrl_stat.status),ESP.getFreeHeap());
-    BluetoothA2DPSource::app_a2d_callback(event,param); // copied into BtAppT's queue
-  }
   void bt_app_av_sm_hdlr(uint16_t event,void* param) override {
+    rollEventWindow(millis());
+    auto* diag=(esp_a2d_cb_param_t*)param;
+    if(diag&&event==ESP_A2D_MEDIA_CTRL_ACK_EVT){
+      const unsigned cmd=unsigned(diag->media_ctrl_stat.cmd);
+      const long delay=cmd>=1&&cmd<=3&&(cmdMask&(1u<<cmd))?long(millis()-cmdAt[cmd-1]):-1L;
+      Serial.printf("bt: media ack cmd=%u status=%d ms=%ld\n",cmd,int(diag->media_ctrl_stat.status),delay);
+      if(cmd>=1&&cmd<=3)cmdMask&=~(1u<<cmd);
+    }
     if(param&&event==ESP_A2D_CONNECTION_STATE_EVT){
       auto* p=(esp_a2d_cb_param_t*)param;const uint8_t* addr=p->conn_stat.remote_bda;
       const auto next=p->conn_stat.state;
       if(next==ESP_A2D_CONNECTION_STATE_CONNECTED&&!session.accepts(addr,isKnownPeer(addr))){
-        Serial.println("bt: ignoring stale/unselected peer");markOurDrop();esp_a2d_disconnect((uint8_t*)addr);return;
+        Serial.println("bt: ignoring stale/unselected peer");logEvent(event);markOurDrop();esp_a2d_disconnect((uint8_t*)addr);return;
       }
-      if(linkBusy()&&cyd::PairingSession::any(lastPeer)&&memcmp(addr,lastPeer,6)!=0)return;
+      if(linkBusy()&&cyd::PairingSession::any(lastPeer)&&memcmp(addr,lastPeer,6)!=0){logEvent(event);return;}
       if(next==ESP_A2D_CONNECTION_STATE_CONNECTING||next==ESP_A2D_CONNECTION_STATE_CONNECTED)memcpy(lastPeer,addr,6);
       // The library pages the saved speaker once at boot and then stays out of it:
       // every later page, with its backoff and cap, is bt_tick's (bt_reconnect_policy.h).
@@ -127,6 +145,7 @@ class CydSource : public BluetoothA2DPSource {
         Serial.printf("bt: link ended (%s, %s%s)\n",wasUp?"was up":"page",abnormal?"abnormal":"normal",ours?", ours":"");
       }
       if(next==ESP_A2D_CONNECTION_STATE_CONNECTED){
+        if(connection_state!=ESP_A2D_CONNECTION_STATE_CONNECTED){++epoch;cmdMask=0;}
         POLICY(linkUp());
         set_last_connection((uint8_t*)addr);
         session.connected();pairingActive=false;
@@ -134,11 +153,48 @@ class CydSource : public BluetoothA2DPSource {
         if(discovery_active)esp_bt_gap_cancel_discovery();
       }
     }
+    // No virtual media-send hook: mirror the pinned library's dispatch branches.
+    // rc=-1 means unavailable; these lines infer sends, never issue commands.
+    if(s_a2d_state==APP_AV_STATE_CONNECTING&&
+       (event==ESP_A2D_AUDIO_STATE_EVT||event==ESP_A2D_AUDIO_CFG_EVT||event==ESP_A2D_MEDIA_CTRL_ACK_EVT||event==BT_APP_HEART_BEAT_EVT))inferCommand(ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY);
+    else if(s_a2d_state==APP_AV_STATE_CONNECTED){
+      if(event==BT_APP_HEART_BEAT_EVT&&s_media_state==0)inferCommand(ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY);
+      if(diag&&event==ESP_A2D_MEDIA_CTRL_ACK_EVT){
+        if(s_media_state==0&&diag->media_ctrl_stat.cmd==ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY&&diag->media_ctrl_stat.status==ESP_A2D_MEDIA_CTRL_ACK_SUCCESS)inferCommand(ESP_A2D_MEDIA_CTRL_START);
+        if(s_media_state==3&&!(diag->media_ctrl_stat.cmd==ESP_A2D_MEDIA_CTRL_SUSPEND&&diag->media_ctrl_stat.status==ESP_A2D_MEDIA_CTRL_ACK_SUCCESS))inferCommand(ESP_A2D_MEDIA_CTRL_SUSPEND);
+      }
+    }
     BluetoothA2DPSource::bt_app_av_sm_hdlr(event,param);
+    streamMedia=s_media_state;
+    if(diag&&(event==ESP_A2D_CONNECTION_STATE_EVT||event==ESP_A2D_AUDIO_STATE_EVT||event==ESP_A2D_MEDIA_CTRL_ACK_EVT))logEvent(event);
+    if(diag&&event==ESP_A2D_CONNECTION_STATE_EVT&&diag->conn_stat.state==ESP_A2D_CONNECTION_STATE_DISCONNECTED)cmdMask=0;
     session.drive(millis(),*this);publish();
   }
   void app_gap_callback(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param) override;
+  esp_err_t esp_a2d_disconnect(esp_bd_addr_t peer) override {
+    inferCommand(ESP_A2D_MEDIA_CTRL_SUSPEND); // library's disconnect sends this first
+    return BluetoothA2DPSource::esp_a2d_disconnect(peer);
+  }
  private:
+  uint32_t epoch=0,evtWindow=0,evtDropped=0,cmdAt[3]{};
+  uint8_t evtCount=0,cmdMask=0;
+  void inferCommand(esp_a2d_media_ctrl_t cmd){
+    cmdAt[unsigned(cmd)-1]=millis();cmdMask|=1u<<unsigned(cmd);
+    Serial.printf("bt: media cmd=%s rc=-1\n",cmd==ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY?"CHECK":cmd==ESP_A2D_MEDIA_CTRL_START?"START":"SUSPEND");
+  }
+  void rollEventWindow(uint32_t now){
+    if(now-evtWindow<1000)return;
+    evtWindow=now;evtCount=0;
+    if(evtDropped){Serial.printf("bt: evt dropped=%lu\n",(unsigned long)evtDropped);evtCount=1;evtDropped=0;}
+  }
+  void logEvent(uint16_t event){
+    const uint32_t now=millis();
+    rollEventWindow(now);
+    if(evtCount>=20){++evtDropped;return;}++evtCount;
+    Serial.printf("bt: evt ms=%lu ev=%s conn=%s av=%s media=%s audio=%s epoch=%lu\n",
+      (unsigned long)now,event==ESP_A2D_CONNECTION_STATE_EVT?"CONNECTION":event==ESP_A2D_AUDIO_STATE_EVT?"AUDIO":"MEDIA_ACK",
+      connName(connection_state),avName(s_a2d_state),mediaName(s_media_state),audioName(streamAudio),(unsigned long)epoch);
+  }
   inline static CydSource* owner=nullptr;
   uint32_t submitted=0,accepted=0;
   bool inquiryPending=false;
@@ -162,6 +218,7 @@ class CydSource : public BluetoothA2DPSource {
   void fixedGap(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param);
   static void dispatchGap(uint16_t event,void* p){owner->fixedGap((esp_bt_gap_cb_event_t)event,(esp_bt_gap_cb_param_t*)p);}
   void command(Command cmd,Request* p){
+    rollEventWindow(millis()); // Tick flushes drops even if no later A2DP event arrives.
     if(p){if(p->generation<accepted){Serial.printf("cmd: bt %u ignored (superseded)\n",unsigned(cmd));return;}accepted=p->generation;}
     if(cmd==InquiryStarted){inquiryPending=false;discovery_active=true;if(linkConnected())esp_bt_gap_cancel_discovery();}
     else if(cmd==InquiryStopped){inquiryPending=false;discovery_active=false;session.stopped();}
@@ -389,10 +446,16 @@ static int32_t onData(Frame* frames, int32_t count) {
   return count;
 }
 
+// Registered callback also enables the library's audio_state cache update.
+// It runs on BtAppT; the event line is emitted after the library handles it.
+static void onAudioState(esp_a2d_audio_state_t s,void*){streamAudio=s;}
+
 void bt_begin() {
+  intentSeen=audio_playIntentSerial();intentPulls=audio_pullCalls();intentFrames=audio_pullFrames();
   a2dp.set_local_name("CYD-MP3");
   a2dp.set_ssid_callback(onSsid);
   a2dp.set_on_connection_state_changed(onState);
+  a2dp.set_on_audio_state_changed(onAudioState);
   a2dp.set_data_callback_in_frames(onData);
   a2dp.set_avrc_passthru_command_callback(onSpeakerKey);
   a2dp.set_volume(100);                       // gain is applied in audio_pull
@@ -475,6 +538,15 @@ void bt_tick() {
     portENTER_CRITICAL(&keyMux);const bool have=speakerKeys.pop(key);portEXIT_CRITICAL(&keyMux);
     if(!have)break;
     handleSpeakerKey(key);
+  }
+
+  const uint32_t intent=audio_playIntentSerial();
+  if(intent!=intentSeen){
+    const uint32_t pulls=audio_pullCalls(),frames=audio_pullFrames();
+    if(speaker_route()==OUT_BT)Serial.printf("bt: play intent=%lu link=%d audio=%s media=%s playing=%d route=BT pulls=%lu frames=%lu\n",
+      (unsigned long)intent,int(bt_connected()),audioName(streamAudio),mediaName(streamMedia),int(audio_isPlaying()),
+      (unsigned long)(pulls-intentPulls),(unsigned long)(frames-intentFrames));
+    intentSeen=intent;intentPulls=pulls;intentFrames=frames;
   }
 
   // The link asked to be dropped is gone: now page what was asked for.

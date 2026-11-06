@@ -1,7 +1,7 @@
 # Fast path: powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia
 # Compile-only. There is deliberately no upload, monitor, port or erase option.
 [CmdletBinding()]
-param([switch]$SkipProbe, [switch]$SkipHostMedia,
+param([switch]$FlacLegacy, [switch]$SkipProbe, [switch]$SkipHostMedia,
     [switch]$IncludeStock, [switch]$IncludeDiagnostics, [switch]$ListJobs,
     [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
 $ErrorActionPreference = 'Stop'
@@ -102,6 +102,7 @@ try {
         Library = (Join-Path $root '.tools/staging/miniaac-patched') }
     # Only MP3 C is staged: the stock wrapper's second AAC core conflicts with MiniAAC.
     $jobs[-1].Flags += ' -fwrapv -fno-strict-aliasing'
+    if ($FlacLegacy) { $jobs[-1].Flags += ' -DCYDPOD_FLAC_LEGACY' }
     $jobs += @{ Name = 'cydpod-uploader'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYD_UPLOADER' }
     if (!$SkipProbe) {
         if (!(Test-Path firmware/cydpod_probe/cydpod_probe.ino)) {
@@ -177,7 +178,9 @@ try {
             }
         }
         if ($job.Name -like 'cydpod-player*' -or $job.Name -eq 'cydpod-uploader') {
-            & python -I (Join-Path $root 'tools/stage_flac.py') $stage
+            $flacStageArgs = @($stage)
+            if ($FlacLegacy -and $job.Name -like 'cydpod-player*') { $flacStageArgs += '--legacy' }
+            & python -I (Join-Path $root 'tools/stage_flac.py') @flacStageArgs
             if ($LASTEXITCODE -ne 0) { throw 'miniflac reader overlay staging failed.' }
         }
         if ($job.Name -like 'i2s-*') { Copy-Item -LiteralPath (Join-Path $root 'firmware/cydpod_player/app/board.h') -Destination $stage }
@@ -236,7 +239,11 @@ try {
             $nm = Join-Path $dependencyRoot ('arduino/packages/esp32/tools/esp-x32/' + $toolchain[0].version + '/bin/xtensa-esp32-elf-nm.exe')
             $symbols = & $nm -S --defined-only (Join-Path $root ".tools/build/$imageName/app.ino.elf")
             $poolSymbols = @($symbols | Where-Object { $_ -match ' codecPool$|codecPoolE$' })
-            if ($poolSymbols.Count -ne 1 -or $poolSymbols[0] -notmatch '\s0000a000\s[bB]\s') { throw 'Expected exactly one 40960 B codec pool in .bss.' }
+            # 0x7868 = 30824: max(codec states)=23856 + PCM4608 + input2048 + FIR272 + other40.
+            $poolHex = if ($FlacLegacy) { '0000a000' } else { '00007868' }
+            if ($poolSymbols.Count -ne 1 -or $poolSymbols[0] -notmatch ('\s' + $poolHex + '\s[bB]\s')) { throw ('Unexpected codec pool size; expected 0x' + $poolHex) }
+            if (!$FlacLegacy -and $symbols -match ' miniflac_') { throw 'Legacy FLAC decoder unexpectedly linked.' }
+            if ($FlacLegacy -and $symbols -match ' flac_compact_') { throw 'Compact FLAC decoder unexpectedly linked in legacy build.' }
             if ($symbols -match 'xmp3_AllocateBuffers|xmp3_FreeBuffers| MP3InitDecoder$| MP3FreeDecoder$') { throw 'Heap-based MP3 decoder allocation unexpectedly linked.' }
             $poolSymbols | Set-Content (Join-Path $root ".tools/logs/$imageName-codec-pool-map.txt")
             Write-Host ('PASS single pool: ' + $poolSymbols[0])
@@ -279,7 +286,7 @@ try {
         $wslRoot = (& wsl.exe -d Debian -- wslpath -a ($root.Replace([char]92,[char]47))).Trim()
         if ($LASTEXITCODE -ne 0 -or !$wslRoot) { throw 'Failed to resolve worktree path for WSL.' }
         Complete-CheckStage $null
-        foreach ($suite in @('build_cpu_stats.sh', 'build_codec_pool.sh', 'build_i2s_tone.sh', 'build_wired_fade.sh', 'build_i2s_diag.sh', 'build_bt_policy.sh', 'build_catalog_sort.sh', 'build_playlist_queue.sh', 'build_audio_order.sh', 'build_catalog_validation.sh', 'build_splash.sh')) {
+        foreach ($suite in @('build_cpu_stats.sh', 'build_audio_diagnostics.sh', 'build_codec_pool.sh', 'build_flacx_host.sh', 'flac_fast_smoke.sh', 'build_i2s_tone.sh', 'build_wired_fade.sh', 'build_i2s_diag.sh', 'build_bt_policy.sh', 'build_catalog_sort.sh', 'build_playlist_queue.sh', 'build_audio_order.sh', 'build_catalog_validation.sh', 'build_splash.sh')) {
             $stageName = 'host ' + $suite
             $stageTimer.Restart()
             & wsl.exe -d Debian --cd $wslRoot -- sh ('tests/' + $suite)

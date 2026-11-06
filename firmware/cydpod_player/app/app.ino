@@ -323,7 +323,23 @@ void loop() {
   cpu_stats_tick(now, now - lastStat >= 10000); // DIAG-CPU: reuse stat cadence
   if (now - lastStat >= 10000) {
     const uint32_t nextMaxMs = audio_takeMaxReadMs();
-    Serial.printf("diag: sd read max %u ms  dac stalls %u\n", nextMaxMs, speaker_stalls());
+    const AudioDiagnosticWindow diag = audio_takeDiagnosticWindow();
+    Serial.printf("diag: sd read max %u ms  dac stalls %u (sd only)\n", (unsigned)(diag.flac.sdMaxUs/1000), speaker_stalls());
+    if (diag.flac.active) {
+      const auto& f = diag.flac;
+      Serial.printf("stat: flac frames=%u nextMaxUs=%u sdSumUs=%llu sdMaxUs=%u nonIoMaxUs=%u readsGt10=%u ringStartMin=%u block=%u\n",
+                    (unsigned)f.frames, (unsigned)f.nextMaxUs, (unsigned long long)f.sdSumUs, (unsigned)f.sdMaxUs,
+                    (unsigned)f.nonIoMaxUs, (unsigned)f.readsGt10, (unsigned)(f.ringStartMin == UINT32_MAX ? 0 : f.ringStartMin), (unsigned)f.block);
+    }
+    if (diag.pull.calls) {
+      const auto& p = diag.pull;
+      Serial.printf("stat: pull task=%s core=%d prio=%u gapMaxUs=%u burstFrames=%u lockWaitUs=%u lockHoldUs=%u missingFrames=%u\n",
+                    p.task, p.core, p.prio, (unsigned)p.gapMaxUs, (unsigned)p.burstFrames,
+                    (unsigned)p.lockWaitUs, (unsigned)p.lockHoldUs, (unsigned)p.missingFrames);
+    }
+    Serial.printf("stat: sched layout=A sdMaxUs=%u nextMaxUs=%u pullGapMaxUs=%u lockMaxUs=%u\n",
+                  (unsigned)diag.flac.sdMaxUs, (unsigned)diag.flac.nextMaxUs, (unsigned)diag.pull.gapMaxUs,
+                  (unsigned)max(diag.pull.lockWaitUs, diag.pull.lockHoldUs));
     const AudioCommands commands=audio_commands();
     Serial.printf("stat: heap %u min %u largest %u  stacks dec %u loop %u  buf %u%% underruns %u pullMax %d pendingTrack %d pendingSeek %ld cmdSerial %lu starting %d seeking %d blocked %d  "
                   "%s  %s  pulls %u frames %u\n",

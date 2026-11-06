@@ -7,6 +7,7 @@
 #include "settings.h"     // RepeatMode
 #include "codec_track.h"
 #include "small_file.h"
+#include <esp_timer.h>
 
 // ---------------------------------------------------------------------------
 // Ring buffer: one producer (decode task), one consumer (audio_pull)
@@ -24,6 +25,34 @@ static volatile uint32_t rbTail = 0;          // consumer only
 // One short lock covers ring publication, consumer copies, commands and clock epochs.
 // Never hold it across SD/decoder operations or waits.
 static portMUX_TYPE stateLock = portMUX_INITIALIZER_UNLOCKED;
+
+// All diagnostics, including 64-bit SD totals, are copied/reset under stateLock.
+static AudioDiagnosticWindow diagnostic;
+static uint64_t flacSdTotalUs = 0; // lifetime total: window resets cannot split next() accounting
+static int64_t pullPreviousUs = 0;
+static uint32_t pullBurstFrames = 0;
+static bool pullTaskLatched = false, flacOpen = false;
+static_assert(sizeof(diagnostic) + sizeof(flacSdTotalUs) + sizeof(pullPreviousUs) +
+              sizeof(pullBurstFrames) + sizeof(pullTaskLatched) + sizeof(flacOpen) < 200, "diagnostic RAM budget");
+void audio_flacReadTime(uint32_t us) {
+  portENTER_CRITICAL(&stateLock);
+  auto& f = diagnostic.flac;
+  f.active = true; f.sdSumUs += us; flacSdTotalUs += us;
+  if (us > f.sdMaxUs) f.sdMaxUs = us;
+  if (us > 10000) ++f.readsGt10;
+  portEXIT_CRITICAL(&stateLock);
+}
+AudioDiagnosticWindow audio_takeDiagnosticWindow() {
+  portENTER_CRITICAL(&stateLock);
+  const AudioDiagnosticWindow result = diagnostic;
+  diagnostic.flac = AudioFlacStats{}; diagnostic.flac.active = flacOpen;
+  // Identity and preceding-call time survive; bursts are segmented at window boundaries.
+  diagnostic.pull.gapMaxUs = diagnostic.pull.burstFrames = diagnostic.pull.lockWaitUs = 0;
+  diagnostic.pull.lockHoldUs = diagnostic.pull.missingFrames = diagnostic.pull.calls = 0;
+  pullBurstFrames = 0;
+  portEXIT_CRITICAL(&stateLock);
+  return result;
+}
 
 static inline uint32_t rbUsed() { return (rbHead - rbTail) & (RB_FRAMES - 1); }
 static inline uint32_t rbFree() { return RB_FRAMES - 1 - rbUsed(); }
@@ -86,13 +115,15 @@ static volatile uint32_t pullFrames = 0;
 static volatile uint32_t ringLow = RB_FRAMES;  // CY-119: fewest frames left in the ring after a pull, since the last stat: audio line
 
 void audio_pull(int16_t* out, int32_t frames) {
-  if (!rb) { memset(out, 0, frames * 2 * sizeof(int16_t)); return; }
   lastPullMs = millis();
   pullCalls++;
   if (frames > maxRequest) maxRequest = frames;
+  const int64_t callAt = esp_timer_get_time();
   portENTER_CRITICAL(&stateLock);
+  const int64_t lockedAt = esp_timer_get_time();
+  uint32_t missing = 0;
   int32_t i = 0;
-  if (playing && !seeking) {
+  if (rb && playing && !seeking) {
     const int32_t gain = (int32_t)volumePct * volumePct * sleepGain / 100;   // perceptual-ish, /10000
     uint32_t tail = rbTail;
     const int32_t n = min<int32_t>(frames, (rbHead - tail) & (RB_FRAMES - 1));
@@ -107,7 +138,28 @@ void audio_pull(int16_t* out, int32_t frames) {
     if (n > 0) starting = false;
     { const uint32_t left = (rbHead - tail) & (RB_FRAMES - 1); if (!starting && framesPlayed >= RB_FRAMES && left < ringLow) ringLow = left; }
     if (n < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
+    missing = uint32_t(frames - n); // excludes intentional paused/seeking silence
   }
+  portEXIT_CRITICAL(&stateLock);
+  // One timer read inside the PCM lock. Hold is an upper bound: includes unlock
+  // and any preemption before this outside read; diagnostic publication is separate.
+  const uint32_t holdUs = uint32_t(esp_timer_get_time() - lockedAt);
+  portENTER_CRITICAL(&stateLock);
+  auto& p = diagnostic.pull;
+  if (!pullTaskLatched) {
+    const char* name = pcTaskGetName(nullptr);
+    for (unsigned k = 0; k + 1 < sizeof(p.task) && name[k]; ++k) p.task[k] = name[k];
+    p.core = xPortGetCoreID(); p.prio = uxTaskPriorityGet(nullptr); pullTaskLatched = true;
+  }
+  const uint32_t gap = uint32_t(callAt - pullPreviousUs);
+  if (pullPreviousUs && gap > p.gapMaxUs) p.gapMaxUs = gap;
+  pullBurstFrames = pullPreviousUs && gap < 1000 ? pullBurstFrames + uint32_t(frames) : uint32_t(frames);
+  if (pullBurstFrames > p.burstFrames) p.burstFrames = pullBurstFrames;
+  pullPreviousUs = callAt; ++p.calls;
+  const uint32_t waitUs = uint32_t(lockedAt - callAt);
+  if (waitUs > p.lockWaitUs) p.lockWaitUs = waitUs;
+  p.missingFrames += missing;
+  if (holdUs > p.lockHoldUs) p.lockHoldUs = holdUs;
   portEXIT_CRITICAL(&stateLock);
   memset(out + i * 2, 0, (frames - i) * 2 * sizeof(int16_t));
 }
@@ -188,6 +240,7 @@ static void seekTrack(uint32_t ms, uint32_t serial) {
 static void closeTrack() {
   canSeek = false;
   m4a.end();                                  // before the File goes
+  portENTER_CRITICAL(&stateLock); flacOpen = false; portEXIT_CRITICAL(&stateLock);
   if (file) file.close();
 }
 
@@ -221,6 +274,9 @@ static bool openTrack(int index) {
     trackSerial++;
     return false;
   }
+  portENTER_CRITICAL(&stateLock);
+  flacOpen = m4a.isFlac(); diagnostic.flac.active |= flacOpen;
+  portEXIT_CRITICAL(&stateLock);
   durationMs = (uint32_t)(m4a.totalFrames() * 1000 / m4a.sampleRate());
   canSeek = m4a.seekable();pcmInputRate=m4a.sampleRate();
   Serial.printf("cmd: codec input %lu output 44100 seekable %d\n",(unsigned long)pcmInputRate,int(canSeek));
@@ -240,7 +296,7 @@ static bool openTrack(int index) {
 static volatile uint32_t endedCommand=0, failedCommand=0;
 static volatile uint32_t endedSerial = 0;     // bumped when a track finishes
 static volatile uint32_t failSerial  = 0;     // bumped when a track will not open
-static volatile uint32_t diagMaxReadMs = 0;   // diagnostics: slowest SD read
+static volatile uint32_t diagMaxReadMs = 0;   // diagnostics: slowest whole next()
 
 static void decodeTask(void*) {
   // All permanent audio allocations and playlist restoration precede BT.
@@ -276,9 +332,29 @@ static void decodeTask(void*) {
     if (!file || decodeBlocked || seeking) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
 
     if (m4a.pending() == 0) {
+      const bool flac = m4a.isFlac(), frameDue = m4a.flacNeedsFrame();
+      portENTER_CRITICAL(&stateLock);
+      const uint64_t sdBefore = flacSdTotalUs;
+      const uint32_t ringStart = rbUsed();
+      portEXIT_CRITICAL(&stateLock);
       const uint32_t r0 = millis();
+      const int64_t nextAt = esp_timer_get_time();
       const CodecTrack::Pull pull = m4a.next();
-      { const uint32_t took = millis() - r0; if (took > diagMaxReadMs) diagMaxReadMs = took; }
+      const uint32_t nextUs = uint32_t(esp_timer_get_time() - nextAt), took = millis() - r0;
+      portENTER_CRITICAL(&stateLock);
+      if (took > diagMaxReadMs) diagMaxReadMs = took;
+      if (flac) {
+        auto& f = diagnostic.flac; f.active = true;
+        const uint64_t sdUs = flacSdTotalUs - sdBefore;
+        const uint32_t nonIoUs = sdUs < nextUs ? nextUs - uint32_t(sdUs) : 0;
+        if (nextUs > f.nextMaxUs) f.nextMaxUs = nextUs;
+        if (nonIoUs > f.nonIoMaxUs) f.nonIoMaxUs = nonIoUs;
+        if (frameDue && pull == CodecTrack::Pull::frames && m4a.pending()) {
+          ++f.frames; f.block = m4a.flacBlockSize();
+          if (ringStart < f.ringStartMin) f.ringStartMin = ringStart;
+        }
+      }
+      portEXIT_CRITICAL(&stateLock);
       if (pull == CodecTrack::Pull::error) {
         reportError(m4a.name(), curTrack);
         Serial.printf("ERR m4a %s %s\n", m4a.name(), storage_trackPath(curTrack).c_str());
@@ -539,7 +615,7 @@ uint8_t  audio_volume()       { return volumePct; }
 uint32_t audio_durationMs()   { return durationMs; }
 uint32_t audio_trackSerial()  { return trackSerial; }
 uint32_t audio_underruns()    { return underruns; }
-uint32_t audio_takeMaxReadMs() { const uint32_t v = diagMaxReadMs; diagMaxReadMs = 0; return v; }
+uint32_t audio_takeMaxReadMs() { portENTER_CRITICAL(&stateLock); const uint32_t v = diagMaxReadMs; diagMaxReadMs = 0; portEXIT_CRITICAL(&stateLock); return v; }
 uint32_t audio_takeRingLow() { const uint32_t v = ringLow; ringLow = RB_FRAMES; return v; }  // RB_FRAMES: no pull measured
 uint32_t audio_ringFrames() { return RB_FRAMES; }
 int32_t  audio_maxRequest()   { return maxRequest; }

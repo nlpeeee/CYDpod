@@ -128,6 +128,20 @@ void audio_pull(int16_t* stereo, int32_t frames);
 // Diagnostics for the serial stat line.
 uint32_t audio_underruns();
 uint32_t audio_takeMaxReadMs();     // slowest m4a.next() (SD read + whole-frame decode) since last call
+struct AudioFlacStats {
+  uint64_t sdSumUs = 0;
+  uint32_t frames = 0, nextMaxUs = 0, sdMaxUs = 0, nonIoMaxUs = 0;
+  uint32_t readsGt10 = 0, ringStartMin = UINT32_MAX, block = 0;
+  bool active = false; // open now or seen during this window
+};
+struct AudioPullStats {
+  char task[16] = {};
+  int core = 0; unsigned prio = 0;
+  uint32_t gapMaxUs = 0, burstFrames = 0, lockWaitUs = 0, lockHoldUs = 0, missingFrames = 0, calls = 0;
+};
+struct AudioDiagnosticWindow { AudioFlacStats flac; AudioPullStats pull; };
+AudioDiagnosticWindow audio_takeDiagnosticWindow(); // copy + reset under stateLock
+void audio_flacReadTime(uint32_t us); // producer-only FLAC readAt timing, no logging
 uint32_t audio_takeRingLow();       // CY-119: ring low-water in frames since last call (audio_ringFrames() = none measured)
 uint32_t audio_ringFrames();
 uint32_t audio_pullCalls();        // diagnostics: Bluetooth pulls so far, and frames it actually took from the ring

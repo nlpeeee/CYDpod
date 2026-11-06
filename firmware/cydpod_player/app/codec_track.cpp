@@ -104,6 +104,7 @@ CodecTrack::Pull CodecTrack::next() {
   if(pool().kind==4) {
     pool().used=pool().frames=0;
     const int n=pool().state.flac.read(*pool().file,pool().input,pool().pcm,pool().error);
+    if(n==-3)return Pull::frames; // empty pull: producer handles the pending command next
     if(n<0)return Pull::error;
     pool().frames=size_t(n);return n?Pull::frames:Pull::eof;
   }

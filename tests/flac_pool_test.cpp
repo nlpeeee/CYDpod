@@ -111,5 +111,14 @@ int main() {
     }
     printf("PASS hostile input: 160 damaged variants terminated (%u ended, %u rejected/errored), no crash\n", eofs, errs); }
   printf("PASS FLAC pool: %u decoded fixtures, %u clean rejects, %u seeks, sizeof(FlacState)=%zu (host)\n", positives, rejects, seeks, sizeof(FlacState));
+  // A pending command cancels before the next resync read; restart still
+  // finds the frame. No new persistent storage is required by the hook.
+  { File f(flacPath("notable-long"), "r"); uint8_t input[2048];
+    direct = FlacState{}; assert(!direct.open(f,input));
+    Hook h; h.cancelAt=1; const auto reads=hostReadCalls;
+    assert(direct.resync(f,input,direct.first,hook,&h)==-2);
+    assert(hostReadCalls==reads && h.calls==1);
+    assert(direct.resync(f,input,direct.first)==1);
+    puts("PASS FLAC resync cancellation before read + restart"); }
   (void)direct;
 }

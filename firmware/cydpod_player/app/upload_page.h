@@ -159,31 +159,37 @@ function tab(t){['music','pl','bg','font','wifi'].forEach(x=>{$('p_'+x).style.di
 function info(){fetch('/api/info').then(r=>r.json()).then(j=>{$('info').textContent=
  T('Free space ','剩餘空間 ')+kb(j.free)+' / '+kb(j.total)+'  ·  '+(j.ap?T('hotspot ','熱點 ')+j.ssid:j.ssid+'  '+j.ip)})}
 
-function list(){fetch('/api/list?dir='+encodeURIComponent(dir)).then(r=>r.json()).then(j=>{
- var parts=dir.split('/').filter(x=>x),h='',p='';
- parts.forEach((x,i)=>{p+='/'+x;h+=(i?' / ':'')+'<span class="dir" onclick="go(\''+esc(p)+'\')">'+esc(x)+'</span>'});
- $('crumb').innerHTML=h;
- var o='';
- if(dir!='/music')o+='<div class="row"><span class="nm dir" onclick="go(\''+esc(dir.replace(/\/[^\/]*$/,''))+'\')">⬑ ..</span></div>';
- j.items.forEach(e=>{var full=dir+'/'+e.name;
-  o+='<div class="row">'+(e.dir?'<span class="nm dir" onclick="go(\''+esc(full)+'\')">📁 '+esc(e.name)+'</span>'
-   :'<span class="nm">'+esc(e.name)+'</span><span class="sz">'+kb(e.size)+'</span>')+
-   '<button class="ic" title="rename" onclick="ren(\''+esc(full)+'\')">✎</button><button class="ic" title="delete" onclick="del(\''+esc(full)+'\','+(e.dir?1:0)+')">✕</button></div>'});
- if(!j.items.length)o+='<div class="hint">'+T('Empty','沒有檔案')+'</div>';
- $('list').innerHTML=o;})}
+// Names stay in DOM text/data properties, never in HTML or JavaScript source.
+function node(parent,tag,cls,text){var e=document.createElement(tag);e.className=cls;
+ if(text!==undefined)e.textContent=text;parent.appendChild(e);return e}
+function action(parent,tag,cls,text,path,fn,label){var e=node(parent,tag,cls,text);e.dataset.path=path;
+ if(label)e.title=label;e.addEventListener('click',()=>fn(e.dataset.path));return e}
+function list(){return fetch('/api/list?dir='+encodeURIComponent(dir)).then(r=>r.json()).then(j=>{
+ var crumb=$('crumb'),box=$('list'),p='';crumb.replaceChildren();box.replaceChildren();
+ dir.split('/').filter(x=>x).forEach((x,i)=>{p+='/'+x;if(i)crumb.appendChild(document.createTextNode(' / '));
+  action(crumb,'span','dir',x,p,go)});
+ if(dir!='/music'){var up=node(box,'div','row');action(up,'span','nm dir','⬑ ..',dir.replace(/\/[^\/]*$/,''),go)}
+ j.items.forEach(e=>{var full=dir+'/'+e.name,row=node(box,'div','row');
+  if(e.dir)action(row,'span','nm dir','📁 '+e.name,full,go);
+  else{node(row,'span','nm',e.name);node(row,'span','sz',kb(e.size))}
+  action(row,'button','ic','✎',full,ren,'rename');
+  action(row,'button','ic','✕',full,p=>del(p,e.dir?1:0),'delete')});
+ if(!j.items.length)node(box,'div','hint',T('Empty','沒有檔案'));})}
 function go(d){dir=d;list()}
 
-function bglist(){fetch('/api/list?dir=/bg').then(r=>r.json()).then(j=>{var o='';
- j.items.filter(e=>!e.dir).forEach(e=>{o+='<div class="row"><img class="th" src="/file?path='+encodeURIComponent('/bg/'+e.name)+'"><span class="nm">'+esc(e.name)+
-  '</span><span class="sz">'+kb(e.size)+'</span><button class="ic" onclick="del(\'/bg/'+esc(e.name)+'\',0)">✕</button></div>'});
- $('bglist').innerHTML=o||'<div class="hint">'+T('No backgrounds yet','尚未有背景動畫')+'</div>';})}
+function bglist(){return fetch('/api/list?dir=/bg').then(r=>r.json()).then(j=>{var box=$('bglist');box.replaceChildren();
+ j.items.filter(e=>!e.dir).forEach(e=>{var row=node(box,'div','row'),img=node(row,'img','th');
+  img.src='/file?path='+encodeURIComponent('/bg/'+e.name);node(row,'span','nm',e.name);node(row,'span','sz',kb(e.size));
+  action(row,'button','ic','✕','/bg/'+e.name,p=>del(p,0))});
+ if(!box.childNodes.length)node(box,'div','hint',T('No backgrounds yet','尚未有背景動畫'));})}
 
-function pllist(){plclose();fetch('/api/list?dir=/playlists').then(r=>r.json()).then(j=>j.items).catch(()=>[]).then(items=>{
- var o='<div class="row"><span class="nm">★ '+T('Favourites','我的最愛')+'</span><button class="ic" title="edit" onclick="pledit(\'fav\')">✎</button></div>';
- items.filter(e=>!e.dir).forEach(e=>{var n=esc(e.name);o+='<div class="row"><span class="nm">'+n+'</span><span class="sz">'+kb(e.size)+
-  '</span><button class="ic" title="edit" onclick="pledit(\''+n+'\')">✎</button><button class="ic" title="delete" onclick="del(\'/playlists/'+n+'\',0)">✕</button></div>'});
- if(!items.filter(e=>!e.dir).length)o+='<div class="hint">'+T('No playlists yet','尚未有播放清單')+'</div>';
- $('pllist').innerHTML=o;})}
+function pllist(){plclose();return fetch('/api/list?dir=/playlists').then(r=>r.json()).then(j=>j.items).catch(()=>[]).then(items=>{
+ var box=$('pllist');box.replaceChildren();var fav=node(box,'div','row');
+ node(fav,'span','nm','★ '+T('Favourites','我的最愛'));action(fav,'button','ic','✎','fav',pledit,'edit');
+ items.filter(e=>!e.dir).forEach(e=>{var row=node(box,'div','row');node(row,'span','nm',e.name);node(row,'span','sz',kb(e.size));
+  action(row,'button','ic','✎',e.name,pledit,'edit');
+  action(row,'button','ic','✕','/playlists/'+e.name,p=>del(p,0),'delete')});
+ if(!items.filter(e=>!e.dir).length)node(box,'div','hint',T('No playlists yet','尚未有播放清單'));})}
 
 // ---- playlist editor: songs are paths inside /music, as the player reads them
 var SONGS=null,LOW={},TITLE={},ED=null;

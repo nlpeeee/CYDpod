@@ -22,7 +22,54 @@ static const int   FIXED        = 2;          // All, Favourites
 static const int   MAX_FAV      = 500;        // 2 KB of CRCs at the most
 static const int   MAX_M3U      = 1000;       // entries read from one playlist
 
-static uint16_t* queue = nullptr;             // library indices, list order
+static PlaylistQueue queue;
+static const char* QUEUE_FILES[] = {"/.sys/queue-a.ids", "/.sys/queue-b.ids"};
+static File queueOut;
+static uint16_t* previewOut = nullptr;
+static bool queueOk = true;
+static const char* stagedPath = nullptr;
+
+int PlaylistQueue::queueAt(int index) {
+  if (index < 0 || index >= count) return -1;
+  if (!path) return index;
+  if (index < first || index >= first + cached) {
+    first = -1; cached = 0;
+    const int start = index / 256 * 256, n = min(256, count - start);
+    File f = openSmallFile(path);
+    if (!f || !f.seek(start * sizeof(uint16_t)) ||
+        f.read((uint8_t*)ids, n * sizeof(uint16_t)) != n * sizeof(uint16_t)) return -1;
+    first = start; cached = n;
+  }
+  return ids[index - first];
+}
+int PlaylistQueue::queueFind(int track) {
+  if (track < 0) return -1;
+  for (int i = 0; i < count; ++i) { const int id = queueAt(i); if (id < 0) return -1; if (id == track) return i; }
+  return -1;
+}
+static int queueRead(void* context, int pos) { return ((PlaylistQueue*)context)->queueAt(pos); }
+static void bindQueue(int n, int keep, bool jump, bool identity = false) {
+  queue.path = identity ? nullptr : stagedPath; queue.count = n; queue.first = -1; queue.cached = 0;
+  audio_setQueueSource({nullptr, &queue, queueRead}, n, keep, jump);
+}
+static void putId(int pos, uint16_t id) {
+  if (previewOut) { previewOut[pos] = id; return; }
+  queueOk = queueOk && queueOut && queueOut.seek(pos * sizeof(id)) &&
+            queueOut.write((const uint8_t*)&id, sizeof(id)) == sizeof(id);
+}
+static int getId(int pos) {
+  if (previewOut) return previewOut[pos];
+  uint16_t id;
+  if (!queueOk || !queueOut.seek(pos * sizeof(id)) || queueOut.read((uint8_t*)&id, sizeof(id)) != sizeof(id)) { queueOk = false; return -1; }
+  return id;
+}
+static bool stageQueue() {
+  queueOk = true;
+  stagedPath = queue.path == QUEUE_FILES[0] ? QUEUE_FILES[1] : QUEUE_FILES[0];
+  queueOut = openSmallFile(stagedPath, "w+");
+  queueOk = bool(queueOut);
+  return queueOk;
+}
 static int       queueCap = 0;
 static int       sourceCount = FIXED;
 static int       folderSources = 0, playlistSources = 0;
@@ -157,7 +204,7 @@ static void scanSources() {
 
 void playlist_begin() {
   queueCap = max(1, storage_trackCount());
-  queue = (uint16_t*)malloc(queueCap * sizeof(uint16_t));
+
   loadFavourites();
   scanSources();
 }
@@ -165,15 +212,21 @@ void playlist_begin() {
 // ---------------------------------------------------------------------------
 // Building a queue
 // ---------------------------------------------------------------------------
-static int    built = 0;
+static int    built = 0, visited = 0;
+static void checkedScan(StorageEachFn fn) {
+  visited = 0; storage_forEach(fn);
+  if (visited != storage_trackCount()) queueOk = false;
+}
 static String folderPrefix;
 
 static void addFavourite(int i, const String& path, const String&) {
-  if (built < queueCap && isFav(pathKey(path))) queue[built++] = i;
+  ++visited;
+  if (built < queueCap && isFav(pathKey(path))) putId(built++, i);
 }
 
 static void addFolder(int i, const String& path, const String&) {
-  if (built < queueCap && path.startsWith(folderPrefix)) queue[built++] = i;
+  ++visited;
+  if (built < queueCap && path.startsWith(folderPrefix)) putId(built++, i);
 }
 
 // "/a/./b/../c" -> "/a/c"
@@ -214,9 +267,10 @@ static uint32_t* m3uKeys = nullptr;
 static int       m3uCount = 0;
 
 static void matchM3u(int i, const String& path, const String&) {
+  ++visited;
   const uint32_t k = pathKey(path);
   for (int p = 0; p < m3uCount; p++)
-    if (m3uKeys[p] == k) queue[p] = i;
+    if (m3uKeys[p] == k) putId(p, i);
 }
 
 static int buildM3u(const String& listPath) {
@@ -228,33 +282,34 @@ static int buildM3u(const String& listPath) {
   const String dir = listPath.substring(0, listPath.lastIndexOf('/'));
   m3uCount = 0;
   while (f.available() && m3uCount < cap) {
+    const size_t before = f.position();
     String line = f.readStringUntil('\n');
+    if (f.position() <= before) { queueOk = false; break; }
     if (line.startsWith("\xEF\xBB\xBF")) line = line.substring(3);   // UTF-8 BOM
     line.trim();
     if (line.isEmpty() || line[0] == '#' || line.indexOf("://") >= 0) continue;
     m3uKeys[m3uCount++] = pathKey(resolveEntry(line, dir));
   }
   f.close();
-  for (int p = 0; p < m3uCount; p++) queue[p] = 0xFFFF;
-  storage_forEach(matchM3u);
+  for (int p = 0; p < m3uCount; p++) putId(p, 0xFFFF);
+  checkedScan(matchM3u);
   free(m3uKeys);
   m3uKeys = nullptr;
   // Squeeze out the entries that matched nothing, keeping the playlist's order.
   int n = 0;
   for (int p = 0; p < m3uCount; p++)
-    if (queue[p] != 0xFFFF) queue[n++] = queue[p];
+    { const int id = getId(p); if (id >= 0 && id != 0xFFFF) putId(n++, id); }
   return n;
 }
 
 // Fill `queue` for source i. Returns its length; for All, the track count
 // with `*identity` set (no table needed).
-static int build(int i, bool* identity) {
+static int buildIds(int i, bool* identity) {
   *identity = false;
   if (i == 0) { *identity = true; return storage_trackCount(); }
-  if (!queue) return 0;
   built = 0;
   if (i == 1) {
-    if (!favs.empty()) storage_forEach(addFavourite);
+    if (!favs.empty()) checkedScan(addFavourite);
     return built;
   }
   SourceKind kind;
@@ -262,10 +317,18 @@ static int build(int i, bool* identity) {
   if (!readSource(i, kind, name, path)) return 0;
   if (kind == SRC_FOLDER) {
     folderPrefix = path + "/";
-    storage_forEach(addFolder);
+    checkedScan(addFolder);
     return built;
   }
   return buildM3u(path);
+}
+
+static int build(int i, bool* identity) {
+  if (i == 0) { *identity = true; return storage_trackCount(); }
+  if (!previewOut && !stageQueue()) return 0;
+  const int n = buildIds(i, identity);
+  queueOut.close();
+  return queueOk ? n : 0;
 }
 
 static uint32_t keyOf(int i) {
@@ -309,8 +372,11 @@ void playlist_restore(int resumeTrack) {
   if (g_settings.srcKind == SRC_CATALOG && g_settings.catalogCrc == storage_libraryCrc() &&
       g_settings.catalogKind <= uint8_t(CatalogKind::ArtistAlbumSongs)) {
     CatalogView view{CatalogKind(g_settings.catalogKind), g_settings.catalogGroup};
-    const int n = storage_browseTracks(view, queue, queueCap);
-    if (n > 0) { current = -1; audio_setQueue(queue, n, resumeTrack, false); return; }
+    const int n = storage_browseCount(view);
+    bool ok = stageQueue();
+    for (int j = 0; ok && j < n; ++j) { CatalogEntry e; ok = storage_browseEntry(view, j, e) && e.track >= 0; if (ok) putId(j, e.track); }
+    queueOut.close();
+    if (ok && queueOk && n > 0) { current = -1; bindQueue(n, resumeTrack, false); return; }
   }
   int found = 0;
   if (g_settings.srcKind == SRC_FAVOURITES) found = 1;
@@ -325,7 +391,7 @@ void playlist_restore(int resumeTrack) {
     n = build(0, &identity);
   }
   remember(found);
-  if (found) audio_setQueue(queue, n, resumeTrack, true);
+  if (found) bindQueue(n, resumeTrack, true);
   Serial.printf("playlist: source %d (%u), %d tracks\n", found, g_settings.srcKind, n);
 }
 
@@ -334,12 +400,10 @@ bool playlist_select(int i) {
   bool identity;
   const int n = build(i, &identity);
   if (n == 0) {
-    // The table may hold half of the failed attempt: put the current one back.
-    build(current, &identity);
     return false;
   }
   remember(i);
-  audio_setQueue(identity ? nullptr : queue, n, audio_currentTrack(), true);
+  bindQueue(n, audio_currentTrack(), true, identity);
   settings_save();
   return true;
 }
@@ -347,23 +411,26 @@ bool playlist_select(int i) {
 int playlist_preview(int source, uint16_t* tracks, int capacity) {
   if (!tracks || source < 0 || source >= sourceCount || capacity < queueCap) return 0;
   // build() is UI-task-only. Its destination is temporarily caller-owned.
-  uint16_t* live = queue;
-  queue = tracks;
+  previewOut = tracks;
+  queueOk = true;
   bool identity = false;
   const int n = build(source, &identity);
-  queue = live;
+  previewOut = nullptr;
   if (identity) for (int j = 0; j < n; ++j) tracks[j] = j;
   return n;
 }
 
 bool playlist_playTracks(const uint16_t* tracks, int n, int row, int source) {
-  if (!audio_ready() || !queue || !tracks || n <= 0 || n > queueCap || row < 0 || row >= n) return false;
+  if (!audio_ready() || !tracks || n <= 0 || n > queueCap || row < 0 || row >= n) return false;
   for (int j = 0; j < n; ++j) if (tracks[j] >= storage_trackCount()) return false;
   const int selected = tracks[row];
-  memcpy(queue, tracks, n * sizeof(uint16_t));
+  if (!stageQueue()) return false;
+  for (int j = 0; j < n; ++j) putId(j, tracks[j]);
+  queueOut.close();
+  if (!queueOk) return false;
   if (source >= 0) remember(source);
   else { current = -1; g_settings.srcKind = SRC_CATALOG; }
-  audio_setQueue(queue, n, selected, false);
+  bindQueue(n, selected, false);
   audio_playTrack(selected);
   return true;
 }
@@ -434,8 +501,9 @@ bool playlist_toggleFavourite(int track) {
   if (current == 1) {
     bool identity;
     const int n = build(1, &identity);
-    if (n == 0) playlist_select(0);
-    else audio_setQueue(queue, n, audio_currentTrack(), false);
+    if (!queueOk) Serial.println("queue: favourites SD read failed; previous queue retained");
+    else if (n == 0) playlist_select(0);
+    else bindQueue(n, audio_currentTrack(), false);
   }
   return !was;
 }

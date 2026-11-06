@@ -319,14 +319,22 @@ static uint16_t* order = nullptr;             // play position -> track index
 static int       orderPos = 0;                // -1: playing a song outside the queue
 static int       orderLen = 0;
 // The list being played (playlist.h), in list order. nullptr: every track.
-static const uint16_t* queue = nullptr;
+static AudioQueueSource queue;
 
-static int queueAt(int pos) { return queue ? queue[pos] : pos; }
-
+static int queueAt(int pos) {
+  if (pos < 0 || pos >= orderLen) return -1;
+  const int id = queue.at ? queue.at(queue.context, pos) : queue.tracks ? queue.tracks[pos] : pos;
+  if (id < 0 || id >= storage_trackCount()) {
+    playing = false; orderLen = 0;
+    reportError("queue_unavailable", -1);
+    Serial.println("queue: SD unavailable; playback stopped");
+    return -1;
+  }
+  return id;
+}
 static int queueFind(int track) {
-  if (!queue) return (track >= 0 && track < orderLen) ? track : -1;
-  for (int i = 0; i < orderLen; i++)
-    if (queue[i] == track) return i;
+  if (track < 0) return -1;
+  for (int i = 0; i < orderLen; ++i) if (queueAt(i) == track) return i;
   return -1;
 }
 static bool      shuffleOn = false;
@@ -515,10 +523,15 @@ void audio_setShuffle(bool on) {
 
 void audio_setQueue(const uint16_t* tracks, int n, int keepTrack, bool jump) {
   if (n <= 0 || !audio_ready()) return;
-  queue = tracks;
+  audio_setQueueSource({tracks, nullptr, nullptr}, n, keepTrack, jump);
+}
+
+void audio_setQueueSource(AudioQueueSource source, int n, int keepTrack, bool jump) {
+  if (n <= 0 || !audio_ready()) return;
+  queue = source;
   orderLen = min(n, storage_trackCount());
   buildOrder(shuffleOn, keepTrack);
-  if (orderPos < 0 && jump) {
+  if (orderLen > 0 && orderPos < 0 && jump) {
     orderPos = 0;
     failStreak = 0;
     request(order[0]);

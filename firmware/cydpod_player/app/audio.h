@@ -53,6 +53,12 @@ uint8_t audio_repeat();
 // `tracks` is kept, not copied: nullptr means the whole library. The order is
 // rebuilt around `keepTrack`; when that song is not in the list and `jump` is
 // set, the list starts, otherwise the song plays on and next starts the list.
+struct AudioQueueSource {
+  const uint16_t* tracks = nullptr;
+  void* context = nullptr;
+  int (*at)(void*, int) = nullptr; // -1: unavailable; context remains caller-owned
+};
+void audio_setQueueSource(AudioQueueSource source, int n, int keepTrack, bool jump);
 void audio_setQueue(const uint16_t* tracks, int n, int keepTrack, bool jump);
 int  audio_queueLen();
 int  audio_queueTrack(int pos);       // list position -> library index, or -1

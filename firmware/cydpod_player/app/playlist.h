@@ -4,7 +4,7 @@
 // ===========================================================================
 // A "source" turns into a queue: library track indices in list order, which
 // audio.cpp plays in order or shuffled (audio_setQueue). The queue is one
-// uint16_t per track, allocated once at boot before Bluetooth takes the heap.
+// SD-backed ID stream, with a fixed 256-ID window in RAM.
 //
 //   0          All songs                 the whole library, no queue table
 //   1          Favourites                /.sys/fav.txt, one path per line
@@ -61,3 +61,14 @@ bool playlist_favouritesFull();
 // a new playlist is noticed even when the library has not changed.
 void     playlist_forEachName(void (*fn)(const char* text));
 uint32_t playlist_namesCrc();
+
+// Loop-task-only cursor. File lifetime is per cache fill; -1 means unavailable.
+// Copies retain only the descriptor and their own bounded window.
+struct PlaylistQueue {
+  const char* path = nullptr;
+  int count = 0, first = -1, cached = 0;
+  uint16_t ids[256];
+  int queueAt(int index);
+  int queueFind(int trackId);
+  int queueCount() const { return count; }
+};

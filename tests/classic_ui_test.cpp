@@ -43,6 +43,8 @@ bool settings_save(){++settingsSaves;return true;}
 bool audio_ready(){return true;}
 uint32_t audio_error(char*,size_t,int*){return 0;}
 void audio_setQueue(const uint16_t* p,int n,int,bool){queueData=p;queueLength=n;++calls;}
+static std::vector<uint16_t> sourceIds;
+void audio_setQueueSource(AudioQueueSource s,int n,int keep,bool jump){sourceIds.resize(n);for(int i=0;i<n;++i)sourceIds[i]=s.at?s.at(s.context,i):s.tracks?s.tracks[i]:i;audio_setQueue(sourceIds.data(),n,keep,jump);}
 void audio_playTrack(int n){current=n;playing=true;++serial;++calls;}
 int audio_currentTrack(){return current;}
 bool audio_isPlaying(){return playing;}

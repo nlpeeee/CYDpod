@@ -53,6 +53,10 @@ static const Entry TABLE[] = {
   { "It goes back to 000000.", "密碼會變回 000000。" },
   { "Change it on the WiFi tab.", "可在 WiFi 分頁更改。" },
   { "Reset",                 "重設" },
+  { "Connect",               "連接" },
+  { "Disconnect",            "中斷連接" },
+  { "Disconnecting...",      "中斷連接中…" },
+  { "Disconnected",          "未連接" },
 };
 static_assert(sizeof(TABLE) / sizeof(TABLE[0]) == T_COUNT, "i18n TABLE does not match enum Txt");
 

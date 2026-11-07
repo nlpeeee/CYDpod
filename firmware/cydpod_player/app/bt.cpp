@@ -33,6 +33,9 @@ static volatile cyd::PairingSession::Phase pairingPhase=cyd::PairingSession::Nor
 static volatile BtFailure failure=BT_FAIL_NONE;
 static bool bluetoothReady=false,pairResumeWanted=false;
 static uint32_t pairPauseIntent=0,pairResumeIdleSince=0;
+static volatile bool controlPending=false,disconnectPending=false;
+static uint8_t disconnectAddr[6]{};
+static uint32_t disconnectDeadline=0;
 
 // When the player may page its saved speaker unprompted (bt_reconnect_policy.h).
 // Written from BtAppT (link events) and the loop task (ticks, owner actions).
@@ -68,7 +71,7 @@ static const char* avName(APP_AV_STATE s){
 
 class CydSource : public BluetoothA2DPSource {
  public:
-  enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page };
+  enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page, UserDrop };
   struct Request {uint32_t generation;uint8_t addr[6];char name[33];};
   CydSource(){owner=this;}
   bool post(Command cmd,const uint8_t* addr=nullptr,const char* name=""){
@@ -80,6 +83,12 @@ class CydSource : public BluetoothA2DPSource {
     return queued;
   }
   void poll(){bt_app_work_dispatch(dispatch,Tick,nullptr,0,nullptr);}
+  bool needsPoll()const{
+    portENTER_CRITICAL(&pairingMux);
+    const bool pending=controlPending;
+    portEXIT_CRITICAL(&pairingMux);
+    return pending;
+  }
   bool connectNow(const uint8_t addr[6],const char* name){return post(Select,addr,name);}
   // The saved speaker, unprompted: an idle session only, never drops a link.
   bool pageSaved(const uint8_t addr[6],const char* name){return post(Page,addr,name);}
@@ -130,7 +139,10 @@ class CydSource : public BluetoothA2DPSource {
     if(param&&event==ESP_A2D_CONNECTION_STATE_EVT){
       auto* p=(esp_a2d_cb_param_t*)param;const uint8_t* addr=p->conn_stat.remote_bda;
       const auto next=p->conn_stat.state;
-      if(next==ESP_A2D_CONNECTION_STATE_CONNECTED&&!session.accepts(addr,isKnownPeer(addr))){
+      portENTER_CRITICAL(&policyMux);
+      const bool permitted=policy.acceptsPeer();
+      portEXIT_CRITICAL(&policyMux);
+      if(next==ESP_A2D_CONNECTION_STATE_CONNECTED&&(!permitted||!session.accepts(addr,isKnownPeer(addr)))){
         Serial.println("bt: ignoring stale/unselected peer");logEvent(event);markOurDrop();esp_a2d_disconnect((uint8_t*)addr);return;
       }
       if(linkBusy()&&cyd::PairingSession::any(lastPeer)&&memcmp(addr,lastPeer,6)!=0){logEvent(event);return;}
@@ -210,6 +222,7 @@ class CydSource : public BluetoothA2DPSource {
   void publish(){
     portENTER_CRITICAL(&pairingMux);
     pairingPhase=session.phase;
+    controlPending=session.phase!=cyd::PairingSession::Normal&&session.phase!=cyd::PairingSession::Failed;
     // A queued UI command owns its claim until BtAppT accepts it. An older
     // Tick/connection callback must not reopen saved-device paging meanwhile.
     if(accepted==submitted)pairingActive=session.pairing;
@@ -225,7 +238,7 @@ class CydSource : public BluetoothA2DPSource {
     if(p){if(p->generation<accepted){Serial.printf("cmd: bt %u ignored (superseded)\n",unsigned(cmd));return;}accepted=p->generation;}
     if(cmd==InquiryStarted){inquiryPending=false;discovery_active=true;if(linkConnected())esp_bt_gap_cancel_discovery();}
     else if(cmd==InquiryStopped){inquiryPending=false;discovery_active=false;session.stopped();}
-    else if(cmd==Pair){if(!cyd::PairingSession::any(lastPeer))memcpy(lastPeer,peer_bd_addr,6);is_autoreconnect_allowed=false;reconnect_status=NoReconnect;session.begin(p->addr,millis());}
+    else if(cmd==Pair){POLICY(userAction(millis()));if(!cyd::PairingSession::any(lastPeer))memcpy(lastPeer,peer_bd_addr,6);is_autoreconnect_allowed=false;reconnect_status=NoReconnect;session.begin(p->addr,millis());}
     else if(cmd==Cancel){is_autoreconnect_allowed=false;reconnect_status=NoReconnect;session.cancel(millis());}
     else if(cmd==Page){
       is_autoreconnect_allowed=false;reconnect_status=NoReconnect;
@@ -233,8 +246,25 @@ class CydSource : public BluetoothA2DPSource {
       else{Serial.println("cmd: page skipped (session busy)");pageFailed("busy");}
     }
     else if(cmd==Select){
+      POLICY(userAction(millis()));
+      set_connectable(true);
       is_autoreconnect_allowed=false;reconnect_status=NoReconnect;
       strlcpy((char*)s_peer_bdname,p->name,sizeof(s_peer_bdname));session.select(p->addr,millis());
+    }else if(cmd==UserDrop){
+      if(!linkConnected()||memcmp(lastPeer,p->addr,6)!=0){
+        portENTER_CRITICAL(&pairingMux);disconnectPending=false;portEXIT_CRITICAL(&pairingMux);
+        failure=BT_FAIL_RADIO;
+      }else{
+        is_autoreconnect_allowed=false;reconnect_status=NoReconnect;
+        POLICY(userStop());
+        set_connectable(false);
+        session=cyd::PairingSession{};
+        markOurDrop();
+        if(esp_a2d_disconnect(p->addr)!=ESP_OK){
+          portENTER_CRITICAL(&pairingMux);disconnectPending=false;portEXIT_CRITICAL(&pairingMux);
+          failure=BT_FAIL_RADIO;
+        }
+      }
     }else if(cmd==Drop){markOurDrop();esp_a2d_disconnect(p->addr);}
     else if(cmd==Scan){const uint8_t none[6]{};session.begin(none,millis());}
     else if(cmd==ChaseOff)is_autoreconnect_allowed=false;
@@ -281,11 +311,6 @@ static uint8_t           learnedAddr[6] = { 0 };
 static char              learnedName[33] = { 0 };
 static volatile bool     learned = false;
 static uint32_t          connectDeadline = 0;      // 0 = nothing pending
-// Switching from one remembered device to another: the link has to be dropped
-// first, so the request is held until the radio is free (bt_tick). Held by
-// address: the list can shift (remember, forget) while it waits.
-static bool              pendingSwitch = false;
-static uint8_t           pendingAddr[6] = { 0 };
 
 static volatile uint32_t  passkey = 0;
 
@@ -353,10 +378,12 @@ static bool onSsid(const char* ssid, esp_bd_addr_t address, int rssi) {
     if (memcmp(devs[i].addr, address, 6) == 0) break;
   if (i == devCount && devCount < BT_MAX_DEVICES) devCount++;
   if (i < devCount) {
-    strlcpy(devs[i].name, name, sizeof(devs[i].name));
-    memcpy(devs[i].addr, address, 6);
-    devs[i].rssi = rssi;
-    listSerial++;
+    if(memcmp(devs[i].addr,address,6)!=0||strcmp(devs[i].name,name)!=0||devs[i].rssi!=rssi){
+      strlcpy(devs[i].name, name, sizeof(devs[i].name));
+      memcpy(devs[i].addr, address, 6);
+      devs[i].rssi = rssi;
+      ++listSerial;
+    }
   }
   const bool tapped = haveTarget && memcmp(targetAddr, address, 6) == 0;
   portEXIT_CRITICAL(&devMux);
@@ -369,14 +396,19 @@ static bool onSsid(const char* ssid, esp_bd_addr_t address, int rssi) {
 static void onState(esp_a2d_connection_state_t s, void*) {
   static const char* NAMES[] = { "disconnected", "connecting", "connected", "disconnecting" };
   Serial.printf("bt: %s  heap %u\n", s <= 3 ? NAMES[s] : "?", ESP.getFreeHeap());
+  portENTER_CRITICAL(&pairingMux);
   state = s;
+  if(s==ESP_A2D_CONNECTION_STATE_CONNECTED)memcpy(connectedAddr,a2dp.peer(),6);
+  if(s==ESP_A2D_CONNECTION_STATE_DISCONNECTED&&disconnectPending){
+    disconnectPending=false;failure=BT_FAIL_NONE;
+  }
+  portEXIT_CRITICAL(&pairingMux);
   if (s == ESP_A2D_CONNECTION_STATE_CONNECTED) {
     connectDeadline = 0;
     failure = BT_FAIL_NONE;
 
     passkey = 0;
     const uint8_t* peer = a2dp.peer();
-    memcpy(connectedAddr, peer, 6);
     bool changed = memcmp(g_settings.btAddr, peer, 6) != 0;
     // The device the owner tapped -- by address, because the wait for it may
     // have timed out before it answered, which is what the car does.
@@ -506,14 +538,14 @@ static void remember(const uint8_t addr[6], const char* name) {
 
 void bt_tick() {
   if (!bluetoothReady) return;
-  if(failure!=BT_FAIL_NONE){haveTarget=false;pendingSwitch=false;connectDeadline=0;POLICY(connectFailed());}
+  if(failure!=BT_FAIL_NONE){haveTarget=false;connectDeadline=0;POLICY(connectFailed());}
   POLICY(expire(millis()));
   // Give up on a connection the owner asked for, rather than saying
   // "connecting" until the board is restarted.
   if (connectDeadline && (int32_t)(millis() - connectDeadline) >= 0) {
     connectDeadline = 0;
     haveTarget = false;
-    pendingSwitch = false;
+
     passkey = 0;
     if (failure == BT_FAIL_NONE) failure = BT_FAIL_TIMEOUT;
     Serial.printf("bt: giving up on \"%s\"\n", targetName);
@@ -522,7 +554,14 @@ void bt_tick() {
 
 
   static uint32_t pollAt=0;
-  if(int32_t(millis()-pollAt)>=0){pollAt=millis()+250;a2dp.poll();}
+  if(a2dp.needsPoll()){
+    if(int32_t(millis()-pollAt)>=0){pollAt=millis()+250;a2dp.poll();}
+  }else pollAt=millis();
+  portENTER_CRITICAL(&pairingMux);
+  if(disconnectPending&&int32_t(millis()-disconnectDeadline)>=0){
+    disconnectPending=false;failure=BT_FAIL_TIMEOUT;
+  }
+  portEXIT_CRITICAL(&pairingMux);
   if(pairResumeWanted&&!pairingActive&&bt_connected()){
     if(speaker_route()==OUT_BT&&!audio_isPlaying()&&cyd::currentCompletion(pairPauseIntent,audio_playIntentSerial()))audio_resumeAfterPairing();
     else Serial.println("cmd: pairing resume ignored (newer play intent or changed route)");
@@ -552,13 +591,6 @@ void bt_tick() {
     intentSeen=intent;intentPulls=pulls;intentFrames=frames;
   }
 
-  // The link asked to be dropped is gone: now page what was asked for.
-  if (pendingSwitch && btIdle()) {
-    pendingSwitch = false;
-    for (int i = 0; i < g_settings.btKnownCount; i++)
-      if (memcmp(g_settings.btKnown[i].addr, pendingAddr, 6) == 0) { bt_connectKnown(i); break; }
-  }
-
   // Reach for the saved device rather than waiting to stumble across it.
   // Discovery only finds what is advertising, and a car advertises only while
   // its pairing screen is open. A known device is paged by address, which is
@@ -567,7 +599,7 @@ void bt_tick() {
   // exists, and at most MAX_FAILED_PAGES times with growing gaps until the
   // owner acts. The session must be idle so a page cannot cut across a pairing.
   bool page = false;
-  if (!pairingActive && !haveTarget && !pendingSwitch && btIdle() &&
+  if (!pairingActive && !haveTarget && btIdle() &&
       (pairingPhase == cyd::PairingSession::Normal || pairingPhase == cyd::PairingSession::Failed)) {
     portENTER_CRITICAL(&policyMux);
     page = policy.mayPage(millis(), bt_connected(), false, cyd::PairingSession::any(g_settings.btAddr));
@@ -584,7 +616,10 @@ void bt_tick() {
   // turns the scan mode off entirely; this puts connectable back. The pairing
   // screen needs "CYD-MP3" in the other device's own list, hence GENERAL there.
   static uint32_t nextVisible = 0;
-  if (!bt_connected() && (int32_t)(millis() - nextVisible) >= 0) {
+  portENTER_CRITICAL(&policyMux);
+  const bool acceptingPeer=policy.acceptsPeer();
+  portEXIT_CRITICAL(&policyMux);
+  if (acceptingPeer && !bt_connected() && (int32_t)(millis() - nextVisible) >= 0) {
     nextVisible = millis() + 5000;
     if (pairingActive) a2dp.set_discoverability(ESP_BT_GENERAL_DISCOVERABLE);
     else             a2dp.set_connectable(true);   // discoverability stays NON_DISCOVERABLE
@@ -648,16 +683,17 @@ bool bt_requestPairing() {
   if(fresh)pairResumeWanted=pauseForPair;
   if(!a2dp.post(CydSource::Pair,g_settings.btAddr)){failure=BT_FAIL_TIMEOUT;Serial.println("cmd: pair ignored (queue busy)");return false;}
   portENTER_CRITICAL(&pairingMux);pairingActive=true;portEXIT_CRITICAL(&pairingMux);
-  haveTarget=false;pendingSwitch=false;connectDeadline=0;passkey=0;failure=BT_FAIL_NONE;ownerActed();
+  haveTarget=false;connectDeadline=0;passkey=0;failure=BT_FAIL_NONE;ownerActed();
   if(pauseForPair){audio_pauseForPairing();pairResumeWanted=true;pairPauseIntent=audio_playIntentSerial();}
   else if(fresh)pairPauseIntent=audio_playIntentSerial();
   portENTER_CRITICAL(&devMux);devCount=0;++listSerial;portEXIT_CRITICAL(&devMux);
+  portENTER_CRITICAL(&pairingMux);disconnectPending=false;portEXIT_CRITICAL(&pairingMux);
   Serial.println("cmd: pair queued");return true;
 }
 bool bt_cancelPairing() {
   if (!bluetoothReady) return false;
   if(!a2dp.post(CydSource::Cancel)){failure=BT_FAIL_TIMEOUT;Serial.println("cmd: cancel pair ignored (queue busy)");return false;}
-  haveTarget=false;pendingSwitch=false;connectDeadline=0;passkey=0;ownerActed();
+  haveTarget=false;connectDeadline=0;passkey=0;ownerActed();
   Serial.println("cmd: cancel pair queued");return true;
 }
 
@@ -677,7 +713,10 @@ bool bt_device(int i, BtDevice& out) {
 }
 
 bool bt_isConnectedTo(const uint8_t addr[6]) {
-  return bt_connected() && memcmp(connectedAddr, addr, 6) == 0;
+  portENTER_CRITICAL(&pairingMux);
+  const bool connected=state==ESP_A2D_CONNECTION_STATE_CONNECTED&&memcmp(connectedAddr,addr,6)==0;
+  portEXIT_CRITICAL(&pairingMux);
+  return connected;
 }
 
 int bt_knownCount() { return g_settings.btKnownCount; }
@@ -690,71 +729,75 @@ bool bt_known(int i, BtDevice& out) {
   return true;
 }
 
-void bt_connectKnown(int i) {
-  if (!bluetoothReady) return;
-  BtDevice d;
-  if (!bt_known(i, d)){Serial.println("cmd: connect ignored (invalid saved device)");return;}
-  Serial.printf("cmd: connect saved %d accepted\n",i);
-  if (bt_connected()) {
-    if (memcmp(connectedAddr, d.addr, 6) == 0 && !pendingSwitch){Serial.println("cmd: connect ignored (already connected)");return;}     // already on it
-    // Claim the target before dropping the link: it stops the library chasing
-    // what we are leaving, and stops our own paging (which still points at the
-    // old address until the new one connects) from doing the same.
-    portENTER_CRITICAL(&devMux);
-    memcpy(targetAddr, d.addr, 6);
-    strlcpy(targetName, d.name, sizeof(targetName));
-    haveTarget = true;
-    portEXIT_CRITICAL(&devMux);
-    memcpy(pendingAddr, d.addr, 6);
-    pendingSwitch = true;
-    failure = BT_FAIL_NONE;
-    ownerActed();
-    connectDeadline = millis() + CONNECT_TIMEOUT_MS;
-    Serial.printf("bt: switching to \"%s\"\n", d.name);
-    a2dp.chaseLastDevice(false);
-    a2dp.disconnectFrom(connectedAddr);
-    return;
-  }
-  // This selection replaces any saved-device switch waiting for disconnect.
-  pendingSwitch = false;
+static bool requestConnect(const BtDevice& device) {
+  if(!bluetoothReady||disconnectPending)return false;
+  if(bt_isConnectedTo(device.addr))return true;
+  uint8_t previousAddr[6];char previousName[33];
   portENTER_CRITICAL(&devMux);
-  memcpy(targetAddr, d.addr, 6);
-  strlcpy(targetName, d.name, sizeof(targetName));
-  haveTarget = true;
+  memcpy(previousAddr,targetAddr,6);memcpy(previousName,targetName,sizeof(previousName));
+  const bool previousTarget=haveTarget;
+  memcpy(targetAddr,device.addr,6);strlcpy(targetName,device.name,sizeof(targetName));haveTarget=true;
   portEXIT_CRITICAL(&devMux);
-  failure = BT_FAIL_NONE;
+  if(!a2dp.connectNow(device.addr,device.name)){
+    portENTER_CRITICAL(&devMux);
+    memcpy(targetAddr,previousAddr,6);memcpy(targetName,previousName,sizeof(targetName));haveTarget=previousTarget;
+    portEXIT_CRITICAL(&devMux);
+    Serial.println("cmd: connect ignored (Bluetooth queue busy)");return false;
+  }
+  failure=BT_FAIL_NONE;passkey=0;connectDeadline=millis()+CONNECT_TIMEOUT_MS;
   ownerActed();
-  passkey = 0;
-  connectDeadline = millis() + CONNECT_TIMEOUT_MS;
-  Serial.printf("bt: paging \"%s\" on request\n", d.name);
-  if(!a2dp.connectNow(d.addr,d.name)){haveTarget=false;connectDeadline=0;failure=BT_FAIL_TIMEOUT;Serial.println("cmd: connect ignored (Bluetooth queue busy)");}
+  Serial.printf("cmd: connect queued for %s\n",device.name);
+  return true;
 }
 
-void bt_forget(int i) {
-  if (!bluetoothReady) return;
-  if (i < 0 || i >= g_settings.btKnownCount) return;
+bool bt_connectDevice(const uint8_t addr[6]) {
+  BtDevice device;
+  for(int i=0;i<bt_knownCount();++i)if(bt_known(i,device)&&memcmp(device.addr,addr,6)==0)return requestConnect(device);
+  for(int i=0;i<bt_deviceCount();++i)if(bt_device(i,device)&&memcmp(device.addr,addr,6)==0)return requestConnect(device);
+  return false;
+}
+
+void bt_connectKnown(int i) {
+  BtDevice device;
+  if(bt_known(i,device))requestConnect(device);
+}
+
+bool bt_disconnect(const uint8_t addr[6]) {
+  if(!bluetoothReady)return false;
+  portENTER_CRITICAL(&pairingMux);
+  const bool matching=state==ESP_A2D_CONNECTION_STATE_CONNECTED&&memcmp(connectedAddr,addr,6)==0;
+  if(!matching||disconnectPending){
+    const bool already=matching&&disconnectPending&&memcmp(disconnectAddr,addr,6)==0;
+    portEXIT_CRITICAL(&pairingMux);return already;
+  }
+  memcpy(disconnectAddr,addr,6);disconnectDeadline=millis()+CONNECT_TIMEOUT_MS;disconnectPending=true;
+  portEXIT_CRITICAL(&pairingMux);
+  if(!a2dp.post(CydSource::UserDrop,addr)){
+    portENTER_CRITICAL(&pairingMux);disconnectPending=false;portEXIT_CRITICAL(&pairingMux);
+    return false;
+  }
+  audio_setPlaying(false);
+  haveTarget=false;connectDeadline=0;pairResumeWanted=false;pairResumeIdleSince=0;
+  POLICY(userStop());
+  Serial.println("cmd: disconnect queued; bond retained");
+  return true;
+}
+
+static bool forgetKnown(int i) {
+  if (!bluetoothReady) return false;
+  if (i < 0 || i >= g_settings.btKnownCount) return false;
   uint8_t addr[6];
   memcpy(addr, g_settings.btKnown[i].addr, 6);
   Serial.printf("bt: forgetting \"%s\"\n", g_settings.btKnown[i].name);
+
+  if(bt_isConnectedTo(addr)&&!disconnectPending&&!bt_disconnect(addr))return false;
 
   for (int j = i; j + 1 < g_settings.btKnownCount; j++)
     g_settings.btKnown[j] = g_settings.btKnown[j + 1];
   g_settings.btKnownCount--;
 
-  // Forgetting has to mean forgetting. Dropped from the list but still the
-  // "last device", it would be paged again every 15 s and reconnected to at
-  // the next boot -- so the link goes, our record goes, and the library's own
-  // stored address goes with them.
-  pendingSwitch = false;
-
-  // The link goes first, by address: the library's disconnect() reads the very
-  // record the next few lines erase, and would otherwise hang up on nobody
-  // while the music kept playing through the device just deleted.
-  if (bt_isConnectedTo(addr)) {
-    Serial.println("bt: it was the one connected -- dropping the link");
-    POLICY(userStop());
-    a2dp.disconnectFrom(addr);
-  }
+  // The queued disconnect owns the address before the last-device record is erased.
+  // Remove that record and the bond so the deleted device cannot reconnect at boot.
 
   if (memcmp(g_settings.btAddr, addr, 6) == 0) {
     static const uint8_t NONE[6] = { 0 };
@@ -772,27 +815,52 @@ void bt_forget(int i) {
   if (err != ESP_OK) Serial.printf("bt: remove bond -> %s\n", esp_err_to_name(err));
 
   settings_save();
+  return true;
 }
 
+void bt_forget(int i){forgetKnown(i);}
+
 void bt_choose(int i) {
-  if (!bluetoothReady) return;
-  BtDevice d;
-  if (!bt_device(i, d)){Serial.println("cmd: choose ignored (device disappeared)");return;}
-  Serial.printf("cmd: choose device %d accepted\n",i);
-  // This selection replaces any saved-device switch waiting for disconnect.
-  pendingSwitch = false;
+  BtDevice device;
+  if(bt_device(i,device))requestConnect(device);
+}
+
+bool bt_forgetDevice(const uint8_t addr[6]) {
+  if(!bluetoothReady||bt_connecting()||haveTarget||disconnectPending)return false;
+  BtDevice device;
+  for(int i=0;i<bt_knownCount();++i){
+    if(bt_known(i,device)&&memcmp(device.addr,addr,6)==0){
+      return forgetKnown(i);
+    }
+  }
+  return false;
+}
+
+void bt_uiSnapshot(BtUiSnapshot& out) {
+  memset(&out,0,sizeof(out));
+  portENTER_CRITICAL(&pairingMux);
+  out.status.connected=state==ESP_A2D_CONNECTION_STATE_CONNECTED;
+  out.status.connecting=state==ESP_A2D_CONNECTION_STATE_CONNECTING;
+  out.status.disconnecting=disconnectPending||state==ESP_A2D_CONNECTION_STATE_DISCONNECTING;
+  memcpy(out.status.peer,connectedAddr,6);
+  out.status.phase=pairingPhase;out.status.pairing=pairingActive;
+  out.status.failure=failure;out.status.passkey=passkey;
+  portEXIT_CRITICAL(&pairingMux);
+  strlcpy(out.status.name,g_settings.btName.c_str(),sizeof(out.status.name));
+  for(int i=0;i<g_settings.btKnownCount&&out.count<BT_MAX_DEVICES;++i){
+    auto& row=out.rows[out.count++];
+    memcpy(row.device.addr,g_settings.btKnown[i].addr,6);
+    strlcpy(row.device.name,g_settings.btKnown[i].name,sizeof(row.device.name));row.saved=true;
+  }
   portENTER_CRITICAL(&devMux);
-  memcpy(targetAddr, d.addr, 6);
-  memcpy(targetName, d.name, sizeof(targetName));
-  haveTarget = true;
+  out.status.choosing=haveTarget;
+  for(int i=0;i<devCount&&out.count<BT_MAX_DEVICES;++i){
+    bool saved=false;
+    for(int j=0;j<out.count;++j)if(memcmp(out.rows[j].device.addr,devs[i].addr,6)==0){saved=true;break;}
+    if(!saved)out.rows[out.count++].device=devs[i];
+  }
   portEXIT_CRITICAL(&devMux);
-  failure = BT_FAIL_NONE;
-  ownerActed();
-  passkey = 0;
-  connectDeadline = millis() + CONNECT_TIMEOUT_MS;
-  Serial.printf("bt: chose \"%s\" -- connecting now\n", d.name);
-  // onSsid() still connects if this fails and the device turns up again.
-  if(!a2dp.connectNow(d.addr,d.name)){haveTarget=false;connectDeadline=0;failure=BT_FAIL_TIMEOUT;Serial.println("cmd: connect ignored (Bluetooth queue busy)");}
+  for(int i=0;i<out.count;++i)out.rows[i].connected=out.status.connected&&memcmp(out.status.peer,out.rows[i].device.addr,6)==0;
 }
 
 #endif  // !CYD_UPLOADER

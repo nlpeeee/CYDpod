@@ -12,10 +12,12 @@
 //   a2dp      suspend the A2DP stream 10 s after playback stops
 //   sleep     light sleep with Bluetooth stopped after 5 min without playback
 //   backstop  while asleep, also wake every second to look for a held touch
+//   btfast    Bluetooth: 0.5 s stack-up wait (not 10 s) at boot and after Sleep, and prompt
+//             media-ready retries after any connection
 #include <Arduino.h>
 
 enum PowerLever : uint8_t {
-  PWR_PANEL, PWR_TOUCHINT, PWR_TOUCHSLEEP, PWR_LOOP, PWR_A2DP, PWR_SLEEP, PWR_BACKSTOP, PWR_LEVER_COUNT
+  PWR_PANEL, PWR_TOUCHINT, PWR_TOUCHSLEEP, PWR_LOOP, PWR_A2DP, PWR_SLEEP, PWR_BACKSTOP, PWR_BTFAST, PWR_LEVER_COUNT
 };
 
 bool     power_lever(PowerLever lever);

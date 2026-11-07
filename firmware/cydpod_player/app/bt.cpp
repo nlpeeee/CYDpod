@@ -83,7 +83,7 @@ static const char* avName(APP_AV_STATE s){
 
 class CydSource : public BluetoothA2DPSource {
  public:
-  enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page, UserDrop, MediaSuspend, MediaResume };
+  enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page, UserDrop, MediaSuspend, MediaResume, MediaCheck };
   struct Request {uint32_t generation;uint8_t addr[6];char name[33];};
   CydSource(){owner=this;}
   bool post(Command cmd,const uint8_t* addr=nullptr,const char* name=""){
@@ -240,6 +240,44 @@ class CydSource : public BluetoothA2DPSource {
     if(diag&&event==ESP_A2D_CONNECTION_STATE_EVT&&diag->conn_stat.state==ESP_A2D_CONNECTION_STATE_DISCONNECTED)cmdMask=0;
     session.drive(millis(),*this);publish();
   }
+  // Stack up, at boot and after every Sleep wake (lever "btfast"): the pinned
+  // 1.8.12 handler waits 10 s before its one page of the saved speaker. Its own
+  // comment gives the reason as a peer-initiated connection racing s_a2d_state;
+  // half a second still leaves that window. This mirrors BluetoothA2DPSource.cpp
+  // av_hdl_stack_evt(BT_APP_EVT_STACK_UP) line for line apart from the wait.
+  void av_hdl_stack_evt(uint16_t event,void* p) override {
+    if(event!=0/*BT_APP_EVT_STACK_UP*/||!power_lever(PWR_BTFAST)){BluetoothA2DPSource::av_hdl_stack_evt(event,p);return;}
+    esp_bt_gap_set_device_name(dev_name);
+    esp_bt_gap_register_callback(ccall_app_gap_callback);
+    esp_avrc_ct_init();
+    esp_avrc_ct_register_callback(ccall_app_rc_ct_callback);
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
+    if(is_passthru_active){esp_avrc_tg_init();esp_avrc_tg_register_callback(ccall_app_rc_tg_callback);}
+    esp_avrc_rn_evt_cap_mask_t evt_set={0};
+    for(auto e:avrc_rn_events)esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET,&evt_set,e);
+    if(esp_avrc_tg_set_rn_evt_cap(&evt_set)!=ESP_OK)Serial.println("bt: esp_avrc_tg_set_rn_evt_cap failed");
+#endif
+    esp_a2d_source_init();
+    esp_a2d_register_callback(&ccall_app_a2d_callback);
+#if A2DP_MANAGED_ENCODER_SUPPORTED
+    if(!use_managed_encoder())
+#endif
+    esp_a2d_source_register_data_callback(&ccall_bt_app_a2d_data_cb);
+    delay_ms(500);
+    set_scan_mode_connectable(false);
+    if(reconnect_status==AutoReconnect&&has_last_connection()){
+      memcpy(peer_bd_addr,last_connection,ESP_BD_ADDR_LEN);
+      connect_to(last_connection);
+      s_a2d_state=APP_AV_STATE_CONNECTING;
+    }else{
+      s_a2d_state=APP_AV_STATE_DISCOVERING;
+      esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY,10,0);
+    }
+    static int tmr_id=0;
+    s_tmr=xTimerCreate("connTmr",(10000/portTICK_PERIOD_MS),pdTRUE,(void*)&tmr_id,ccall_a2d_app_heart_beat);
+    xTimerStart(s_tmr,portMAX_DELAY);
+    Serial.println("bt: stack up (0.5 s wait)");
+  }
   void app_gap_callback(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param) override;
   esp_err_t esp_a2d_disconnect(esp_bd_addr_t peer) override {
     const esp_err_t result = BluetoothA2DPSource::esp_a2d_disconnect(peer);
@@ -334,6 +372,16 @@ class CydSource : public BluetoothA2DPSource {
       if(linkConnected()&&s_media_state==2&&streamAudio==ESP_A2D_AUDIO_STATE_STARTED&&!session.pairing){
         sendMedia(ESP_A2D_MEDIA_CTRL_SUSPEND);
         streamIdle=true;
+      }
+    }else if(cmd==MediaCheck){
+      mediaPending=false;
+      // The CHECK the library sends while connecting is often refused (the sink is
+      // not ready yet), and it retries only on its 10 s heartbeat. Ask again now;
+      // its bt_app_av_media_proc turns a successful ack into START as usual.
+      if(s_a2d_state==APP_AV_STATE_CONNECTED&&s_media_state==0&&!session.pairing){
+        cmdAt[0]=millis();cmdMask|=1u<<1;
+        const esp_err_t rc=esp_a2d_media_ctrl(ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY);
+        Serial.printf("bt: media cmd=CHECK rc=%d (prompt)\n",int(rc));
       }
     }else if(cmd==MediaResume){
       mediaPending=false;
@@ -709,6 +757,14 @@ void bt_tick() {
     if(!quietSince)quietSince=millis()|1;
     else if(millis()-quietSince>=10000){quietSince=0;postMedia(CydSource::MediaSuspend);}
   }else quietSince=0;
+  // Connected with media still IDLE: the connect-time CHECK was refused. Ask
+  // every 300 ms (at most 20 times per link) instead of the library's 10 s beat.
+  static uint32_t checkAt=0;static uint8_t checks=0;
+  if(!bt_connected()){checks=0;checkAt=millis()+300;}
+  else if(power_lever(PWR_BTFAST)&&!mediaPending&&!streamIdle&&!pairingActive&&streamMedia==0&&
+          checks<20&&int32_t(millis()-checkAt)>=0){
+    checkAt=millis()+300;++checks;postMedia(CydSource::MediaCheck);
+  }
 
   // Reach for the saved device rather than waiting to stumble across it.
   // Discovery only finds what is advertising, and a car advertises only while

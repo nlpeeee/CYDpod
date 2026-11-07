@@ -18,8 +18,8 @@
 // loop cadence and A2DP stream while idle, and from light sleep with the
 // Bluetooth stack stopped in place (no restart: RAM, screen and track survive).
 namespace {
-const char* const NAMES[PWR_LEVER_COUNT] = {"panel", "touchint", "touchsleep", "loop", "a2dp", "sleep", "backstop"};
-bool levers[PWR_LEVER_COUNT] = {true, true, false, true, true, true, true};
+const char* const NAMES[PWR_LEVER_COUNT] = {"panel", "touchint", "touchsleep", "loop", "a2dp", "sleep", "backstop", "btfast"};
+bool levers[PWR_LEVER_COUNT] = {true, true, false, true, true, true, true, true};
 
 uint32_t lastPlayAt = 0, lastStat = 0, retryAt = 0, forceUntil = 0;
 bool started = false;
@@ -187,7 +187,7 @@ bool power_command(const char* line) {
   if (!verb[0]) { printStatus(millis()); return true; }
   if (strcmp(verb, "on") == 0 || strcmp(verb, "off") == 0) {
     const int i = leverIndex(arg);
-    if (i < 0) { Serial.println("pwr: levers are panel touchint touchsleep loop a2dp sleep backstop"); return true; }
+    if (i < 0) { Serial.println("pwr: levers are panel touchint touchsleep loop a2dp sleep backstop btfast"); return true; }
     levers[i] = strcmp(verb, "on") == 0;
     Serial.printf("pwr: %s %s\n", NAMES[i], levers[i] ? "on" : "off");
     return true;

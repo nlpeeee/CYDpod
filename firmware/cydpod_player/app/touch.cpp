@@ -159,4 +159,11 @@ bool touch_hasStoredCalibration() {
   return ok;
 }
 
+// The resistive panel has no wake-capable INT wiring here: it never sleeps.
+void touch_setIdle(bool, bool) {}
+TouchIdleStats touch_idleStats() { return {0, 0, 0, false, 0}; }
+bool touch_sleepPrepare() { return false; }
+void touch_sleepFinish(bool) {}
+bool touch_sleepProbe(uint32_t) { return false; }
+
 #endif // !CYD_TOUCH_CAPACITIVE

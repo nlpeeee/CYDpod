@@ -51,6 +51,18 @@ int  touch_measureNoiseFloor();
 void touch_nativePoint(long rx, long ry, int& px, int& py);
 void touch_screenPoint(long rx, long ry, int& sx, int& sy);
 
+// Screen-off touch (power.h). Idle: read the controller only after its INT edge,
+// plus a 250 ms backstop poll; autoSleep also lets the controller doze. A no-op
+// on resistive boards.
+struct TouchIdleStats { uint32_t intEdges, intWakes, pollWakes; bool intVerified; uint8_t pulseReg; };
+void           touch_setIdle(bool idle, bool autoSleep);
+TouchIdleStats touch_idleStats();
+// Light sleep: arm INT (LOW) as the wake source; false when it cannot be used.
+bool touch_sleepPrepare();
+void touch_sleepFinish(bool byInt);  // byInt: the INT level woke the chip
+// Contact within windowMs (0 = one read), without counting bus errors.
+bool touch_sleepProbe(uint32_t windowMs);
+
 TouchCal touch_calibration();
 void     touch_setCalibration(const TouchCal& c, bool persist);
 bool     touch_hasStoredCalibration();

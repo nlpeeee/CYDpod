@@ -191,7 +191,7 @@ class CydSource : public BluetoothA2DPSource {
     }
     if(diag&&event==ESP_A2D_AUDIO_STATE_EVT&&diag->audio_stat.state==ESP_A2D_AUDIO_STATE_STARTED)streamIdle=false; // peer or our START
     if(param&&event==ESP_A2D_CONNECTION_STATE_EVT){
-      streamIdle=false;
+      streamIdle=mediaPending=false;
       auto* p=(esp_a2d_cb_param_t*)param;const uint8_t* addr=p->conn_stat.remote_bda;
       const auto next=p->conn_stat.state;
       portENTER_CRITICAL(&policyMux);
@@ -693,14 +693,21 @@ void bt_tick() {
   // not Bluetooth), restart as soon as Bluetooth audio is wanted again.
   static uint32_t quietSince=0;
   const bool wanted=speaker_route()==OUT_BT&&audio_isPlaying();
+  // mediaPending is set before posting: the higher-priority BtAppT task can run
+  // the command, and clear the flag, before a2dp.media() returns.
+  auto postMedia=[](CydSource::Command cmd){
+    mediaPending=true;
+    if(!a2dp.media(cmd)){mediaPending=false;return false;}
+    return true;
+  };
   if(mediaPending){}
   else if(streamIdle){
     quietSince=0;
-    if((wanted||!power_lever(PWR_A2DP))&&(mediaPending=a2dp.media(CydSource::MediaResume)))Serial.println("bt: idle stream resume queued");
+    if((wanted||!power_lever(PWR_A2DP))&&postMedia(CydSource::MediaResume))Serial.println("bt: idle stream resume queued");
   }else if(power_lever(PWR_A2DP)&&!wanted&&bt_connected()&&!pairingActive&&
            streamAudio==ESP_A2D_AUDIO_STATE_STARTED&&streamMedia==2){
     if(!quietSince)quietSince=millis()|1;
-    else if(millis()-quietSince>=10000){quietSince=0;mediaPending=a2dp.media(CydSource::MediaSuspend);}
+    else if(millis()-quietSince>=10000){quietSince=0;postMedia(CydSource::MediaSuspend);}
   }else quietSince=0;
 
   // Reach for the saved device rather than waiting to stumble across it.

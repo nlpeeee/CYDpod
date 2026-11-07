@@ -318,6 +318,33 @@ unsigned classic_depth();int classic_top();
 
 
 int classic_volumeSaveArms();uint32_t classic_volumeSaveAt();int classic_target(int,int);uint32_t classic_seekPreviewMs();
+void classic_invalidateViewport();
+static void playerRedrawRegression(){
+  namespace L=cydclassic::layout;
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);toPlayer();
+    const int w=tft.width(),h=tft.height();
+    const Rect sh=L::playerToggle<Rect>(w,h,false),rep=L::playerToggle<Rect>(w,h,true);
+    auto pixels=[&](const Rect& r){std::vector<uint16_t> result;
+      for(int y=r.y;y<r.y+r.h;++y)for(int x=r.x;x<r.x+r.w;++x)result.push_back(tft.pixel(x,y));
+      return result;
+    };
+    for(uint8_t mode=0;mode<REPEAT_MODE_COUNT;++mode){
+      audio_setRepeat(mode);ui_redraw();pump();
+      const Rect edge={w-L::StripW,L::HeaderH,L::StripW,h-L::HeaderH};
+      const auto right=pixels(edge),repeat=pixels(rep);
+      classic_invalidateViewport();
+      check(pixels(edge)==right,"list cache invalidation must not erase the player right edge");
+      tap(sh.cx(),sh.cy());
+      check(pixels(rep)==repeat,"Shuffle preserves the unchanged Repeat control in every orientation and mode");
+      tap(rep.cx(),rep.cy());const auto changed=pixels(rep);
+      ui_redraw();pump();
+      check(pixels(rep)==changed,"incremental Repeat paint matches full redraw");
+    }
+  }
+  tft.setRotation(0);home();
+  std::cout<<"PASS player right edge: cache invalidation, Shuffle and Repeat preserve pixels in four rotations and all repeat modes\n";
+}
 static void nowPlayingRegression(){
   namespace L=cydclassic::layout;
   for(unsigned rotation:{0u,1u,3u}){
@@ -1571,8 +1598,8 @@ int main(){try{
 
   if(const char* preview=std::getenv("CYDPOD_HP_LIMIT_ONLY")){headphoneLimitRegression(preview);return 0;}
 
-  if(!std::getenv("CYDPOD_BT_ONLY")&&!std::getenv("CYDPOD_VIEWPORT_ONLY")&&!std::getenv("CYDPOD_PL_BACK_ONLY"))geometryGolden();
-  else if(!std::getenv("CYDPOD_BT_ONLY")&&!std::getenv("CYDPOD_PL_BACK_ONLY")){const auto actual=classic_geometry();std::ifstream f("../golden/classic_layout.txt");
+  if(!std::getenv("CYDPOD_PLAYER_REDRAW_ONLY")&&!std::getenv("CYDPOD_BT_ONLY")&&!std::getenv("CYDPOD_VIEWPORT_ONLY")&&!std::getenv("CYDPOD_PL_BACK_ONLY"))geometryGolden();
+  else if(!std::getenv("CYDPOD_PLAYER_REDRAW_ONLY")&&!std::getenv("CYDPOD_BT_ONLY")&&!std::getenv("CYDPOD_PL_BACK_ONLY")){const auto actual=classic_geometry();std::ifstream f("../golden/classic_layout.txt");
     check(actual==std::string((std::istreambuf_iterator<char>(f)),{}),"Classic drag geometry differs from golden");
     std::cout<<"PASS CY-98b Classic layout golden (dialog excluded: baseline failure)\n";}
 
@@ -1591,6 +1618,7 @@ int main(){try{
     std::ofstream(SD.root/"playlists/b.m3u")<<"/music/Example/Song 03.m4a\n/music/Example/Song 04.m4a\n";
   }
   check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
+  if(std::getenv("CYDPOD_PLAYER_REDRAW_ONLY")){playerRedrawRegression();return g_failures?1:0;}
   if(std::getenv("CYDPOD_BT_ONLY")){bluetoothCandidateRegression();bluetoothReturns();return g_failures?1:0;}
   if(std::getenv("CYDPOD_PL_BACK_ONLY")){playlistBackRegression();return 0;}
   if(std::getenv("CYDPOD_VIEWPORT_ONLY")){lateReleaseRegression();viewportRegression();dragRegression();flingRegression();flickWireRegression();miniPlayerRegression();return 0;}
@@ -1726,6 +1754,7 @@ int main(){try{
   sleep_tick(++clockNow,true);sleep_tick(++clockNow,false);sleep_tick(++clockNow,false);
   g_settings.screenTimeout=0;ui_tick(clockNow+=600000);check(backlight==100,"Off disables screen timeout");
   compactChromeRegression();
+  playerRedrawRegression();
   nowPlayingRegression();
   textq::run();
   iconq::run();

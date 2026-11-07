@@ -505,6 +505,8 @@ void advanceFling(uint32_t now){
   if(listCoast.finished(now)){finishFling(now);viewportPending=true;}
 }
 void paintThumb(){
+  // List invalidation also runs for player shuffle/repeat changes.
+  if(page().mode==Mode::Player)return;
   const Rect rail=L::strip<Rect>(tft.width(),tft.height());
   tft.fillRect(rail.x,rail.y,rail.w,rail.h,theme().bg);
   if(thumbVisible&&count>rows()){

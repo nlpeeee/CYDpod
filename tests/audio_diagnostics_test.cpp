@@ -43,5 +43,18 @@ int main(){
   p=audio_takeDiagnosticWindow().pull;
   assert(p.calls==1&&p.gapMaxUs==500&&p.burstFrames==128&&!p.missingFrames);
   flacOpen=false;audio_takeDiagnosticWindow();assert(!audio_takeDiagnosticWindow().flac.active);
+  // Exercise the actual PCM path: receiver gain must not be applied twice,
+  // while sleep fades and software-volume fallback remain effective.
+  playing=true;seeking=false;
+  auto sample=[&](){rbTail=0;rbHead=1;ring[0]=10000;ring[1]=-10000;audio_pull(out,1);return out[0];};
+  audio_setVolume(50);audio_setRemoteVolume(false,0);audio_setSleepGain(100);
+  assert(sample()==2500);
+  const uint32_t requested=audio_volumeRequestSerial();
+  audio_setRemoteVolume(true,25);assert(audio_volume()==25&&sample()==10000);
+  assert(audio_volumeRequestSerial()==requested);
+  audio_setSleepGain(50);assert(sample()==5000);
+  audio_setSleepGain(0);assert(sample()==0);
+  audio_setSleepGain(100);audio_setRemoteVolume(false,0);assert(sample()==625);
+  puts("PASS Bluetooth PCM gain: one volume owner, sleep fade, software fallback, no remote request echo");
   puts("PASS: audio diagnostic window (atomic copy/reset, 64-bit totals, cadence, missing frames)");
 }

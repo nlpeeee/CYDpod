@@ -71,6 +71,8 @@ static inline bool requestPending() { return reqTrack >= 0 || reqSeekMs >= 0; }
 static volatile bool     playing   = true;
 static uint32_t playIntentSerial=0; // loop task: explicit play/pause/selection intent
 static volatile uint8_t  volumePct = 40;
+static volatile bool remoteVolume=false;
+static uint32_t volumeRequestSerial=0;
 static volatile uint8_t sleepGain=100;
 
 static volatile int      curTrack  = 0;
@@ -133,7 +135,7 @@ void audio_pull(int16_t* out, int32_t frames) {
   int32_t gain = 0, copied = 0;
   bool wake = false;
   if (rb && playing && !seeking) {
-    const int32_t volume = volumePct;
+    const int32_t volume = remoteVolume ? 100 : volumePct;
     gain = volume * volume * sleepGain / 100; // perceptual-ish, /10000
     const uint32_t tail = rbTail;
     copied = min<int32_t>(frames, rbUsed());
@@ -553,7 +555,7 @@ void audio_begin(int startTrack, uint32_t startMs, uint8_t volume, bool shuffle,
     orderLen = 0;
     reportError("audio_memory", -1); return;
   }
-  volumePct = min<uint8_t>(volume, 100);
+  volumePct = min<uint8_t>(volume, 100);remoteVolume=false;volumeRequestSerial=0;
   shuffleOn = shuffle;
   repeatMode = repeat % REPEAT_MODE_COUNT;
   if (orderLen > 0) {
@@ -632,7 +634,19 @@ void audio_setPlaying(bool on) { ++playIntentSerial; setPlaying(on); }
 void audio_togglePause() { audio_setPlaying(!audio_isPlaying()); }
 void audio_pauseForPairing() { setPlaying(false); }
 void audio_resumeAfterPairing() { setPlaying(true); }
-void audio_setVolume(uint8_t p) { volumePct = min<uint8_t>(p, 100);Serial.printf("cmd: volume %u executed\n",unsigned(volumePct)); }
+void audio_setVolume(uint8_t p) {
+  portENTER_CRITICAL(&stateLock);volumePct=min<uint8_t>(p,100);++volumeRequestSerial;portEXIT_CRITICAL(&stateLock);
+  Serial.printf("cmd: volume %u executed\n",unsigned(volumePct));
+}
+void audio_setRemoteVolume(bool active,uint8_t percent){
+  portENTER_CRITICAL(&stateLock);
+  remoteVolume=active;if(active)volumePct=min<uint8_t>(percent,100);
+  portEXIT_CRITICAL(&stateLock);
+}
+bool audio_remoteVolume(){return remoteVolume;}
+uint32_t audio_volumeRequestSerial(){
+  portENTER_CRITICAL(&stateLock);const uint32_t serial=volumeRequestSerial;portEXIT_CRITICAL(&stateLock);return serial;
+}
 
 void audio_setSleepGain(uint8_t percent){sleepGain=min<uint8_t>(percent,100);}
 bool audio_canSeek() { return canSeek && durationMs && reqTrack < 0; }

@@ -93,6 +93,11 @@ bool audio_seekTo(uint32_t milliseconds); // coalesced request; decoder task own
 bool audio_canSeek();                    // supported M4A with known duration
 bool audio_isSeeking();
 void audio_setVolume(uint8_t percent);
+// Loop-task AVRCP publication; remote gain belongs to the receiver. Does not
+// create a local volume request or affect the sleep fade.
+void audio_setRemoteVolume(bool active,uint8_t percent);
+bool audio_remoteVolume();
+uint32_t audio_volumeRequestSerial();
 void audio_setShuffle(bool on);        // reshuffles with the current track first
 void audio_setRepeat(uint8_t mode);    // RepeatMode from settings.h
 bool    audio_shuffle();

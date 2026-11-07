@@ -9,6 +9,7 @@
 #include "BluetoothA2DPSource.h"
 #include "pairing_session.h"
 #include "bt_reconnect_policy.h"
+#include "bt_volume_sync.h"
 #include <esp_gap_bt_api.h>
 
 // ---------------------------------------------------------------------------
@@ -36,6 +37,9 @@ static uint32_t pairPauseIntent=0,pairResumeIdleSince=0;
 static volatile bool controlPending=false,disconnectPending=false;
 static uint8_t disconnectAddr[6]{};
 static uint32_t disconnectDeadline=0;
+static portMUX_TYPE volumeMux=portMUX_INITIALIZER_UNLOCKED;
+static cyd::BtVolumeSync volumeSync;
+static uint32_t volumeRequestSeen=0;
 
 // When the player may page its saved speaker unprompted (bt_reconnect_policy.h).
 // Written from BtAppT (link events) and the loop task (ticks, owner actions).
@@ -127,6 +131,29 @@ class CydSource : public BluetoothA2DPSource {
   // A background page ended without a link: counted, never shown as an error.
   void pageFailed(const char* operation){POLICY(pageFailed(millis()));Serial.printf("bt: page failed: %s\n",operation);}
  protected:
+  int32_t get_audio_data_volume(uint8_t* data,int32_t len) override {
+    // Absolute volume is applied by the receiver, not again by this library.
+    return audio_remoteVolume()?get_audio_data(data,len):BluetoothA2DPSource::get_audio_data_volume(data,len);
+  }
+  void bt_av_notify_evt_handler(uint8_t event,esp_avrc_rn_param_t* param) override {
+    if(event==ESP_AVRC_RN_VOLUME_CHANGE){
+      portENTER_CRITICAL(&volumeMux);volumeSync.notification(param->volume);portEXIT_CRITICAL(&volumeMux);
+      bt_av_volume_changed(); // Re-arm the notification without echoing a command.
+      return;
+    }
+    BluetoothA2DPSource::bt_av_notify_evt_handler(event,param);
+  }
+  void bt_av_hdl_avrc_ct_evt(uint16_t event,void* param) override {
+    auto* rc=(esp_avrc_ct_cb_param_t*)param;
+    if(event==ESP_AVRC_CT_SET_ABSOLUTE_VOLUME_RSP_EVT){
+      portENTER_CRITICAL(&volumeMux);volumeSync.response(rc->set_volume_rsp.volume);portEXIT_CRITICAL(&volumeMux);
+      return; // The base handler calls set_volume(), sending another command.
+    }
+    if(event==ESP_AVRC_CT_CONNECTION_STATE_EVT&&memcmp(rc->conn_stat.remote_bda,lastPeer,6)==0){
+      portENTER_CRITICAL(&volumeMux);volumeSync.connection(rc->conn_stat.connected);portEXIT_CRITICAL(&volumeMux);
+    }
+    BluetoothA2DPSource::bt_av_hdl_avrc_ct_evt(event,param);
+  }
   void bt_app_av_sm_hdlr(uint16_t event,void* param) override {
     rollEventWindow(millis());
     auto* diag=(esp_a2d_cb_param_t*)param;
@@ -151,6 +178,7 @@ class CydSource : public BluetoothA2DPSource {
       // every later page, with its backoff and cap, is bt_tick's (bt_reconnect_policy.h).
       is_autoreconnect_allowed=false;reconnect_status=NoReconnect;
       if(next==ESP_A2D_CONNECTION_STATE_DISCONNECTED){
+        portENTER_CRITICAL(&volumeMux);volumeSync.connection(false);portEXIT_CRITICAL(&volumeMux);
         // connection_state still holds the state before this event.
         const bool wasUp=connection_state==ESP_A2D_CONNECTION_STATE_CONNECTED;
         const bool ours=ourDropUntil&&int32_t(millis()-ourDropUntil)<0;ourDropUntil=0;
@@ -486,6 +514,7 @@ static int32_t onData(Frame* frames, int32_t count) {
 static void onAudioState(esp_a2d_audio_state_t s,void*){streamAudio=s;}
 
 void bt_begin() {
+  volumeRequestSeen=audio_volumeRequestSerial();
   intentSeen=audio_playIntentSerial();intentPulls=audio_pullCalls();intentFrames=audio_pullFrames();
   a2dp.set_local_name("CYD-MP3");
   a2dp.set_ssid_callback(onSsid);
@@ -493,7 +522,7 @@ void bt_begin() {
   a2dp.set_on_audio_state_changed(onAudioState);
   a2dp.set_data_callback_in_frames(onData);
   a2dp.set_avrc_passthru_command_callback(onSpeakerKey);
-  a2dp.set_volume(100);                       // gain is applied in audio_pull
+  a2dp.set_volume(100); // Preserve fallback gain until the peer reports absolute volume.
   // Secure Simple Pairing: what a car expects. The library answers the
   // "compare this number" request for us; app_gap_callback above keeps the
   // number so the screen can show what the owner is agreeing to.
@@ -538,6 +567,22 @@ static void remember(const uint8_t addr[6], const char* name) {
 
 void bt_tick() {
   if (!bluetoothReady) return;
+  const uint32_t request=audio_volumeRequestSerial();
+  bool publish=false,remote=false,send=false;uint8_t pct=0,raw=0,label=0;
+  portENTER_CRITICAL(&volumeMux);
+  if(request!=volumeRequestSeen){volumeRequestSeen=request;volumeSync.local(audio_volume());}
+  send=volumeSync.command(millis(),raw,label);
+  publish=volumeSync.take(remote,pct);
+  portEXIT_CRITICAL(&volumeMux);
+  if(publish){
+    audio_setRemoteVolume(remote&&speaker_route()==OUT_BT,pct);
+    if(remote){g_settings.volume=audio_volume();Serial.printf("bt: speaker volume %u%% (absolute)\n",unsigned(pct));}
+  }
+  if(send){
+    const esp_err_t result=esp_avrc_ct_send_set_absolute_volume_cmd(label,raw);
+    if(result!=ESP_OK){portENTER_CRITICAL(&volumeMux);volumeSync.failed();portEXIT_CRITICAL(&volumeMux);}
+    Serial.printf("bt: set speaker volume raw=%u rc=%d\n",unsigned(raw),int(result));
+  }
   if(failure!=BT_FAIL_NONE){haveTarget=false;connectDeadline=0;POLICY(connectFailed());}
   POLICY(expire(millis()));
   // Give up on a connection the owner asked for, rather than saying

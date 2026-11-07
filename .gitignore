@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 tests/out/
 /releases/
+
+# Case generator outputs
+hardware/case/out/

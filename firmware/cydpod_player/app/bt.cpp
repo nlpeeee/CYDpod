@@ -69,6 +69,25 @@ static volatile int streamMedia=0;
 // streams silence. We suspend the stream ourselves and keep the library's
 // media state STARTED meanwhile: its heartbeat restarts anything left IDLE.
 static volatile bool streamIdle=false,mediaPending=false;
+
+// BR/EDR transmit power (lever "bttx"): the controller's default maximum is
+// read once and restored when the lever is off; on, the maximum is +9 dBm.
+// Power control still lowers it when the peer asks. Applied at stack-up,
+// before the boot page, and again whenever the lever changes.
+static int8_t txApplied=-1;
+static esp_power_level_t txDefMin=ESP_PWR_LVL_N0,txDefMax=ESP_PWR_LVL_P3;
+static bool txDefRead=false;
+static void applyTxPower(){
+  if(esp_bt_controller_get_status()!=ESP_BT_CONTROLLER_STATUS_ENABLED){txApplied=-1;return;}
+  const bool on=power_lever(PWR_BTTX);
+  if(txApplied==int8_t(on))return;
+  if(!txDefRead&&esp_bredr_tx_power_get(&txDefMin,&txDefMax)==ESP_OK)txDefRead=true;
+  const esp_err_t rc=esp_bredr_tx_power_set(txDefMin,on?ESP_PWR_LVL_P9:txDefMax);
+  esp_power_level_t mn,mx;esp_bredr_tx_power_get(&mn,&mx);
+  Serial.printf("bt: tx power rc=%d level min=%d max=%d (default %d..%d, level 7 = +9 dBm)\n",
+                int(rc),int(mn),int(mx),int(txDefMin),int(txDefMax));
+  txApplied=int8_t(on);
+}
 static uint32_t intentSeen=0,intentPulls=0,intentFrames=0;
 static const char* audioName(esp_a2d_audio_state_t s){return s==ESP_A2D_AUDIO_STATE_STARTED?"STARTED":"SUSPEND";}
 static const char* mediaName(int s){
@@ -246,6 +265,7 @@ class CydSource : public BluetoothA2DPSource {
   // half a second still leaves that window. This mirrors BluetoothA2DPSource.cpp
   // av_hdl_stack_evt(BT_APP_EVT_STACK_UP) line for line apart from the wait.
   void av_hdl_stack_evt(uint16_t event,void* p) override {
+    if(event==0/*BT_APP_EVT_STACK_UP*/)applyTxPower();
     if(event!=0/*BT_APP_EVT_STACK_UP*/||!power_lever(PWR_BTFAST)){BluetoothA2DPSource::av_hdl_stack_evt(event,p);return;}
     esp_bt_gap_set_device_name(dev_name);
     esp_bt_gap_register_callback(ccall_app_gap_callback);
@@ -759,6 +779,7 @@ void bt_tick() {
   }else quietSince=0;
   // Connected with media still IDLE: the connect-time CHECK was refused. Ask
   // every 300 ms (at most 20 times per link) instead of the library's 10 s beat.
+  applyTxPower();
   static uint32_t checkAt=0;static uint8_t checks=0;
   if(!bt_connected()){checks=0;checkAt=millis()+300;}
   else if(power_lever(PWR_BTFAST)&&!mediaPending&&!streamIdle&&!pairingActive&&streamMedia==0&&

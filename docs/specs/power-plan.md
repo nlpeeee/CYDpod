@@ -17,7 +17,7 @@ Abbreviations:
 
 ## Implementation status (2026-11-07)
 
-P0, P1, P2, P3a and P3b are implemented on `cydpod/power` (firmware commit 12ffb37), as runtime levers. Every owner gate (the touch INT gate, the 20-cycle Bluetooth heap gate, the S0-S6 readings) is still pending on hardware. See `docs/research/power-candidate.md`.
+P0, P1, P2, P3a and P3b are implemented on `cydpod/power` (firmware commit f70ccde), as runtime levers. Every owner gate (the touch INT gate, the 20-cycle Bluetooth heap gate, the S0-S6 readings) is still pending on hardware. See `docs/research/power-candidate.md`.
 
 Deviation from the original chunk plan: the gates were turned into runtime self-checks so one candidate can be measured.
 - Sleep requires either the 1 s backstop, or a screen-off INT wake already seen this boot.

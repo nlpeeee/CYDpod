@@ -1,6 +1,6 @@
 # Power candidate: idle levers and in-place Sleep
 
-Date: 2026-11-07. Branch `cydpod/power`, firmware commit 78a11e7, built from `main` 3abebbe (v0.5.1).
+Date: 2026-11-07. Branch `cydpod/power`, firmware commit 8c2ed33, built from `main` 3abebbe (v0.5.1).
 Specification: `docs/specs/power-plan.md`, revision 2.
 
 ## What changed
@@ -21,6 +21,7 @@ Each item is a runtime lever (`pwr on|off <lever>`; levers live in RAM, a reset 
 | `bttx` | on | BR/EDR transmit power: the controller's default range is read and logged, then the maximum is raised to `ESP_PWR_LVL_P9` (+9 dBm) at stack-up (before the boot page) and whenever the lever changes. Off restores the default maximum. Peer power control can still lower it. Expect `bt: tx power rc=0 level min=… max=7 (default …)` after each stack start. |
 
 Other changes:
+- Playlists build from per-track path keys, lists inside `/music` are found, the scan goes one folder deeper, and Sleep restarts the speaker volume sync: `docs/research/playlist-speed.md`.
 - Portrait Now Playing (owner request): the output chip is gone, so the volume track runs 166 px instead of 48 px and the whole bottom row sets volume. Audio Output stays reachable from Options and Settings; landscape is unchanged.
 - `touch_begin` writes `0xED=200` (CST816-family IrqPluseWidth, 20 ms) and logs the read-back.
 - The ISR on GPIO21 counts INT edges. GPIO21 uses the internal pull-up.
@@ -55,23 +56,23 @@ After a touch wake, the press is swallowed (1.5 s window), as for any dark-scree
 
 ## Software checks
 
-Run once, on the code of commit 78a11e7 (built immediately before committing, with no edits in between):
+Run once, on the code of commit 8c2ed33 (built immediately before committing, with no edits in between):
 
 ```
 powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel power
 PASS pristine MiniAAC + verified seek overlay staged
 PASS pinned Helix MP3-only core staged unchanged; heap buffers.c excluded
 PASS compact FLAC staged; legacy core/header excluded
-Sketch uses 1593037 bytes (81%) ... Global variables use 87960 bytes (26%)
+Sketch uses 1602185 bytes (81%) ... Global variables use 88400 bytes (26%)
 PASS single pool: 3ffc57a8 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
 PASS compact FLAC staged; legacy core/header excluded
-Sketch uses 1593177 bytes (81%) ... Global variables use 87960 bytes (26%)
+Sketch uses 1602329 bytes (81%) ... Global variables use 88408 bytes (26%)
 PASS single pool: 3ffc57a8 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
 PASS: compile-only checks completed; no device commands were run.
-SUMMARY board=jc2432w328c images built=2 total seconds=68.20
+SUMMARY board=jc2432w328c images built=2 total seconds=71.97
 ```
 
-Static RAM is 88 bytes above 0.5.1: the codec pool moved from 0x3ffc5750 to 0x3ffc57a8.
+Static RAM is 528 bytes above 0.5.1 (88 B power work, codec pool 0x3ffc5750 -> 0x3ffc57a8; 440 B playlist key buffer and state, see `docs/research/playlist-speed.md`).
 
 Host UI suites (`classic_ui_test` Bluetooth and wired, MSVC, from `tests/build_catalog.cmd`) pass after 33656bf: it gives them host stand-ins for the power-branch calls in `sleep_mode.cpp` (they had stopped linking), updates the portrait golden geometry, and checks route names on the landscapes only. No host tests were added. The new logic is hardware-facing: radio, light sleep and the controller's INT. **None of this is hardware evidence.** Every gate below is owner-measured.
 

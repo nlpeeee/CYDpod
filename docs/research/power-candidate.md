@@ -1,6 +1,6 @@
 # Power candidate: idle levers and in-place Sleep
 
-Date: 2026-11-07. Branch `cydpod/power`, firmware commit 54a7f1c, built from `main` 3abebbe (v0.5.1).
+Date: 2026-11-07. Branch `cydpod/power`, firmware commit 39a74e5, built from `main` 3abebbe (v0.5.1).
 Specification: `docs/specs/power-plan.md`, revision 2.
 
 ## What changed
@@ -52,20 +52,20 @@ After a touch wake, the press is swallowed (1.5 s window), as for any dark-scree
 
 ## Software checks
 
-Run once, on the code of commit 54a7f1c (built immediately before committing, with no edits in between):
+Run once, on the code of commit 39a74e5 (built immediately before committing, with no edits in between):
 
 ```
 powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel power
 PASS pristine MiniAAC + verified seek overlay staged
 PASS pinned Helix MP3-only core staged unchanged; heap buffers.c excluded
 PASS compact FLAC staged; legacy core/header excluded
-Sketch uses 1591913 bytes (80%) ... Global variables use 87928 bytes (26%)
+Sketch uses 1591925 bytes (80%) ... Global variables use 87928 bytes (26%)
 PASS single pool: 3ffc5788 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
 PASS compact FLAC staged; legacy core/header excluded
-Sketch uses 1592057 bytes (80%) ... Global variables use 87928 bytes (26%)
+Sketch uses 1592069 bytes (80%) ... Global variables use 87928 bytes (26%)
 PASS single pool: 3ffc5788 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
 PASS: compile-only checks completed; no device commands were run.
-SUMMARY board=jc2432w328c images built=2 total seconds=68.40
+SUMMARY board=jc2432w328c images built=2 total seconds=59.73
 ```
 
 Static RAM is 56 bytes above 0.5.1: the codec pool moved from 0x3ffc5750 to 0x3ffc5788.
@@ -100,6 +100,8 @@ No host tests were added. The new logic is hardware-facing: radio, light sleep a
 - Dark-screen idle drew about 0.3 W, the owner's lowest reading so far. Sleep was not entered in that run (`sleeps=0`).
 - `int edges=0` for the whole log, including touches with the screen lit: INT never reached the ISR. Dark-screen taps were found only by the 250 ms backstop, and quick taps were missed (about 3 presses to wake). Commit 54a7f1c addresses this; INT itself is still unverified.
 - Bluetooth: both speakers ended each page with a normal remote disconnect, including the library's first page at boot, before any power code ran. After a restart with the speaker in pairing mode it reconnected. This points to speaker-side bond or busy state, not the power changes.
+
+- Second run: after a pause the idle suspend worked (`bt: media cmd=SUSPEND rc=0`), but Play never queued the resume, so the speaker stayed silent until a manual disconnect and reconnect. Cause: a race left `mediaPending` set. Fixed in 39a74e5.
 
 ## Known limits
 

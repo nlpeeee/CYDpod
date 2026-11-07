@@ -4,17 +4,31 @@
 namespace cyd {
 // Called under the Bluetooth volume lock. No allocation, polling commands or
 // notification echoes. A slider drag coalesces behind one outstanding command.
+//
+// The speaker owns absolute volume. AVRCP gives the source no way to read it:
+// it only learns the level from CHANGED notifications and from the reply to a
+// set-absolute-volume command. So the sync is built to never discard either:
+//  - a command reply that arrives after the 1 s timeout still updates the level;
+//  - a timeout keeps the level the owner asked for (the command was accepted),
+//    instead of snapping the slider back to an older report;
+//  - the initial handshake is retried, and a speaker that advertises volume
+//    notifications is treated as absolute even if it never answers it, so
+//    CYDpod does not stack its own gain on top of the speaker's.
 struct BtVolumeSync {
+  static const uint32_t kTimeoutMs=1000;
+  static const uint8_t kInitTries=3;
   bool linked=false,absolute=false,dirty=false,pending=false,inFlight=false;
-  uint8_t reported=0,value=0,wanted=0,label=2;
+  uint8_t reported=0,value=0,wanted=0,label=2,sent=0,initTries=0;
   uint32_t sentAt=0;
   bool sentBefore=false,capabilitiesSeen=false,initializing=false;
+  // Diagnostics for `stat: vol` (never reset by a link change).
+  uint32_t notifications=0,responses=0,lateResponses=0,timeouts=0,retries=0,sends=0;
   static uint8_t percent(uint8_t raw){return uint8_t((unsigned(raw)*100+63)/127);}
   static uint8_t raw(uint8_t pct){return uint8_t((unsigned(pct>100?100:pct)*127+50)/100);}
   void connection(bool up){
     if(linked==up)return;
     linked=up;absolute=false;pending=inFlight=sentBefore=false;dirty=true;
-    capabilitiesSeen=initializing=false;reported=value=wanted=0;
+    capabilitiesSeen=initializing=false;reported=value=wanted=sent=initTries=0;
   }
   bool capabilities(bool supported,uint8_t pct){
     if(!linked||capabilitiesSeen)return false;
@@ -22,10 +36,11 @@ struct BtVolumeSync {
     if(!supported||absolute)return false;
     // CHANGE_NOTIFY may arrive only after a physical button press. Establish
     // one confirmed setting instead of waiting for that first change forever.
-    initializing=true;value=wanted=raw(pct);pending=true;dirty=true;return true;
+    initializing=true;initTries=1;value=wanted=raw(pct);pending=true;dirty=true;return true;
   }
   void notification(uint8_t rawVolume){
     if(!linked||rawVolume>127)return;
+    ++notifications;
     reported=rawVolume;
     if(initializing)return; // The initial command response completes the handoff.
     absolute=true;
@@ -35,22 +50,33 @@ struct BtVolumeSync {
     if(!absolute&&!initializing)return;
     value=wanted=raw(pct);pending=true;dirty=true;
   }
+  // The receiver's actual setting. A reply after the timeout is still the
+  // truth about the speaker, so it is applied rather than dropped.
   void response(uint8_t rawVolume){
-    if(!linked||(!absolute&&!initializing)||!inFlight||rawVolume>127)return;
+    if(!linked||rawVolume>127||!sentBefore)return;
+    ++responses;if(!inFlight)++lateResponses;
     inFlight=false;initializing=false;absolute=true;reported=rawVolume;
     if(!pending)value=reported;
     dirty=true;
   }
   bool command(uint32_t now,uint8_t& rawVolume,uint8_t& transaction){
-    if(inFlight&&uint32_t(now-sentAt)>=1000){
-      inFlight=false;
-      if(initializing){initializing=false;pending=false;dirty=true;}
-      else if(!pending){value=reported;dirty=true;}
+    if(inFlight&&uint32_t(now-sentAt)>=kTimeoutMs){
+      inFlight=false;++timeouts;
+      if(initializing&&initTries<kInitTries){++initTries;++retries;if(!pending){wanted=sent;pending=true;}}
+      else{
+        // Accepted but unanswered: assume it took effect. A later reply or
+        // notification corrects this; reverting would show a level the
+        // speaker has probably already left.
+        if(initializing){initializing=false;absolute=true;}
+        reported=sent;
+        if(!pending)value=reported;
+        dirty=true;
+      }
     }
     if(!linked||(!absolute&&!initializing)||!pending||inFlight||(sentBefore&&uint32_t(now-sentAt)<100))return false;
     pending=false;
     if(absolute&&wanted==reported){value=reported;dirty=true;return false;}
-    rawVolume=wanted;inFlight=true;sentBefore=true;sentAt=now;
+    rawVolume=sent=wanted;inFlight=true;sentBefore=true;sentAt=now;++sends;
     // Labels 0/1/2 belong to the library's other AVRCP requests.
     label=label==15?3:uint8_t(label+1);transaction=label;return true;
   }

@@ -43,6 +43,9 @@ static uint32_t disconnectDeadline=0;
 static portMUX_TYPE volumeMux=portMUX_INITIALIZER_UNLOCKED;
 static cyd::BtVolumeSync volumeSync;
 static uint32_t volumeRequestSeen=0;
+// AVRCP controller link and the peer's capability reply, under volumeMux.
+static bool avrcUp=false,capsSeen=false,capsSupported=false;
+static uint8_t avrcPeer[6]{};
 
 // When the player may page its saved speaker unprompted (bt_reconnect_policy.h).
 // Written from BtAppT (link events) and the loop task (ticks, owner actions).
@@ -187,15 +190,24 @@ class CydSource : public BluetoothA2DPSource {
       portENTER_CRITICAL(&volumeMux);volumeSync.response(rc->set_volume_rsp.volume);portEXIT_CRITICAL(&volumeMux);
       return; // The base handler calls set_volume(), sending another command.
     }
-    if(event==ESP_AVRC_CT_CONNECTION_STATE_EVT&&memcmp(rc->conn_stat.remote_bda,lastPeer,6)==0){
-      portENTER_CRITICAL(&volumeMux);volumeSync.connection(rc->conn_stat.connected);portEXIT_CRITICAL(&volumeMux);
+    // The volume link itself is decided in bt_tick (AVRCP up, A2DP connected,
+    // same peer), whatever order these events arrive in.
+    if(event==ESP_AVRC_CT_CONNECTION_STATE_EVT){
+      portENTER_CRITICAL(&volumeMux);
+      avrcUp=rc->conn_stat.connected;memcpy(avrcPeer,rc->conn_stat.remote_bda,6);capsSeen=false;
+      portEXIT_CRITICAL(&volumeMux);
+      Serial.printf("bt: remote control %s\n",rc->conn_stat.connected?"up":"down");
     }
     BluetoothA2DPSource::bt_av_hdl_avrc_ct_evt(event,param);
     if(event==ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT){
       const bool supported=esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_TEST,
         &rc->get_rn_caps_rsp.evt_set,ESP_AVRC_RN_VOLUME_CHANGE);
       const uint8_t initial=audio_volume();
-      portENTER_CRITICAL(&volumeMux);const bool started=volumeSync.capabilities(supported,initial);portEXIT_CRITICAL(&volumeMux);
+      portENTER_CRITICAL(&volumeMux);
+      capsSeen=true;capsSupported=supported;
+      const bool started=volumeSync.capabilities(supported,initial);
+      portEXIT_CRITICAL(&volumeMux);
+      Serial.printf("bt: speaker volume control %s\n",supported?"supported":"not supported");
       if(started)Serial.printf("bt: initial volume sync target=%u%%\n",unsigned(initial));
     }
   }
@@ -689,9 +701,21 @@ static void remember(const uint8_t addr[6], const char* name) {
 void bt_tick() {
   if (!bluetoothReady) return;
   const uint32_t request=audio_volumeRequestSerial();
+  const uint8_t current=audio_volume();
   bool publish=false,remote=false,send=false;uint8_t pct=0,raw=0,label=0;
+  // Volume link: AVRCP up and A2DP connected to the same speaker. Checked every
+  // pass, so neither event order nor an early capability reply can leave a
+  // connection without sync. No capability reply within 1.5 s: ask again.
+  static uint32_t linkedAt=0;static uint8_t capsAsks=0;
+  bool askCaps=false,startedNow=false;
+  const bool a2dpUp=bt_connected();
   portENTER_CRITICAL(&volumeMux);
-  if(request!=volumeRequestSeen){volumeRequestSeen=request;volumeSync.local(audio_volume());}
+  const bool want=avrcUp&&a2dpUp&&memcmp(avrcPeer,a2dp.peer(),6)==0;
+  if(want!=volumeSync.linked){
+    volumeSync.connection(want);linkedAt=millis();capsAsks=0;
+    if(want&&capsSeen)startedNow=volumeSync.capabilities(capsSupported,current);
+  }else if(want&&!capsSeen&&capsAsks<3&&millis()-linkedAt>=1500u*(capsAsks+1u)){++capsAsks;askCaps=true;}
+  if(request!=volumeRequestSeen){volumeRequestSeen=request;volumeSync.local(current);}
   send=volumeSync.command(millis(),raw,label);
   publish=volumeSync.take(remote,pct);
   portEXIT_CRITICAL(&volumeMux);
@@ -703,6 +727,23 @@ void bt_tick() {
     const esp_err_t result=esp_avrc_ct_send_set_absolute_volume_cmd(label,raw);
     if(result!=ESP_OK){portENTER_CRITICAL(&volumeMux);volumeSync.failed();portEXIT_CRITICAL(&volumeMux);}
     Serial.printf("bt: set speaker volume raw=%u rc=%d\n",unsigned(raw),int(result));
+  }
+  if(startedNow)Serial.printf("bt: initial volume sync target=%u%%\n",unsigned(current));
+  if(askCaps){
+    const esp_err_t rc=esp_avrc_ct_send_get_rn_capabilities_cmd(0);
+    Serial.printf("bt: asking speaker for volume support again rc=%d\n",int(rc));
+  }
+  // One line every 10 s while connected: enough to tell which side drifted.
+  static uint32_t volStatAt=0;
+  if(a2dpUp&&millis()-volStatAt>=10000){
+    volStatAt=millis();
+    portENTER_CRITICAL(&volumeMux);const cyd::BtVolumeSync v=volumeSync;const bool up=avrcUp,seen=capsSeen,sup=capsSupported;portEXIT_CRITICAL(&volumeMux);
+    Serial.printf("stat: vol link=%d avrc=%d caps=%s abs=%d init=%d/%u inflight=%d pending=%d speaker=%u%% shown=%u%% remote=%d "
+                  "notes=%lu replies=%lu late=%lu timeouts=%lu retries=%lu sends=%lu\n",
+      int(v.linked),int(up),seen?(sup?"yes":"no"):"?",int(v.absolute),int(v.initializing),unsigned(v.initTries),int(v.inFlight),int(v.pending),
+      unsigned(cyd::BtVolumeSync::percent(v.reported)),unsigned(audio_volume()),int(audio_remoteVolume()),
+      (unsigned long)v.notifications,(unsigned long)v.responses,(unsigned long)v.lateResponses,(unsigned long)v.timeouts,
+      (unsigned long)v.retries,(unsigned long)v.sends);
   }
   if(failure!=BT_FAIL_NONE){haveTarget=false;connectDeadline=0;POLICY(connectFailed());}
   POLICY(expire(millis()));
@@ -895,7 +936,7 @@ bool bt_suspendStack(){
   // The stack went down without a guaranteed AVRCP/A2DP disconnect event. Drop
   // the volume link here, or the reconnect after wake finds it still "linked",
   // skips the capability handshake and leaves the speaker's volume unsynced.
-  portENTER_CRITICAL(&volumeMux);volumeSync.connection(false);portEXIT_CRITICAL(&volumeMux);
+  portENTER_CRITICAL(&volumeMux);volumeSync.connection(false);avrcUp=capsSeen=false;portEXIT_CRITICAL(&volumeMux);
   audio_setRemoteVolume(false,0);
   const bool ok=host==ESP_OK&&ctrl==ESP_OK&&esp_bt_controller_get_status()==ESP_BT_CONTROLLER_STATUS_INITED;
   Serial.printf("bt: stack stopped host=%d controller=%d status=%d heap %u largest %u\n",int(host),int(ctrl),

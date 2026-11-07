@@ -19,12 +19,15 @@ int main(){
   s.notification(0);assert(s.take(remote,pct)&&pct==0);
   s.notification(127);assert(s.take(remote,pct)&&pct==100);
   assert(!s.command(300,raw,tl));
-  s.local(30);assert(s.command(400,raw,tl));
-  assert(!s.command(1400,raw,tl));assert(s.take(remote,pct)&&pct==100); // Timeout, no retry loop.
-  s.local(40);assert(s.command(1500,raw,tl));s.failed();
-  assert(s.take(remote,pct)&&pct==100&&!s.command(1600,raw,tl));
+  s.local(30);assert(s.command(400,raw,tl));assert(s.take(remote,pct)&&pct==30);
+  assert(!s.command(1400,raw,tl));assert(s.take(remote,pct)&&pct==30); // Timeout keeps the asked level, no retry loop.
+  assert(!s.command(1500,raw,tl));
+  s.response(BtVolumeSync::raw(28));assert(s.take(remote,pct)&&pct==28&&s.lateResponses==1); // A late reply is still the truth.
+  s.notification(127);assert(s.take(remote,pct)&&pct==100);
+  s.local(40);assert(s.command(1600,raw,tl));s.failed();
+  assert(s.take(remote,pct)&&pct==100&&!s.command(1700,raw,tl));
   s.connection(false);s.response(20);s.notification(20);
-  assert(s.take(remote,pct)&&!remote&&!s.command(1700,raw,tl));
+  assert(s.take(remote,pct)&&!remote&&!s.command(1800,raw,tl));
   s.connection(true);assert(!s.absolute);s.notification(20);
   assert(s.take(remote,pct)&&remote&&pct==16);
   s.local(25);assert(s.command(0xfffffff0u,raw,tl));s.response(32);
@@ -51,14 +54,30 @@ int main(){
   BtVolumeSync fallback;fallback.connection(true);
   assert(!fallback.capabilities(false,40)&&!fallback.command(0,raw,tl));
   fallback.connection(false);fallback.connection(true);
-  assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl));
-  assert(!fallback.command(1000,raw,tl));
-  assert(fallback.take(remote,pct)&&!remote&&!fallback.initializing);
-  assert(!fallback.capabilities(true,50)&&!fallback.command(2000,raw,tl));
+  // A speaker that advertises volume support but never answers: the handshake
+  // is retried twice, then CYDpod hands volume to the speaker anyway instead of
+  // stacking its own gain on top.
+  assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl)&&raw==BtVolumeSync::raw(40));
+  assert(fallback.command(1000,raw,tl)&&raw==BtVolumeSync::raw(40)&&fallback.retries==1);
+  assert(fallback.command(2000,raw,tl)&&fallback.retries==2&&fallback.initializing);
+  assert(!fallback.command(3000,raw,tl)&&!fallback.initializing&&fallback.absolute);
+  assert(fallback.take(remote,pct)&&remote&&pct==40);
+  assert(!fallback.capabilities(true,50)&&!fallback.command(4000,raw,tl));
   fallback.notification(64);assert(fallback.take(remote,pct)&&remote&&pct==50);
+  // A slow first reply (after a retry) still completes the handshake.
+  fallback.connection(false);fallback.connection(true);
+  assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl)&&fallback.command(1000,raw,tl));
+  fallback.response(BtVolumeSync::raw(35));
+  assert(fallback.take(remote,pct)&&remote&&pct==35&&!fallback.initializing&&!fallback.command(2000,raw,tl));
+  // A slider move during the retries is what gets sent next.
+  fallback.connection(false);fallback.connection(true);
+  assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl));
+  fallback.local(70);assert(fallback.command(1000,raw,tl)&&raw==BtVolumeSync::raw(70));
   fallback.connection(false);fallback.connection(true);
   assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl));fallback.failed();
   assert(fallback.take(remote,pct)&&!remote&&!fallback.command(2000,raw,tl));
-  puts("PASS initial Bluetooth volume: no initial report, confirmed handshake, mute, reconnect, duplicate events, pending slider, unsupported, timeout and failure fallback");
+  // Replies to nothing, or on a dropped link, are ignored.
+  BtVolumeSync quiet;quiet.connection(true);quiet.response(64);assert(!quiet.absolute&&quiet.responses==0);
+  puts("PASS initial Bluetooth volume: no initial report, confirmed handshake, mute, reconnect, duplicate events, pending slider, unsupported, retried handshake, unanswered handover, slow reply and failure fallback");
   puts("PASS Bluetooth volume: reports, mute, endpoints, quantization, coalescing, no echoes, timeout, disconnect, reconnect, clock wrap");
 }

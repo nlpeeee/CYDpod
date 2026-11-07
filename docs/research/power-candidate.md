@@ -52,20 +52,20 @@ After a touch wake, the press is swallowed (1.5 s window), as for any dark-scree
 
 ## Software checks
 
-Run once, on the code of commit f70ccde (built immediately before committing, with no edits in between):
+Run once, on the code of commit 54a7f1c (built immediately before committing, with no edits in between):
 
 ```
 powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel power
 PASS pristine MiniAAC + verified seek overlay staged
 PASS pinned Helix MP3-only core staged unchanged; heap buffers.c excluded
 PASS compact FLAC staged; legacy core/header excluded
-Sketch uses 1591605 bytes (80%) ... Global variables use 87928 bytes (26%)
+Sketch uses 1591913 bytes (80%) ... Global variables use 87928 bytes (26%)
 PASS single pool: 3ffc5788 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
 PASS compact FLAC staged; legacy core/header excluded
-Sketch uses 1591745 bytes (80%) ... Global variables use 87928 bytes (26%)
+Sketch uses 1592057 bytes (80%) ... Global variables use 87928 bytes (26%)
 PASS single pool: 3ffc5788 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
 PASS: compile-only checks completed; no device commands were run.
-SUMMARY board=jc2432w328c images built=2 total seconds=71.34
+SUMMARY board=jc2432w328c images built=2 total seconds=68.40
 ```
 
 Static RAM is 56 bytes above 0.5.1: the codec pool moved from 0x3ffc5750 to 0x3ffc5788.

@@ -222,7 +222,7 @@ class CydSource : public BluetoothA2DPSource {
   void publish(){
     portENTER_CRITICAL(&pairingMux);
     pairingPhase=session.phase;
-    controlPending=session.phase!=cyd::PairingSession::Normal&&session.phase!=cyd::PairingSession::Failed;
+    controlPending=session.needsTick();
     // A queued UI command owns its claim until BtAppT accepts it. An older
     // Tick/connection callback must not reopen saved-device paging meanwhile.
     if(accepted==submitted)pairingActive=session.pairing;
@@ -236,7 +236,7 @@ class CydSource : public BluetoothA2DPSource {
   void command(Command cmd,Request* p){
     rollEventWindow(millis()); // Tick flushes drops even if no later A2DP event arrives.
     if(p){if(p->generation<accepted){Serial.printf("cmd: bt %u ignored (superseded)\n",unsigned(cmd));return;}accepted=p->generation;}
-    if(cmd==InquiryStarted){inquiryPending=false;discovery_active=true;if(linkConnected())esp_bt_gap_cancel_discovery();}
+    if(cmd==InquiryStarted){inquiryPending=false;discovery_active=true;if(linkConnected()||!session.pairing)esp_bt_gap_cancel_discovery();}
     else if(cmd==InquiryStopped){inquiryPending=false;discovery_active=false;session.stopped();}
     else if(cmd==Pair){POLICY(userAction(millis()));if(!cyd::PairingSession::any(lastPeer))memcpy(lastPeer,peer_bd_addr,6);is_autoreconnect_allowed=false;reconnect_status=NoReconnect;session.begin(p->addr,millis());}
     else if(cmd==Cancel){is_autoreconnect_allowed=false;reconnect_status=NoReconnect;session.cancel(millis());}

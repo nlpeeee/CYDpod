@@ -5,12 +5,11 @@
   </picture>
 </p>
 
-<p align="center"><strong>Up to ten thousand songs on a cheap yellow board.</strong><br>
-An iPod-style music player for the JC2432W328C &ldquo;Cheap Yellow Display&rdquo;.</p>
+<p align="center"><strong>Your music. Your player. No strings attached.</strong><br>
+A pocket music player you build yourself, from one cheap yellow board.</p>
 
 <p align="center">
-  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.2"><strong>Download CYDpod 0.5.2</strong></a><br>
-  <sub>Firmware, flashing tool and a 3D-printable case.</sub>
+  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.2"><strong>Download CYDpod 0.5.2</strong></a>
 </p>
 
 <p align="center">
@@ -19,42 +18,36 @@ An iPod-style music player for the JC2432W328C &ldquo;Cheap Yellow Display&rdquo
   <br><sub>Rendered by the test harness, not photos of a device.</sub>
 </p>
 
-## A music player that shouldn't fit, but does
+## Remember when music was simple?
 
-The Cheap Yellow Display is a hobbyist favourite: an ESP32 with a 2.4&Prime; touchscreen and a microSD slot, for less than a takeaway lunch. It has no extra memory chip and no audio hardware. CYDpod turns it into a proper pocket music player anyway.
+You had a little player and a pocket full of songs. No subscription that could vanish your favourite album overnight, no ads between tracks, no app asking for your location. You pressed play, and it played.
 
-- 🎵 **Ten thousand songs.** Browse by Artist, Album, Song or Folder, on a chip with less memory than a single holiday photo.
-- 🎧 **Four formats, decoded on the board.** MP3, FLAC, AAC and WAV, streamed straight to your Bluetooth speaker or headphones. Nothing else to buy.
-- 🔎 **Search that forgives you.** An on-screen keyboard where &ldquo;beyonce&rdquo; finds Beyonc&eacute;.
-- 👆 **Scrolling that feels like a phone.** Drag, flick, coast, and tap to stop.
-- 📜 **Playlists that just work.** Drop in `.m3u` and `.m3u8` files, even ones made on another computer with a different folder layout, and CYDpod finds the songs. Lists open in a fraction of a second.
-- 😴 **It sleeps like a phone, too.** Leave it alone and it dozes off, drawing too little for our USB meter to register. Touch the screen and it picks up exactly where you left off, then reconnects to your speaker in seconds.
-- 🎨 **Make it yours.** Light, Black and High Contrast themes, in portrait or landscape.
-- 🔒 **No app, no account, no cloud.** Your music lives on your card, and that's it.
+CYDpod brings that back.
 
-<p>
+It starts with the Cheap Yellow Display, a tiny touchscreen computer that hobbyists love and that costs less than a takeaway lunch. Flash CYDpod onto it, slip in a memory card full of your music, and you have a player that's entirely yours: your whole collection, browsed the way it should be (by artist, album and song), streaming to your Bluetooth speaker or headphones.
+
+## Why it's special
+
+- **You own it.** No account, no cloud and no subscription. Nobody can take your music away, change the rules or track what you listen to.
+- **It feels good to use.** Smooth, phone-like scrolling, a search that understands what you meant, and playlists that open the moment you tap them.
+- **It respects your time.** Set it down and it quietly goes to sleep. Pick it up and it carries on exactly where you were.
+- **It's made for tinkering.** Choose a theme, print the case, add a wired headphone output, or dig into the code. It's your player, so make it yours.
+- **It shouldn't be possible.** A board this small and this cheap was never meant to be a music player. Getting a full library, four audio formats and Bluetooth streaming onto it is the fun part.
+
+<p align="center">
   <img src="docs/research/cy91-theme-selector/player-black-r1.png" width="240" alt="Simulated Now Playing in the Black theme.">
   <img src="docs/research/cy91-theme-selector/player-hc-r1.png" width="240" alt="Simulated Now Playing in the High Contrast theme.">
-  <img src="docs/research/cy92-headphone-limit.png" width="240" alt="Simulated Audio Output settings with the Headphone limit row.">
 </p>
 
-## New in 0.5.2
+## Make your own
 
-- **Sleep mode.** After five minutes of quiet, CYDpod goes to sleep, and wakes with a touch: same screen, same song, same spot.
-- **Bluetooth that comes back fast.** It calls your speaker within moments of waking instead of after a long pause, and the radio now transmits at full strength.
-- **Instant playlists.** Opening a list used to take about four seconds. Now it's quick enough that you won't notice.
-- **Playlists beside your music.** Copy a folder with its playlist inside onto the card, and it just shows up.
-- **A bigger volume slider** in portrait mode.
+You'll need a **JC2432W328C** Cheap Yellow Display (the capacitive-touch one), a **microSD card** with your music, a **Bluetooth speaker or headphones**, and a **Windows PC** for a few minutes.
 
-## Get started
+1. [Download the latest release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.2).
+2. Follow the [flashing guide](docs/firmware/README.md).
+3. Press play.
 
-You'll need:
-- **A JC2432W328C board,** the capacitive-touch Cheap Yellow Display. Other CYD variants aren't supported.
-- **A microSD card** (FAT32, up to 32 GB) with your music in a `/music` folder.
-- **A Bluetooth speaker or headphones.**
-- **A Windows PC and a USB cable** to install the firmware.
-
-Grab the [latest release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.2), then follow the [flashing guide](docs/firmware/README.md). It takes a couple of minutes, and the download includes everything you need. Want to build it yourself or dig into the details? The [firmware guide](docs/firmware/README.md) and the [release notes](docs/releases/0.5.2.md) have you covered.
+For the details, see the [firmware guide](docs/firmware/README.md) and the [release notes](docs/releases/0.5.2.md).
 
 ## Thanks
 

@@ -892,6 +892,11 @@ bool bt_suspendStack(){
   portEXIT_CRITICAL(&pairingMux);
   haveTarget=false;connectDeadline=0;pairResumeWanted=false;pairResumeIdleSince=0;
   streamIdle=mediaPending=false;streamAudio=ESP_A2D_AUDIO_STATE_SUSPEND;streamMedia=0;
+  // The stack went down without a guaranteed AVRCP/A2DP disconnect event. Drop
+  // the volume link here, or the reconnect after wake finds it still "linked",
+  // skips the capability handshake and leaves the speaker's volume unsynced.
+  portENTER_CRITICAL(&volumeMux);volumeSync.connection(false);portEXIT_CRITICAL(&volumeMux);
+  audio_setRemoteVolume(false,0);
   const bool ok=host==ESP_OK&&ctrl==ESP_OK&&esp_bt_controller_get_status()==ESP_BT_CONTROLLER_STATUS_INITED;
   Serial.printf("bt: stack stopped host=%d controller=%d status=%d heap %u largest %u\n",int(host),int(ctrl),
                 int(esp_bt_controller_get_status()),ESP.getFreeHeap(),ESP.getMaxAllocHeap());

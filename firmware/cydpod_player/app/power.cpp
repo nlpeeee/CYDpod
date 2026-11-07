@@ -208,6 +208,12 @@ bool power_command(const char* line) {
 void power_tick(uint32_t now, bool bluetoothStarted) {
   if (!started) { started = true; lastPlayAt = lastStat = now; }
   if (audio_isPlaying()) lastPlayAt = now;
+  // The sleep timer has already faded and paused playback: sleep now rather
+  // than wait the usual 5 minutes (same 10 s window and checks as `pwr sleepnow`).
+  if (sleep_takeTimerExpired() && levers[PWR_SLEEP]) {
+    forceUntil = (now + 10000) | 1;
+    Serial.println("pwr: sleep timer expired, sleeping now");
+  }
   const bool off = sleep_screenOff();
   touch_setIdle(off && levers[PWR_TOUCHINT], off && levers[PWR_TOUCHSLEEP]);
   if (!levers[PWR_PANEL] && display_panelAsleep()) display_panelSleep(false);

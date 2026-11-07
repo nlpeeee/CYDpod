@@ -15,6 +15,7 @@ Each item is a runtime lever (`pwr on|off <lever>`; levers live in RAM, a reset 
 | `loop` | on | `delay(20)` instead of `delay(2)` while the screen is off. |
 | `a2dp` | on | Connected, the stream started by us, and nothing for Bluetooth to carry for 10 s (paused, or the route is not Bluetooth): AVDTP SUSPEND. The library's media state stays STARTED, so its 10 s heartbeat does not restart it. Play on Bluetooth: media goes to STARTING, then START. If START fails, the media state is left IDLE and the library's heartbeat retries. |
 | `sleep` | on | Sleep conditions: 5 min without playback **and** without touch; screen dark; screen timeout not "Off"; no pending open/seek; Bluetooth settled and not pairing, connecting or choosing a device. On entry: save the resume point, stop the Bluetooth stack in place, hold the backlight pin low, arm GPIO21 LOW + UART0 (+ the 1 s timer), then `esp_light_sleep_start()`. On wake, resume in place (no restart). |
+| (sleep timer) | — | When the sleep timer expires it fades and pauses playback, then requests Sleep at once (10 s window, same checks as `pwr sleepnow`) instead of waiting another 5 minutes. |
 | `backstop` | on | While asleep, wake every 1 s and read the CST820 once, so a held touch wakes the board even if the INT level wake fails. |
 
 Other changes:

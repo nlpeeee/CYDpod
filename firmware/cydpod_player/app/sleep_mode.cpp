@@ -9,7 +9,7 @@ namespace {
 const uint32_t screenSeconds[]={0,30,60,300};
 const uint8_t timerMinutes[]={0,15,30,60,90};
 uint32_t lastTouch=0,sleepDeadline=0,wakeSwallowUntil=0;
-bool initialized=false,swallow=false,blocked=false,forcedOff=false,timerArmed=false,fading=false;
+bool initialized=false,swallow=false,blocked=false,forcedOff=false,timerArmed=false,fading=false,timerExpired=false;
 int applied=-1;
 // The panel sleeps (SLPIN) only when fully dark and wakes before the backlight,
 // so a sleeping panel is never lit (power.h, lever "panel").
@@ -47,7 +47,7 @@ void sleep_tick(uint32_t now,bool down){
     audio_setSleepGain(elapsed>=3000?0:100-elapsed/30);
     if(elapsed>=3000){
       if(audio_isPlaying())audio_togglePause();
-      audio_setSleepGain(100);timerArmed=fading=false;forcedOff=true;
+      audio_setSleepGain(100);timerArmed=fading=false;forcedOff=true;timerExpired=true;
       Serial.println("cmd: sleep timer expired (paused, screen off)");
     }
   }
@@ -61,6 +61,7 @@ bool sleep_touchBlocked(){return blocked;}
 bool sleep_screenOff(){return applied==0;}
 uint32_t sleep_idleMs(uint32_t now){return initialized?now-lastTouch:0;}
 void sleep_forceScreenOff(){forcedOff=true;light(0);}
+bool sleep_takeTimerExpired(){const bool expired=timerExpired;timerExpired=false;return expired;}
 void sleep_wakeNow(uint32_t now,bool pressed){
   forcedOff=false;lastTouch=now;
   wakeSwallowUntil=pressed?((now+1500)|1):0;

@@ -43,13 +43,17 @@ constexpr int PlayerTextH=70,PlayerTextTop=40,PlayerTextInset=14;
 constexpr int PlayerTimeBottom=105,PlayerTimeClearBottom=112,PlayerTimeClearH=18;
 constexpr int ProgressInset=14,ProgressBottom=124,ProgressH=8,KnobR=8,KnobBorder=2;
 constexpr int SeekInset=6,SeekBottom=140,SeekH=40,TransportBottom=92,ControlH=52;
-// Output chip: no icon, so the 9 pt text gets the width: "Headphones" is 102 px and "AirPods Pro 2" 111 px.
-// The volume track takes the rest.
+// Output chip (landscape only): no icon, so the 9 pt text gets the width: "Headphones" is 102 px and
+// "AirPods Pro 2" 111 px. Portrait has no chip, so the volume track runs the full width; Options and
+// Settings still open Audio Output. The volume track takes the rest.
 constexpr int PlayerBottomH=40,PlayerChipWideW=124,PlayerChipNarrowW=114,PlayerChipInset=6,PlayerChipGap=4,PlayerChipH=30,PlayerChipRadius=6;
 constexpr int PlayerVolumeWideX=44,PlayerVolumeNarrowX=28,PlayerVolumeBottom=24,PlayerSpeakerWideX=20,PlayerSpeakerNarrowX=14;
 constexpr int WideMinW=300; // the 320 px landscapes
 constexpr inline int chipW(int w){return w>=WideMinW?PlayerChipWideW:PlayerChipNarrowW;}
-constexpr inline int outputHitW(int w){return chipW(w)+2*PlayerChipInset;}
+constexpr inline bool playerHasOutput(int w){return w>=WideMinW;}
+constexpr inline int outputHitW(int w){return playerHasOutput(w)?chipW(w)+2*PlayerChipInset:0;}
+// Right edge of the volume number: the chip's left edge, or the screen inset without one.
+constexpr inline int volumeRight(int w){return playerHasOutput(w)?w-PlayerChipInset-chipW(w)-PlayerChipGap:w-PlayerChipInset;}
 constexpr inline int playerVolumeX(int w){return w>=WideMinW?PlayerVolumeWideX:PlayerVolumeNarrowX;}
 constexpr inline int playerSpeakerX(int w){return w>=WideMinW?PlayerSpeakerWideX:PlayerSpeakerNarrowX;}
 constexpr int PlayerSpeakerSize=16,PlayerNumberGap=10,PlayerNumberW=30,PlayerNumberClearH=20;
@@ -67,9 +71,9 @@ template<class R> constexpr inline R playerToggle(int w,int h,bool repeat){retur
 template<class R> constexpr inline R seek(int w,int h){return {SeekInset,h-SeekBottom,w-2*SeekInset,SeekH};}
 template<class R> constexpr inline R progress(int w,int h){return {ProgressInset,h-ProgressBottom,w-2*ProgressInset,ProgressH};}
 template<class R> constexpr inline R playerVolume(int w,int h){return {0,h-PlayerBottomH,w-outputHitW(w),PlayerBottomH};}
-template<class R> constexpr inline R playerVolumeTrack(int w,int h){return {playerVolumeX(w),h-PlayerVolumeBottom,w-PlayerChipInset-chipW(w)-PlayerChipGap-PlayerNumberW-PlayerNumberGap-playerVolumeX(w),ProgressH};}
+template<class R> constexpr inline R playerVolumeTrack(int w,int h){return {playerVolumeX(w),h-PlayerVolumeBottom,volumeRight(w)-PlayerNumberW-PlayerNumberGap-playerVolumeX(w),ProgressH};}
 template<class R> constexpr inline R output(int w,int h){return {w-outputHitW(w),h-PlayerBottomH,outputHitW(w),PlayerBottomH};}
-template<class R> constexpr inline R outputFace(int w,int h){return {w-PlayerChipInset-chipW(w),h-PlayerBottomH+(PlayerBottomH-PlayerChipH)/2,chipW(w),PlayerChipH};}
+template<class R> constexpr inline R outputFace(int w,int h){return playerHasOutput(w)?R{w-PlayerChipInset-chipW(w),h-PlayerBottomH+(PlayerBottomH-PlayerChipH)/2,chipW(w),PlayerChipH}:R{w,h-PlayerBottomH,0,0};}
 // Shared endpoint math: paint and input use the same inclusive endpoints.
 constexpr inline int sliderValue(int x,int left,int width,int maximum){return x<=left?0:x>=left+width?maximum:int(int64_t(x-left)*maximum/width);}
 // Search: full-width ten-key rows in every orientation. Hit cells are half-open,

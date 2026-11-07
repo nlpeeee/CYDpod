@@ -19,7 +19,7 @@ installed tools are local ignored build inputs, not part of this source import.
 | --- | --- | --- |
 | CYD-MP3-Player | Commit above | Apache-2.0; separate bundled notices retained |
 | AnimatedGIF | Exact files in pinned shell | BitBank Software Apache-2.0, retained in source |
-| ESP32-A2DP | 1.8.11, `b6da4744286ca15b6f1dee607c077a4747294dd4` | Library Apache-2.0; examples can have GPL headers; stock build uses library sources |
+| ESP32-A2DP | 1.8.12, `7da8b6ec508597dc8727756526e7e1beadce6825` | Library Apache-2.0; examples can have GPL headers; stock build uses library sources |
 | arduino-libhelix | 0.9.4, `6183305de92c6c8e445aa95116319b64963a6ad3` | GPLv3 wrapper and Helix codec RPSL/RCSL terms; retain codec file headers |
 | TFT_eSPI | Arduino library archive 2.5.43 | FreeBSD/BSD two-clause text, MIT ancestry, individual font notices retained |
 | arduino-audio-tools | 1.2.6, `e42af0513a2273730431e8c45ac17a5fd9f38487`, archive SHA256 `1187a17837211722f4996dda53579f018e19cd4a5fab74eec383b74b1ea8c7fe` | GPLv3 (`notices/AudioTools-GPL-3.0.txt`); unmodified `src/`, `library.properties`, `License.txt` in `arduino-audio-tools/`; not wired into any build; per-file hashes in `tools/audiotools-files.sha256.json` |

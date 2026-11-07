@@ -103,7 +103,7 @@ try {
     $jobs += @{ Name = 'cydpod-player'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYDPOD_AAC_LC_ONLY'
         Library = (Join-Path $root '.tools/staging/miniaac-patched') }
     # Only MP3 C is staged: the stock wrapper's second AAC core conflicts with MiniAAC.
-    $jobs[-1].Flags += ' -fwrapv -fno-strict-aliasing'
+    $jobs[-1].Flags += ' -fwrapv -fno-strict-aliasing -DA2DP_MANAGED_ENCODER_SUPPORTED=0 -DA2DP_MANAGED_DECODER_SUPPORTED=0'
     if ($FlacLegacy) { $jobs[-1].Flags += ' -DCYDPOD_FLAC_LEGACY' }
     if ($LightAudioDiagnostics) { $jobs[-1].Flags += ' -DCYDPOD_LIGHT_AUDIO_DIAGNOSTICS' }
     if ($LargePcmRing) { $jobs[-1].Flags += ' -DCYDPOD_PCM_RING_4096' }

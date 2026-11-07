@@ -90,6 +90,36 @@ bool bt_known(int,BtDevice&){++btCalls;return false;}
 void bt_connectKnown(int){++btCalls;}
 void bt_forget(int){++btCalls;}
 void bt_choose(int){++btCalls;}
+static bool btUiOverride=false,btActionOk=true;
+static BtUiSnapshot btUi{};
+static int btConnects=0,btDisconnects=0,btForgets=0;
+static uint8_t btLastAddress[6]{};
+void bt_uiSnapshot(BtUiSnapshot& out){
+  ++btCalls;
+  if(btUiOverride){out=btUi;return;}
+  memset(&out,0,sizeof(out));out.status.connected=btConnected;out.status.pairing=btPairingNow;
+  snprintf(out.status.name,sizeof(out.status.name),"%s",btName.c_str());
+}
+bool bt_connectDevice(const uint8_t* address){
+  ++btCalls;++btConnects;memcpy(btLastAddress,address,6);
+  if(btActionOk)btUi.status.choosing=true;
+  return btActionOk;
+}
+bool bt_disconnect(const uint8_t* address){
+  ++btCalls;++btDisconnects;memcpy(btLastAddress,address,6);
+  if(btActionOk){playing=false;btUi.status.disconnecting=true;}
+  return btActionOk;
+}
+bool bt_forgetDevice(const uint8_t* address){
+  ++btCalls;++btForgets;memcpy(btLastAddress,address,6);
+  if(!btActionOk)return false;
+  for(int i=0;i<btUi.count;++i)if(memcmp(btUi.rows[i].device.addr,address,6)==0){
+    for(int j=i;j+1<btUi.count;++j)btUi.rows[j]=btUi.rows[j+1];
+    --btUi.count;break;
+  }
+  btUi.status.connected=false;return true;
+}
+
 void audio_setPlaying(bool on){playing=on;}
 bool audio_startupComplete(){return true;}
 AudioCommands audio_commands(){return {-1,-1,0,false,false,false};}
@@ -288,6 +318,33 @@ unsigned classic_depth();int classic_top();
 
 
 int classic_volumeSaveArms();uint32_t classic_volumeSaveAt();int classic_target(int,int);uint32_t classic_seekPreviewMs();
+void classic_invalidateViewport();
+static void playerRedrawRegression(){
+  namespace L=cydclassic::layout;
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);toPlayer();
+    const int w=tft.width(),h=tft.height();
+    const Rect sh=L::playerToggle<Rect>(w,h,false),rep=L::playerToggle<Rect>(w,h,true);
+    auto pixels=[&](const Rect& r){std::vector<uint16_t> result;
+      for(int y=r.y;y<r.y+r.h;++y)for(int x=r.x;x<r.x+r.w;++x)result.push_back(tft.pixel(x,y));
+      return result;
+    };
+    for(uint8_t mode=0;mode<REPEAT_MODE_COUNT;++mode){
+      audio_setRepeat(mode);ui_redraw();pump();
+      const Rect edge={w-L::StripW,L::HeaderH,L::StripW,h-L::HeaderH};
+      const auto right=pixels(edge),repeat=pixels(rep);
+      classic_invalidateViewport();
+      check(pixels(edge)==right,"list cache invalidation must not erase the player right edge");
+      tap(sh.cx(),sh.cy());
+      check(pixels(rep)==repeat,"Shuffle preserves the unchanged Repeat control in every orientation and mode");
+      tap(rep.cx(),rep.cy());const auto changed=pixels(rep);
+      ui_redraw();pump();
+      check(pixels(rep)==changed,"incremental Repeat paint matches full redraw");
+    }
+  }
+  tft.setRotation(0);home();
+  std::cout<<"PASS player right edge: cache invalidation, Shuffle and Repeat preserve pixels in four rotations and all repeat modes\n";
+}
 static void nowPlayingRegression(){
   namespace L=cydclassic::layout;
   for(unsigned rotation:{0u,1u,3u}){
@@ -968,6 +1025,74 @@ static void bluetoothReturns(){
   tft.setRotation(0);g_settings.rotation=0;home();
   std::cout<<"PASS CY-81 Bluetooth returns: Back, successful pairing, refused and accepted cancel, boot page and Bluetooth-off page, all rotations\n";
 }
+static void bluetoothCandidateRegression(){
+  for(unsigned rotation:{0u,1u}){
+    home();g_settings.rotation=rotation;tft.setRotation(rotation);g_settings.outRoute=OUT_BT;
+    btUiOverride=true;btActionOk=true;btUi={};
+    btUi.status.connected=true;btUi.status.peer[0]=1;
+    snprintf(btUi.status.name,sizeof(btUi.status.name),"Speaker A");
+    btUi.count=2;
+    btUi.rows[0].saved=btUi.rows[0].connected=true;btUi.rows[0].device.addr[0]=1;
+    snprintf(btUi.rows[0].device.name,sizeof(btUi.rows[0].device.name),"Speaker A");
+    btUi.rows[1].device.addr[0]=2;btUi.rows[1].device.rssi=-60;
+    snprintf(btUi.rows[1].device.name,sizeof(btUi.rows[1].device.name),"Speaker B");
+    ui_go(SCR_BLUETOOTH);pump();
+    const size_t stable=tft.drawing().size();
+    for(int i=0;i<600;++i)ui_tick(clockNow+=100);
+    check(tft.drawing().size()==stable,"BT-A settled menu has zero paints over 60 seconds");
+
+    tft.resetDrawCounts();btUi.rows[1].device.rssi=-61;ui_tick(clockNow+=1100);
+    check(tft.fillCalls==0,"BT-A ignores RSSI noise below 3 dB");
+    btUi.rows[1].device.rssi=-64;ui_tick(clockNow+=200);
+    check(tft.fillCalls>0&&tft.largestFill<=tft.width()*28,"BT-A RSSI repaints one row band");
+    tft.resetDrawCounts();btUi.rows[1].device.rssi=-68;ui_tick(clockNow+=200);
+    check(tft.fillCalls==0,"BT-A RSSI paints at most once per second");
+    ui_tick(clockNow+=1000);check(tft.fillCalls>0,"BT-A deferred RSSI update eventually paints");
+    tft.resetDrawCounts();snprintf(btUi.rows[1].device.name,sizeof(btUi.rows[1].device.name),"Renamed B");
+    ui_tick(++clockNow);check(tft.fillCalls==0,"BT-A discovery paints coalesce for 200 ms");
+    ui_tick(clockNow+=200);check(tft.fillCalls>0&&tft.largestFill<=tft.width()*28,"BT-A name change repaints only a row");
+    snapshot(rotation?"bt-a-menu-landscape.svg":"bt-a-menu-portrait.svg");
+
+    SCREEN_BLUETOOTH.press(PRESS_DOWN,40,78);
+    std::swap(btUi.rows[0],btUi.rows[1]);ui_tick(clockNow+=250);
+    SCREEN_BLUETOOTH.press(PRESS_UP,40,78);
+    ui_touch(TOUCH_TAP,40,78);pump();
+    check(label("Disconnect")&&label("Forget"),"BT-A captured device opens separate Disconnect and Forget actions");
+    snapshot(rotation?"bt-a-device-landscape.svg":"bt-a-device-portrait.svg");
+
+    const int actionY=30+34+32+20;
+    playing=true;btActionOk=false;const int rejected=btDisconnects;
+    tap(40,actionY);
+    check(btDisconnects==rejected+1&&playing&&!btUi.status.disconnecting,"BT-A rejected disconnect preserves playback and link");
+    tap(10,10);btActionOk=true;
+    const int before=btDisconnects;tap(40,actionY);
+    check(btDisconnects==before+1&&btLastAddress[0]==1&&!playing&&btUi.count==2&&btUi.rows[1].saved,
+          "BT-A disconnect pauses and retains the address-bound saved device");
+    tap(40,actionY);check(btDisconnects==before+1,"BT-A repeated disconnect taps coalesce");
+    btUi.status.disconnecting=false;btUi.status.connected=false;btUi.rows[1].connected=false;
+    pump();tft.labels.clear();ui_redraw();pump();
+    check(label("Connect"),"BT-A disconnected saved device offers Connect");
+    const int connects=btConnects;tap(40,actionY);
+    check(btConnects==connects+1&&btLastAddress[0]==1,"BT-A Connect uses captured address after list changes");
+    btUi.status.choosing=false;btUi.status.connected=true;btUi.rows[1].connected=true;pump();
+
+    const int forgets=btForgets;tap(40,actionY+48);
+    check(btForgets==forgets&&label("Forget this device?"),"BT-A Forget waits for confirmation");
+    std::swap(btUi.rows[0],btUi.rows[1]);
+    tap(tft.width()*3/4,(tft.height()-150)/2+150-SP_M-22);
+    check(btForgets==forgets+1&&btLastAddress[0]==1,"BT-A confirmed Forget stays bound to its address");
+
+    g_settings.screenTimeout=2;sleep_begin(clockNow);ui_tick(clockNow+=61000);
+    check(backlight==0,"BT-A menu reaches screen off");
+    const size_t dark=tft.drawing().size();
+    snprintf(btUi.rows[0].device.name,sizeof(btUi.rows[0].device.name),"Changed while dark");ui_tick(clockNow+=300);
+    check(tft.drawing().size()==dark,"BT-A screen-off suppresses menu painting");
+    g_settings.screenTimeout=0;sleep_begin(clockNow);btUiOverride=false;home();
+  }
+  g_settings.rotation=0;tft.setRotation(0);btActionOk=true;
+  std::cout<<"PASS BT-A menu: fixed idle display, row-only discovery/RSSI paints, limits, address capture, disconnect/queue failure, retained device, reconnect, confirmed Forget and screen off; portrait/landscape\n";
+}
+
 static void renderInventory(){
   namespace L=cydclassic::layout;
   std::filesystem::create_directories("render");
@@ -1473,8 +1598,8 @@ int main(){try{
 
   if(const char* preview=std::getenv("CYDPOD_HP_LIMIT_ONLY")){headphoneLimitRegression(preview);return 0;}
 
-  if(!std::getenv("CYDPOD_VIEWPORT_ONLY")&&!std::getenv("CYDPOD_PL_BACK_ONLY"))geometryGolden();
-  else if(!std::getenv("CYDPOD_PL_BACK_ONLY")){const auto actual=classic_geometry();std::ifstream f("../golden/classic_layout.txt");
+  if(!std::getenv("CYDPOD_PLAYER_REDRAW_ONLY")&&!std::getenv("CYDPOD_BT_ONLY")&&!std::getenv("CYDPOD_VIEWPORT_ONLY")&&!std::getenv("CYDPOD_PL_BACK_ONLY"))geometryGolden();
+  else if(!std::getenv("CYDPOD_PLAYER_REDRAW_ONLY")&&!std::getenv("CYDPOD_BT_ONLY")&&!std::getenv("CYDPOD_PL_BACK_ONLY")){const auto actual=classic_geometry();std::ifstream f("../golden/classic_layout.txt");
     check(actual==std::string((std::istreambuf_iterator<char>(f)),{}),"Classic drag geometry differs from golden");
     std::cout<<"PASS CY-98b Classic layout golden (dialog excluded: baseline failure)\n";}
 
@@ -1493,6 +1618,8 @@ int main(){try{
     std::ofstream(SD.root/"playlists/b.m3u")<<"/music/Example/Song 03.m4a\n/music/Example/Song 04.m4a\n";
   }
   check(storage_begin(nullptr),"build UI catalogue");playlist_begin();classic_home();ui_go(SCR_CLASSIC);pump();check(label("Songs")&&label("Artists")&&label("Albums")&&label("Playlists")&&label("Search")&&label("Settings")&&!label("Music"),"home tiles");snapshot("ui-home.svg");
+  if(std::getenv("CYDPOD_PLAYER_REDRAW_ONLY")){playerRedrawRegression();return g_failures?1:0;}
+  if(std::getenv("CYDPOD_BT_ONLY")){bluetoothCandidateRegression();bluetoothReturns();return g_failures?1:0;}
   if(std::getenv("CYDPOD_PL_BACK_ONLY")){playlistBackRegression();return 0;}
   if(std::getenv("CYDPOD_VIEWPORT_ONLY")){lateReleaseRegression();viewportRegression();dragRegression();flingRegression();flickWireRegression();miniPlayerRegression();return 0;}
   tapTile(1);check(label("Fixture Artist")&&classic_depth()==2,"artist view straight from the tile");snapshot("ui-artists.svg");
@@ -1627,6 +1754,7 @@ int main(){try{
   sleep_tick(++clockNow,true);sleep_tick(++clockNow,false);sleep_tick(++clockNow,false);
   g_settings.screenTimeout=0;ui_tick(clockNow+=600000);check(backlight==100,"Off disables screen timeout");
   compactChromeRegression();
+  playerRedrawRegression();
   nowPlayingRegression();
   textq::run();
   iconq::run();
@@ -1636,6 +1764,7 @@ int main(){try{
   settingsRegression();
   themeRegression();
   themePreviews();
+  bluetoothCandidateRegression();
   bluetoothReturns();
   renderInventory();
   SD.root=uiCardRoot;check(storage_begin(nullptr),"navigation card catalogue");playlist_begin();

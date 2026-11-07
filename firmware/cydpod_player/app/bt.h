@@ -33,6 +33,29 @@ enum BtFailure : uint8_t {
   BT_FAIL_RADIO,                      // a Bluetooth call failed (not a timeout)
 };
 
+// One bounded view for the UI. Saved rows precede discovered rows.
+struct BtUiStatus {
+  char name[33];
+  uint8_t peer[6];
+  BtFailure failure;
+  cyd::PairingSession::Phase phase;
+  uint32_t passkey;
+  bool connected, connecting, choosing, pairing, disconnecting;
+};
+struct BtUiRow {
+  BtDevice device;
+  bool saved, connected;
+};
+struct BtUiSnapshot {
+  BtUiStatus status;
+  BtUiRow rows[BT_MAX_DEVICES];
+  uint8_t count;
+};
+void bt_uiSnapshot(BtUiSnapshot& out);
+bool bt_connectDevice(const uint8_t addr[6]);
+bool bt_disconnect(const uint8_t addr[6]);
+bool bt_forgetDevice(const uint8_t addr[6]);
+
 // Pairing
 cyd::PairingSession::Phase bt_pairingPhase();
 bool   bt_pairing();              // live pairing session is active

@@ -45,5 +45,9 @@ int main(){try{const uint8_t old[6]{1},next[6]{2},none[6]{};
  {PairingSession p;Radio r;const uint8_t pick[6]{5};r.scan=true;p.begin(none,0);p.drive(1,r);ck(r.stops==1&&r.scans==0&&p.phase==PairingSession::Disconnecting);
   r.scan=false;p.stopped();p.drive(2,r);ck(r.scans==1&&p.phase==PairingSession::Scanning&&p.accepts(pick)&&p.pairing);
   p.select(pick,3);p.drive(4,r);ck(r.connects==1&&p.accepts(pick));p.connected();ck(!p.pairing&&p.phase==PairingSession::Normal&&r.errors==0);}
+ {PairingSession p;Radio r;ck(!p.needsTick());p.begin(none,0);ck(p.needsTick());p.drive(1,r);
+  r.scan=true;p.drive(60002,r);ck(p.phase==PairingSession::Failed&&r.stops==1&&!p.needsTick());
+  p.drive(60003,r);ck(r.stops==1);p.connected();ck(!p.needsTick());}
+ std::cout<<"PASS BT-A control ticks stop at idle/failure; inquiry is cancelled once at its bound\n";
  std::cout<<"PASS live pairing: 20 cycles, disconnect/inquiry start+stop acknowledgment, peer filtering, cancellation, timeout and API failure; no restart transport exists\n";return 0;
  }catch(...){std::cerr<<"FAIL live pairing\n";return 1;}}

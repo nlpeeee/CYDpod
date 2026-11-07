@@ -39,9 +39,13 @@ struct PairingSession {
       default: return false;
     }
   }
+  bool needsTick()const{return phase!=Normal&&phase!=Failed;}
   void connected(){phase=Normal;pairing=background=false;dropSent=cancelSent=scanSent=connectSent=false;memset(former,0,6);}
   void stopped(){scanSent=false;cancelSent=false;}
   template<class T> void fail(T& t,const char* what){
+    if(!background&&!cancelSent&&(t.scanning()||t.inquiryStarting())){
+      cancelSent=true;t.stopScan();
+    }
     if(background){background=false;phase=Normal;t.pageFailed(what);}
     else{phase=Failed;pairing=false;t.failed(what);}
   }

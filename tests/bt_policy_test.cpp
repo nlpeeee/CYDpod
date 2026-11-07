@@ -115,6 +115,16 @@ int main() {
       p.linkUp();
       ck(p.failed == 0 && wantsPage(p, 0), "reset: link up clears");
     }
+    {
+      ReconnectPolicy p;p.boot(0,false);p.userStop();
+      ck(!p.acceptsPeer()&&!wantsPage(p,3600*S),"manual disconnect holds incoming and outgoing links");
+      p.linkDown(S,true,true,false);
+      ck(!p.acceptsPeer(),"disconnect completion preserves user hold");
+      p.userAction(2*S);
+      ck(p.acceptsPeer(),"explicit Connect or Pair permits the peer again");
+      p.userStop();p.boot(3*S,false);
+      ck(p.acceptsPeer()&&wantsPage(p,3*S),"next boot restores startup connection policy");
+    }
     std::cout << "PASS bt reconnect policy: refused-connect cap with 15/30/60/120 s backoff, silent-page expiry, peer drop held, signal loss bounded, owner stop and re-arm, no page while connected/busy, boot window, owner-connect failure\n";
     return 0;
   } catch (...) {

@@ -45,6 +45,7 @@ struct ReconnectPolicy {
   }
   // Deliberate disconnect, forget, switch to wired: stay down until userAction().
   void userStop() { mode = HeldUser; inFlight = false; }
+  bool acceptsPeer() const { return mode != HeldUser; }
   // An owner-requested connect did not work: they were told, do not retry behind their back.
   void connectFailed() { if (mode == Armed) mode = Exhausted; inFlight = false; }
   // A link came up (either side started it).

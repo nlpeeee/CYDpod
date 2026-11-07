@@ -1,3 +1,9 @@
+## 0.5.1 release checkpoint — 7 November 2026
+
+The maintained checkout and source of truth are `E:\dev\CYDpod` and private `nlpeeee/CYDpod`. Version 0.5.1 consolidates candidate A’s Bluetooth update/menu controls, the Now Playing redraw fix and absolute-volume feedback with initial connection synchronization. The exact final candidate firmware is preserved. See [0.5.1 release notes](releases/0.5.1.md) for provenance, checks and remaining hardware measurements. Older entries below are historical and do not describe the current feature set.
+
+Use `main` for ongoing work and release tags for snapshots. Temporary branches are merged and removed after release. Historical unused branch tips are archived in a verified local bundle before cleanup; branches attached to another worktree remain protected.
+
 # CYDpod implementation checkpoint
 
 Updated: 2026-10-25. The user approved portrait Classic Touch and required

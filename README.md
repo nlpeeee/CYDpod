@@ -9,7 +9,7 @@
 An iPod-style music player for the JC2432W328C &ldquo;Cheap Yellow Display&rdquo;.</p>
 
 <p align="center">
-  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.0"><strong>Download CYDpod 0.5</strong></a><br>
+  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.1"><strong>Download CYDpod 0.5.1</strong></a><br>
   <sub>JC2432W328C firmware, Windows build kit and enclosure files.</sub>
 </p>
 
@@ -67,9 +67,9 @@ CYDpod is open firmware that turns a very cheap ESP32 touchscreen board into a p
 5. **Host-tested:** catalogue, sorting, playlists, queue, scrolling, Bluetooth policy and output switching have automated tests; hardware results are labelled separately.
 6. **Flash the release:** the download includes the flashing tool and four matching flash regions.
 
-## Flash 0.5
+## Flash 0.5.1
 
-Download `CYDpod-0.5.0-firmware.zip` from the [0.5 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.0) and extract it. The Bluetooth firmware uses compact FLAC and a 4,096-frame PCM ring. The archive contains matching wired firmware, esptool 5.3.0, manifests and instructions.
+Download `CYDpod-0.5.1-firmware.zip` from the [0.5.1 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.1) and extract it. The Bluetooth firmware uses compact FLAC and a 4,096-frame PCM ring. The archive contains matching wired firmware, esptool 5.3.0, manifests and instructions.
 
 Close the serial monitor and identify the board's COM port. Hold BOOT, tap RESET, then release BOOT. From the extracted archive, run the following PowerShell block. The four regions preserve saved settings and the Bluetooth bond.
 
@@ -88,35 +88,35 @@ foreach ($op in 'write-flash','verify-flash') {
 }
 ```
 
-Tap RESET to boot. Use 115200 baud for the serial monitor. Release checksums are in `SHA256SUMS.txt` on GitHub, and each firmware manifest records its source and file hashes.
+Tap RESET to boot. Use 115200 baud for the serial monitor. Start at low speaker volume: 0.5.1 uses the speaker’s own volume scale and removes duplicate attenuation. Release checksums are in `SHA256SUMS.txt` on GitHub, and each firmware manifest records its source and file hashes.
 
 ## Release evidence
 
-On 7 November 2026, the owner reported that the release had played overnight in shuffle and the audio was still fine. This is the 0.5 playback baseline. The [release notes](docs/releases/0.5.0.md) record provenance and the remaining measured checks.
+Version 0.5.1 adds ESP32-A2DP 1.8.12, quieter Bluetooth menus, Connect/Disconnect/Forget actions, the Now Playing right-edge fix and speaker volume synchronization including connection setup. It retains compact FLAC, the 4,096-frame ring and flick scrolling. The [release notes](docs/releases/0.5.1.md) distinguish owner reports and software checks from remaining hardware measurements. The 0.5.0 overnight shuffle report remains the long-run playback baseline.
 
 ## Known limits
 
-- Wi-Fi upload requires a separate uploader image. The 0.5 player archive contains the Bluetooth and wired player builds.
+- Wi-Fi upload requires a separate uploader image. The 0.5.1 player archive contains the Bluetooth and wired player builds.
 - AirPods Pro 2 and wired audio have compile or host coverage, with hardware acceptance still pending.
 - Timed flick latency, title coverage, and a zero-missing-frame scrolling comparison have not been recorded for 0.5. The [flick comparison](docs/research/flick-motion.md) gives the procedure.
 - The v4 enclosure includes editable Blender assemblies and print exports. Physical fit and latch tolerances need a print trial.
 
 ## Build from source
 
-The source of truth is [nlpeeee/CYDpod](https://github.com/nlpeeee/CYDpod). `main` starts from the 0.5 baseline, and `v0.5.0` identifies the release source. Use a fresh checkout with Windows x64, Git, Python 3.9 or later and Windows PowerShell 5.1.
+The source of truth is [nlpeeee/CYDpod](https://github.com/nlpeeee/CYDpod). `main` contains 0.5.1, and `v0.5.1` identifies the release source. Use a fresh checkout with Windows x64, Git, Python 3.9 or later and Windows PowerShell 5.1.
 
-Download `CYDpod-0.5.0-build-kit.zip` from the release and extract it to a separate folder. It contains the pinned Windows toolchain and `Restore-Toolchain.ps1`. Restore that kit into the checkout, then build the release configuration.
+Download `CYDpod-0.5.1-build-kit.zip` from the release and extract it to a separate folder. It contains the pinned Windows toolchain and `Restore-Toolchain.ps1`. Restore that kit into the checkout, then build the release configuration.
 
 ```powershell
-git clone https://github.com/nlpeeee/CYDpod.git E:\dev\CYDpod
+git clone --branch v0.5.1 https://github.com/nlpeeee/CYDpod.git E:\dev\CYDpod
 powershell -NoProfile -File E:\dev\CYDpod-build-kit\Restore-Toolchain.ps1 -Source E:\dev\CYDpod
 Set-Location E:\dev\CYDpod
-powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel flick
+powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel release-051
 ```
 
-Images and manifests are written to `.tools/images`. The released flash binaries retain the exact bytes used for the overnight run. Dependency pins and third-party inventories are in [dependencies.lock.json](dependencies.lock.json). The build kit was verified by restoring it into a fresh checkout and compiling both W328C variants.
+Images and manifests are written to `.tools/images`. The released flash binaries retain the exact final candidate bytes. Dependency pins and third-party inventories are in [dependencies.lock.json](dependencies.lock.json). The base kit was previously restored and compiled in a fresh checkout; the 0.5.1 kit overlays the pinned 1.8.12 library. Both release firmware variants compiled, and the overlay is checked against the compiled library inventory.
 
-Local release packages and historical archives live under `E:\dev\CYDpod\releases\0.5.0` and are ignored by Git. GitHub Releases holds the downloadable 0.5 assets.
+Local release packages and historical archives live under `E:\dev\CYDpod\releases\0.5.1` and are ignored by Git. GitHub Releases holds the downloadable 0.5.1 assets.
 
 ## Licences
 

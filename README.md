@@ -31,7 +31,8 @@ It starts with the Cheap Yellow Display, a tiny touchscreen computer that hobbyi
 - **You own it.** No account, no cloud and no subscription. Nobody can take your music away, change the rules or track what you listen to.
 - **It feels good to use.** Smooth, phone-like scrolling, a search that understands what you meant, and playlists that open the moment you tap them.
 - **It respects your time.** Set it down and it quietly goes to sleep. Pick it up and it carries on exactly where you were.
-- **It's made for tinkering.** Choose a theme, print the case, add a wired headphone output, or dig into the code. It's your player, so make it yours.
+- **It's made for tinkering.** Choose a theme, print the case, or dig into the code. It's your player, so make it yours.
+- **Prefer wires?** Add a little DAC. The board has no headphone socket, but a thumbnail-sized audio board (a PCM5102A-style I2S DAC, a few dollars online) plugs into its spare connector and gives you a proper line-out for a hi-fi or powered speakers. Add a tiny headphone amp and it drives headphones too. The download includes a wired build, and the case has a version with room for the DAC inside.
 - **It shouldn't be possible.** A board this small and this cheap was never meant to be a music player. Getting a full library, four audio formats and Bluetooth streaming onto it is the fun part.
 
 <p align="center">
@@ -41,7 +42,7 @@ It starts with the Cheap Yellow Display, a tiny touchscreen computer that hobbyi
 
 ## Make your own
 
-You'll need a **JC2432W328C** Cheap Yellow Display (the capacitive-touch one), a **microSD card** with your music, a **Bluetooth speaker or headphones**, and a **Windows PC** for a few minutes.
+You'll need a **JC2432W328C** Cheap Yellow Display (the capacitive-touch one), a **microSD card** with your music, a **Bluetooth speaker or headphones** (or the little DAC for wired listening), and a **Windows PC** for a few minutes.
 
 1. [Download the latest release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.2).
 2. Follow the [flashing guide](docs/firmware/README.md).

@@ -1,3 +1,7 @@
+## 0.5.2 release checkpoint — 7 November 2026
+
+Version 0.5.2 promotes the power candidate: idle levers and in-place light Sleep, fast Bluetooth reconnect after wake, +9 dBm transmit power, volume sync restarted after Sleep, playlists built from per-track path keys (including lists inside `/music`), one more indexed folder level and a full-width portrait volume slider. The exact candidate firmware (8c2ed33) is preserved. See [0.5.2 release notes](releases/0.5.2.md) for provenance, checks and what is not yet confirmed on hardware.
+
 ## 0.5.1 release checkpoint — 7 November 2026
 
 The maintained checkout and source of truth are `E:\dev\CYDpod` and private `nlpeeee/CYDpod`. Version 0.5.1 consolidates candidate A’s Bluetooth update/menu controls, the Now Playing redraw fix and absolute-volume feedback with initial connection synchronization. The exact final candidate firmware is preserved. See [0.5.1 release notes](releases/0.5.1.md) for provenance, checks and remaining hardware measurements. Older entries below are historical and do not describe the current feature set.

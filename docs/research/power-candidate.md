@@ -72,7 +72,7 @@ PASS: compile-only checks completed; no device commands were run.
 SUMMARY board=jc2432w328c images built=2 total seconds=71.97
 ```
 
-Static RAM is 528 bytes above 0.5.1 (88 B power work, codec pool 0x3ffc5750 -> 0x3ffc57a8; 440 B playlist key buffer and state, see `docs/research/playlist-speed.md`).
+Static RAM is 88,400 B (Bluetooth) and 88,408 B (wired), 1,160 B above 0.5.1's 87,240 / 87,248 B. Of that, 440 B is the playlist key buffer and state (`docs/research/playlist-speed.md`). Earlier revisions of this note gave 56, 72 and 88 B; those were the codec pool's address shift (0x3ffc5750 to 0x3ffc57a8), not the compiler's static RAM total.
 
 Host UI suites (`classic_ui_test` Bluetooth and wired, MSVC, from `tests/build_catalog.cmd`) pass after 33656bf: it gives them host stand-ins for the power-branch calls in `sleep_mode.cpp` (they had stopped linking), updates the portrait golden geometry, and checks route names on the landscapes only. No host tests were added. The new logic is hardware-facing: radio, light sleep and the controller's INT. **None of this is hardware evidence.** Every gate below is owner-measured.
 

@@ -485,8 +485,10 @@ static void handleSpeakerKey(uint8_t key) {
       break;
     case AVRC_FORWARD:  audio_next(); break;
     case AVRC_BACKWARD: audio_prev(); break;
-    case AVRC_VOL_UP:   audio_setVolume(min(100, audio_volume() + 5)); break;
-    case AVRC_VOL_DOWN: audio_setVolume(max(0, audio_volume() - 5)); break;
+    // Absolute-volume receivers already changed their own gain and report it.
+    // A second pass-through event from the same press must not add another step.
+    case AVRC_VOL_UP:   if(!audio_remoteVolume())audio_setVolume(min(100, audio_volume() + 5)); break;
+    case AVRC_VOL_DOWN: if(!audio_remoteVolume())audio_setVolume(max(0, audio_volume() - 5)); break;
     default:
       Serial.printf("cmd: avrcp 0x%02x ignored (unsupported)\n", key);
       return;

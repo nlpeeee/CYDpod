@@ -28,10 +28,10 @@
   "libraries": [
     {
       "name": "ESP32-A2DP",
-      "version": "1.8.11",
-      "commit": "b6da4744286ca15b6f1dee607c077a4747294dd4",
-      "url": "https://codeload.github.com/pschatzmann/ESP32-A2DP/zip/b6da4744286ca15b6f1dee607c077a4747294dd4",
-      "sha256": "a8b73ecd3415d01c97540d029c90e8e996a136f44d1fd4dc93341f0335dbdfcf",
+      "version": "1.8.12",
+      "commit": "7da8b6ec508597dc8727756526e7e1beadce6825",
+      "url": "https://codeload.github.com/pschatzmann/ESP32-A2DP/zip/7da8b6ec508597dc8727756526e7e1beadce6825",
+      "sha256": "055ea3d11796058b820428d1bc1f7b56c34a1b0a234ee3b3e0cf8b63a532ca42",
       "license": "Apache-2.0 (examples may differ)"
     },
     {

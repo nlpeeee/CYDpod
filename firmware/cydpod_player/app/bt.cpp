@@ -50,7 +50,7 @@ static bool isKnownPeer(const uint8_t* a){
 
 
 // Diagnostic snapshots only; BtAppT writes, loop reads aligned scalar values.
-// ESP32-A2DP 1.8.11 BluetoothA2DPSource.cpp:21 (not exported by its header).
+// ESP32-A2DP 1.8.12 BluetoothA2DPSource.cpp (not exported by its header).
 static constexpr uint16_t SOURCE_HEART_BEAT_EVT=0xff00;
 static volatile esp_a2d_audio_state_t streamAudio=ESP_A2D_AUDIO_STATE_SUSPEND;
 static volatile int streamMedia=0;
@@ -174,8 +174,9 @@ class CydSource : public BluetoothA2DPSource {
   }
   void app_gap_callback(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param) override;
   esp_err_t esp_a2d_disconnect(esp_bd_addr_t peer) override {
-    inferCommand(ESP_A2D_MEDIA_CTRL_SUSPEND); // library's disconnect sends this first
-    return BluetoothA2DPSource::esp_a2d_disconnect(peer);
+    const esp_err_t result = BluetoothA2DPSource::esp_a2d_disconnect(peer);
+    Serial.printf("bt: disconnect rc=%d\n", int(result));
+    return result;
   }
  private:
   uint32_t epoch=0,evtWindow=0,evtDropped=0,cmdAt[3]{};

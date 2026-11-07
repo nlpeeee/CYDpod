@@ -1,6 +1,6 @@
 # Power candidate: idle levers and in-place Sleep
 
-Date: 2026-11-07. Branch `cydpod/power`, firmware commit f70ccde, built from `main` 3abebbe (v0.5.1).
+Date: 2026-11-07. Branch `cydpod/power`, firmware commit 54a7f1c, built from `main` 3abebbe (v0.5.1).
 Specification: `docs/specs/power-plan.md`, revision 2.
 
 ## What changed
@@ -16,11 +16,13 @@ Each item is a runtime lever (`pwr on|off <lever>`; levers live in RAM, a reset 
 | `a2dp` | on | Connected, the stream started by us, and nothing for Bluetooth to carry for 10 s (paused, or the route is not Bluetooth): AVDTP SUSPEND. The library's media state stays STARTED, so its 10 s heartbeat does not restart it. Play on Bluetooth: media goes to STARTING, then START. If START fails, the media state is left IDLE and the library's heartbeat retries. |
 | `sleep` | on | Sleep conditions: 5 min without playback **and** without touch; screen dark; screen timeout not "Off"; no pending open/seek; Bluetooth settled and not pairing, connecting or choosing a device. On entry: save the resume point, stop the Bluetooth stack in place, hold the backlight pin low, arm GPIO21 LOW + UART0 (+ the 1 s timer), then `esp_light_sleep_start()`. On wake, resume in place (no restart). |
 | (sleep timer) | — | When the sleep timer expires it fades and pauses playback, then requests Sleep at once (10 s window, same checks as `pwr sleepnow`) instead of waiting another 5 minutes. |
-| `backstop` | on | While asleep, wake every 1 s and read the CST820 once, so a held touch wakes the board even if the INT level wake fails. |
+| `backstop` | on | While asleep, wake and read the CST820 once: every 1 s once INT has woken the dark screen, every 50 ms until then, so a quick tap is still caught. |
 
 Other changes:
 - `touch_begin` writes `0xED=200` (CST816-family IrqPluseWidth, 20 ms) and logs the read-back.
-- The ISR on GPIO21 counts INT edges.
+- The ISR on GPIO21 counts INT edges. GPIO21 uses the internal pull-up.
+- `touch_begin` writes `0xFA=0x60` (CST816-family IrqCtl: EnTouch | EnChange) and logs the read-back and the INT level.
+- Until INT has produced an edge this boot, the dark screen reads the CST820 on every loop pass (20 ms) instead of every 250 ms.
 
 ### Bluetooth stop and restart in place
 
@@ -92,6 +94,12 @@ No host tests were added. The new logic is hardware-facing: radio, light sleep a
    - Touch: `pwr: woke from sleep after Ns cause=touch` (or `backstop`), the same screen and track, then `bt: stack restarted`, and the speaker reconnecting.
    - S6 reading with `pwr off backstop` and with it on.
    - Run 20 touch wakes, and compare the `pwr: sleep after heap` lines.
+
+## First board run (2026-11-07, firmware f70ccde)
+
+- Dark-screen idle drew about 0.3 W, the owner's lowest reading so far. Sleep was not entered in that run (`sleeps=0`).
+- `int edges=0` for the whole log, including touches with the screen lit: INT never reached the ISR. Dark-screen taps were found only by the 250 ms backstop, and quick taps were missed (about 3 presses to wake). Commit 54a7f1c addresses this; INT itself is still unverified.
+- Bluetooth: both speakers ended each page with a normal remote disconnect, including the library's first page at boot, before any power code ran. After a restart with the speaker in pairing mode it reconnected. This points to speaker-side bond or busy state, not the power changes.
 
 ## Known limits
 

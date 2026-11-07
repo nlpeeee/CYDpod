@@ -9,8 +9,8 @@
 An iPod-style music player for the JC2432W328C &ldquo;Cheap Yellow Display&rdquo;.</p>
 
 <p align="center">
-  <a href="https://OWNER.github.io/CYDpod/#flash"><strong>&#9654;&nbsp; Flash v<!--rel:version-->33<!--/rel--> from your browser</strong></a><br>
-  <sub>Placeholder URL: replace <code>OWNER</code> (and the repo name if different) once the repo is published. Chrome or Edge, USB cable.</sub>
+  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.0"><strong>Download CYDpod 0.5</strong></a><br>
+  <sub>JC2432W328C firmware, Windows build kit and enclosure files.</sub>
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@ CYDpod is open firmware that turns a very cheap ESP32 touchscreen board into a p
 
 - **A JC2432W328C board**: the 2.4&Prime; ESP32 &ldquo;Cheap Yellow Display&rdquo; with *capacitive* touch (ST7789 panel, CST820 touch), 4 MB flash, microSD slot. Other CYD variants (for example the resistive ESP32-2432S028R) are **not supported**.
 - **A microSD card**: FAT32, 32 GB or smaller (the tested setup). Music in `/music` (sub-folders fine), playlists in `/playlists`. The player keeps its catalogue cache in `/.sys`.
-- **A USB data cable and a computer with Chrome or Edge** (Web Serial; Firefox and Safari cannot flash).
+- **A USB data cable and a Windows computer** for the supplied esptool flashing executable.
 - **An audio output.** *Bluetooth* speaker or headphones (pair in Settings &rsaquo; Bluetooth; **AirPods Pro 2 are not verified**). Or *wired*: an I2S DAC board on connector P6 (silkscreen: GND, IO16, IO4, IO17 = bit clock, data, word select), plus a headphone amplifier for headphones; a PCM5102A-class DAC is the documented example. Wired audio is **not yet verified on hardware**.
 
 **Optional**
@@ -63,57 +63,60 @@ CYDpod is open firmware that turns a very cheap ESP32 touchscreen board into a p
 1. **Cheap hardware:** one small ESP32 board with a screen and card slot; no extra DAC for Bluetooth.
 2. **No cloud, no account:** files stay on your card.
 3. **Open firmware:** source, dependency pins and third-party notices are in this repo.
-4. **Bounded memory:** one fixed 40 KB codec pool shared by all four decoders, so playback does not depend on library size.
+4. **Bounded memory:** one fixed 30,824-byte codec pool shared by all four decoders, so playback does not depend on library size.
 5. **Host-tested:** catalogue, sorting, playlists, queue, scrolling, Bluetooth policy and output switching have automated tests; hardware results are labelled separately.
-6. **Flash from the browser:** no toolchain.
+6. **Flash the release:** the download includes the flashing tool and four matching flash regions.
 
-## Flash it
+## Flash 0.5
 
-Version <!--rel:version-->33<!--/rel-->, 4 MB image, SHA256 `<!--rel:sha256-->333b5fc005416167a634adf40588b1e6a51b5a746ecf69fad36a30156b23dc3b<!--/rel-->`.
+Download `CYDpod-0.5.0-firmware.zip` from the [0.5 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.0) and extract it. The Bluetooth firmware uses compact FLAC and a 4,096-frame PCM ring. The archive contains matching wired firmware, esptool 5.3.0, manifests and instructions.
 
-1. Plug the board into your computer.
-2. Open the site (placeholder link above) in Chrome or Edge and click **Install**.
-3. Choose the serial port (CP210x, CH340 or USB Serial) and confirm.
-4. Wait for the progress bar to finish; press RESET if the board does not restart.
-
-> **The one-click flash erases saved settings** (Bluetooth speaker, volume, theme, brightness, Wi-Fi, last track): it writes the whole flash from offset 0. The SD card is untouched. To keep settings, use the four-region flash below.
-
-**Will not enter download mode?** Hold BOOT, tap RESET, release BOOT. No port? Use a data cable and install the CP210x or CH340 driver your board needs.
-
-**Keep settings (four regions, esptool 5.x):** with the four files from `docs/firmware/regions/` in one folder:
+Close the serial monitor and identify the board's COM port. Hold BOOT, tap RESET, then release BOOT. From the extracted archive, run the following PowerShell block. The four regions preserve saved settings and the Bluetooth bond.
 
 ```powershell
-esptool --chip esp32 --port COM7 --baud 460800 --before no-reset --after no-reset write-flash --flash-mode dio --flash-freq 80m --flash-size 4MB 0x1000 app.ino.bootloader.bin 0x8000 app.ino.partitions.bin 0xe000 boot_app0.bin 0x10000 app.ino.bin
+Set-Location .\firmware\bluetooth
+$manifest = Get-Content .\MANIFEST.json -Raw | ConvertFrom-Json
+foreach ($image in $manifest.files) {
+    if ((Get-FileHash -LiteralPath $image.file -Algorithm SHA256).Hash -ne $image.sha256) {
+        throw "Hash mismatch for $($image.file)"
+    }
+}
+$port = Read-Host 'COM port for the JC2432W328C'
+foreach ($op in 'write-flash','verify-flash') {
+    & ..\..\flash-tools\esptool.exe --chip esp32 --port $port --baud 460800 --before no-reset --after no-reset $op --flash-mode dio --flash-freq 80m --flash-size 4MB 0x1000 app.ino.bootloader.bin 0x8000 app.ino.partitions.bin 0xe000 boot_app0.bin 0x10000 app.ino.bin
+    if ($LASTEXITCODE -ne 0) { throw "esptool $op failed" }
+}
 ```
 
-**Single file from the command line (erases settings):**
+Tap RESET to boot. Use 115200 baud for the serial monitor. Release checksums are in `SHA256SUMS.txt` on GitHub, and each firmware manifest records its source and file hashes.
 
-```powershell
-esptool --chip esp32 --port COM7 --baud 460800 --before no-reset --after no-reset write-flash --flash-mode dio --flash-freq 80m --flash-size 4MB 0x0 <!--rel:file-->cydpod-v33-w328c.bin<!--/rel-->
-```
+## Release evidence
 
-**Verify the file:** `Get-FileHash .\<!--rel:file-->cydpod-v33-w328c.bin<!--/rel--> -Algorithm SHA256` (Windows), `shasum -a 256 <!--rel:file-->cydpod-v33-w328c.bin<!--/rel-->` (macOS), `sha256sum <!--rel:file-->cydpod-v33-w328c.bin<!--/rel-->` (Linux).
-
-The release folder is described in [docs/firmware/README.md](docs/firmware/README.md); the page and manifest are produced by `tools/make_site_release.ps1`.
+On 7 November 2026, the owner reported that the release had played overnight in shuffle and the audio was still fine. This is the 0.5 playback baseline. The [release notes](docs/releases/0.5.0.md) record provenance and the remaining measured checks.
 
 ## Known limits
 
-- **Not in this build:** the boot-loop fix after a crash; sleep-timer arming (the setting exists); album artwork.
-- **Wi-Fi upload** needs a separate uploader image, which the single flash file leaves blank (&ldquo;Uploader not installed&rdquo;); the page accepts MP3 and playlist names only.
-- **Not yet checked on a real board:** AirPods Pro 2; wired I2S output; the time to scan 10,000 tracks the first time (model estimate about 11 minutes, range 6 to 16, not measured) and to boot afterwards; flick feel, memory headroom, battery life; the one-click flash itself.
-
-Evidence and the owner checklist: [docs/research/int4-integration.md](docs/research/int4-integration.md), [docs/research/int4-checklist.md](docs/research/int4-checklist.md).
+- Wi-Fi upload requires a separate uploader image. The 0.5 player archive contains the Bluetooth and wired player builds.
+- AirPods Pro 2 and wired audio have compile or host coverage, with hardware acceptance still pending.
+- Timed flick latency, title coverage, and a zero-missing-frame scrolling comparison have not been recorded for 0.5. The [flick comparison](docs/research/flick-motion.md) gives the procedure.
+- The v4 enclosure includes editable Blender assemblies and print exports. Physical fit and latch tolerances need a print trial.
 
 ## Build from source
 
-Windows with Python and PowerShell. Setup downloads pinned dependencies into the checkout; the check compiles everything and never touches a device.
+The source of truth is [nlpeeee/CYDpod](https://github.com/nlpeeee/CYDpod). `main` starts from the 0.5 baseline, and `v0.5.0` identifies the release source. Use a fresh checkout with Windows x64, Git, Python 3.9 or later and Windows PowerShell 5.1.
+
+Download `CYDpod-0.5.0-build-kit.zip` from the release and extract it to a separate folder. It contains the pinned Windows toolchain and `Restore-Toolchain.ps1`. Restore that kit into the checkout, then build the release configuration.
 
 ```powershell
-powershell -File tools/setup.ps1
-powershell -File tools/check.ps1 -Board jc2432w328c
+git clone https://github.com/nlpeeee/CYDpod.git E:\dev\CYDpod
+powershell -NoProfile -File E:\dev\CYDpod-build-kit\Restore-Toolchain.ps1 -Source E:\dev\CYDpod
+Set-Location E:\dev\CYDpod
+powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel flick
 ```
 
-Images and a manifest land in ignored `.tools/images/`. Read the [player specification](docs/specs/cydpod-plan.md), the [implementation checkpoint](docs/IMPLEMENTATION_STATUS.md) and the [research reports](docs/research/) before changing anything. Dependency versions and hashes: [dependencies.lock.json](dependencies.lock.json).
+Images and manifests are written to `.tools/images`. The released flash binaries retain the exact bytes used for the overnight run. Dependency pins and third-party inventories are in [dependencies.lock.json](dependencies.lock.json). The build kit was verified by restoring it into a fresh checkout and compiling both W328C variants.
+
+Local release packages and historical archives live under `E:\dev\CYDpod\releases\0.5.0` and are ignored by Git. GitHub Releases holds the downloadable 0.5 assets.
 
 ## Licences
 

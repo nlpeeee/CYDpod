@@ -1,23 +1,7 @@
-# docs/firmware: release artefacts (not committed until a release)
+# CYDpod 0.5 firmware assets
 
-GitHub Pages serves `/docs`, so the flash image the **Install** button writes has to live here. It is 4 MB, so it is **not kept in Git between releases**.
+Download `CYDpod-0.5.0-firmware.zip` from the [0.5 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.0). It contains Bluetooth and wired player builds, manifests, instructions and esptool. Each build has four regions at `0x1000`, `0x8000`, `0xe000` and `0x10000`. Follow the archive README to flash and verify them.
 
-`tools/make_site_release.ps1` fills this folder in one command:
+The source is tagged `v0.5.0`. Firmware provenance is recorded in the manifests and [release notes](../releases/0.5.0.md). GitHub Releases holds the binary assets. The local release copy is `E:\dev\CYDpod\releases\0.5.0`.
 
-```powershell
-powershell -NoProfile -File tools/make_site_release.ps1            # newest E:\flash\v*\cydpod-v*-w328c.bin
-powershell -NoProfile -File tools/make_site_release.ps1 -Source E:\flash\v33\cydpod-v33-w328c.bin
-```
-
-It checks the image (4,194,304 bytes, ESP image headers at 0x1000 and 0x10000), then:
-
-| Output | Path |
-| --- | --- |
-| Merged image, flashed at offset 0 | `docs/firmware/cydpod-v<N>-w328c.bin` (older `cydpod-v*-w328c.bin` files are removed) |
-| Four separate regions for the keep-settings flash | `docs/firmware/regions/` (`app.ino.bootloader.bin` 0x1000, `app.ino.partitions.bin` 0x8000, `boot_app0.bin` 0xe000, `app.ino.bin` 0x10000), copied from the image's folder when present |
-| ESP Web Tools manifest | `docs/flash/manifest.json` (name, version, chipFamily `ESP32`, one part at offset 0) |
-| Version, size, SHA256, date text | `docs/index.html` and `README.md` (the `<!--rel:...-->` markers) |
-
-Then `git add docs/firmware docs/flash docs/index.html README.md`, commit and push. Do not hand-edit the version text.
-
-Flashing the single image at offset 0 erases saved settings (speaker bond, volume, theme, Wi-Fi, last track); the SD card is untouched. The four-region flash keeps them.
+The older Pages generator in `tools/make_site_release.ps1` describes the historical merged-image delivery. Use the four-region 0.5 release instructions for this release.

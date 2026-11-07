@@ -10,7 +10,10 @@
 #include "pairing_session.h"
 #include "bt_reconnect_policy.h"
 #include "bt_volume_sync.h"
+#include "power.h"
 #include <esp_gap_bt_api.h>
+#include <esp_bt_main.h>
+#include <esp_bt.h>
 
 // ---------------------------------------------------------------------------
 // The library, with two things it does not offer on its own
@@ -61,6 +64,30 @@ static bool isKnownPeer(const uint8_t* a){
 static constexpr uint16_t SOURCE_HEART_BEAT_EVT=0xff00;
 static volatile esp_a2d_audio_state_t streamAudio=ESP_A2D_AUDIO_STATE_SUSPEND;
 static volatile int streamMedia=0;
+// Idle stream (power.h lever "a2dp"). The pinned library starts media on every
+// connection and suspends only on its way to a disconnect, so a paused player
+// streams silence. We suspend the stream ourselves and keep the library's
+// media state STARTED meanwhile: its heartbeat restarts anything left IDLE.
+static volatile bool streamIdle=false,mediaPending=false;
+
+// BR/EDR transmit power (lever "bttx"): the controller's default maximum is
+// read once and restored when the lever is off; on, the maximum is +9 dBm.
+// Power control still lowers it when the peer asks. Applied at stack-up,
+// before the boot page, and again whenever the lever changes.
+static int8_t txApplied=-1;
+static esp_power_level_t txDefMin=ESP_PWR_LVL_N0,txDefMax=ESP_PWR_LVL_P3;
+static bool txDefRead=false;
+static void applyTxPower(){
+  if(esp_bt_controller_get_status()!=ESP_BT_CONTROLLER_STATUS_ENABLED){txApplied=-1;return;}
+  const bool on=power_lever(PWR_BTTX);
+  if(txApplied==int8_t(on))return;
+  if(!txDefRead&&esp_bredr_tx_power_get(&txDefMin,&txDefMax)==ESP_OK)txDefRead=true;
+  const esp_err_t rc=esp_bredr_tx_power_set(txDefMin,on?ESP_PWR_LVL_P9:txDefMax);
+  esp_power_level_t mn,mx;esp_bredr_tx_power_get(&mn,&mx);
+  Serial.printf("bt: tx power rc=%d level min=%d max=%d (default %d..%d, level 7 = +9 dBm)\n",
+                int(rc),int(mn),int(mx),int(txDefMin),int(txDefMax));
+  txApplied=int8_t(on);
+}
 static uint32_t intentSeen=0,intentPulls=0,intentFrames=0;
 static const char* audioName(esp_a2d_audio_state_t s){return s==ESP_A2D_AUDIO_STATE_STARTED?"STARTED":"SUSPEND";}
 static const char* mediaName(int s){
@@ -75,7 +102,7 @@ static const char* avName(APP_AV_STATE s){
 
 class CydSource : public BluetoothA2DPSource {
  public:
-  enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page, UserDrop };
+  enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page, UserDrop, MediaSuspend, MediaResume, MediaCheck };
   struct Request {uint32_t generation;uint8_t addr[6];char name[33];};
   CydSource(){owner=this;}
   bool post(Command cmd,const uint8_t* addr=nullptr,const char* name=""){
@@ -87,6 +114,17 @@ class CydSource : public BluetoothA2DPSource {
     return queued;
   }
   void poll(){bt_app_work_dispatch(dispatch,Tick,nullptr,0,nullptr);}
+  bool media(Command cmd){return bt_app_work_dispatch(dispatch,cmd,nullptr,0,nullptr);}
+  // The stack-up handler (10 s wait, then the boot page) has finished: the
+  // library creates its heartbeat timer last, and end() deletes it.
+  bool stackUp()const{return s_tmr!=nullptr;}
+  // Before end(false): the disconnect end() makes is ours, and the library must
+  // not clear its saved peer in NVS (clean_last_connection writes NVS unless
+  // auto-reconnect is off).
+  void prepareStop(){
+    markOurDrop();is_autoreconnect_allowed=false;reconnect_status=NoReconnect;
+    if(discovery_active)esp_bt_gap_cancel_discovery();
+  }
   bool needsPoll()const{
     portENTER_CRITICAL(&pairingMux);
     const bool pending=controlPending;
@@ -170,7 +208,9 @@ class CydSource : public BluetoothA2DPSource {
       Serial.printf("bt: media ack cmd=%u status=%d ms=%ld\n",cmd,int(diag->media_ctrl_stat.status),delay);
       if(cmd>=1&&cmd<=3)cmdMask&=~(1u<<cmd);
     }
+    if(diag&&event==ESP_A2D_AUDIO_STATE_EVT&&diag->audio_stat.state==ESP_A2D_AUDIO_STATE_STARTED)streamIdle=false; // peer or our START
     if(param&&event==ESP_A2D_CONNECTION_STATE_EVT){
+      streamIdle=mediaPending=false;
       auto* p=(esp_a2d_cb_param_t*)param;const uint8_t* addr=p->conn_stat.remote_bda;
       const auto next=p->conn_stat.state;
       portENTER_CRITICAL(&policyMux);
@@ -219,6 +259,45 @@ class CydSource : public BluetoothA2DPSource {
     if(diag&&event==ESP_A2D_CONNECTION_STATE_EVT&&diag->conn_stat.state==ESP_A2D_CONNECTION_STATE_DISCONNECTED)cmdMask=0;
     session.drive(millis(),*this);publish();
   }
+  // Stack up, at boot and after every Sleep wake (lever "btfast"): the pinned
+  // 1.8.12 handler waits 10 s before its one page of the saved speaker. Its own
+  // comment gives the reason as a peer-initiated connection racing s_a2d_state;
+  // half a second still leaves that window. This mirrors BluetoothA2DPSource.cpp
+  // av_hdl_stack_evt(BT_APP_EVT_STACK_UP) line for line apart from the wait.
+  void av_hdl_stack_evt(uint16_t event,void* p) override {
+    if(event==0/*BT_APP_EVT_STACK_UP*/)applyTxPower();
+    if(event!=0/*BT_APP_EVT_STACK_UP*/||!power_lever(PWR_BTFAST)){BluetoothA2DPSource::av_hdl_stack_evt(event,p);return;}
+    esp_bt_gap_set_device_name(dev_name);
+    esp_bt_gap_register_callback(ccall_app_gap_callback);
+    esp_avrc_ct_init();
+    esp_avrc_ct_register_callback(ccall_app_rc_ct_callback);
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 0, 0)
+    if(is_passthru_active){esp_avrc_tg_init();esp_avrc_tg_register_callback(ccall_app_rc_tg_callback);}
+    esp_avrc_rn_evt_cap_mask_t evt_set={0};
+    for(auto e:avrc_rn_events)esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET,&evt_set,e);
+    if(esp_avrc_tg_set_rn_evt_cap(&evt_set)!=ESP_OK)Serial.println("bt: esp_avrc_tg_set_rn_evt_cap failed");
+#endif
+    esp_a2d_source_init();
+    esp_a2d_register_callback(&ccall_app_a2d_callback);
+#if A2DP_MANAGED_ENCODER_SUPPORTED
+    if(!use_managed_encoder())
+#endif
+    esp_a2d_source_register_data_callback(&ccall_bt_app_a2d_data_cb);
+    delay_ms(500);
+    set_scan_mode_connectable(false);
+    if(reconnect_status==AutoReconnect&&has_last_connection()){
+      memcpy(peer_bd_addr,last_connection,ESP_BD_ADDR_LEN);
+      connect_to(last_connection);
+      s_a2d_state=APP_AV_STATE_CONNECTING;
+    }else{
+      s_a2d_state=APP_AV_STATE_DISCOVERING;
+      esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY,10,0);
+    }
+    static int tmr_id=0;
+    s_tmr=xTimerCreate("connTmr",(10000/portTICK_PERIOD_MS),pdTRUE,(void*)&tmr_id,ccall_a2d_app_heart_beat);
+    xTimerStart(s_tmr,portMAX_DELAY);
+    Serial.println("bt: stack up (0.5 s wait)");
+  }
   void app_gap_callback(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param) override;
   esp_err_t esp_a2d_disconnect(esp_bd_addr_t peer) override {
     const esp_err_t result = BluetoothA2DPSource::esp_a2d_disconnect(peer);
@@ -228,6 +307,12 @@ class CydSource : public BluetoothA2DPSource {
  private:
   uint32_t epoch=0,evtWindow=0,evtDropped=0,cmdAt[3]{};
   uint8_t evtCount=0,cmdMask=0;
+  bool sendMedia(esp_a2d_media_ctrl_t cmd){
+    cmdAt[unsigned(cmd)-1]=millis();cmdMask|=1u<<unsigned(cmd);
+    const esp_err_t rc=esp_a2d_media_ctrl(cmd);
+    Serial.printf("bt: media cmd=%s rc=%d (idle stream)\n",cmd==ESP_A2D_MEDIA_CTRL_START?"START":"SUSPEND",int(rc));
+    return rc==ESP_OK;
+  }
   void inferCommand(esp_a2d_media_ctrl_t cmd){
     cmdAt[unsigned(cmd)-1]=millis();cmdMask|=1u<<unsigned(cmd);
     Serial.printf("bt: media cmd=%s rc=-1\n",cmd==ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY?"CHECK":cmd==ESP_A2D_MEDIA_CTRL_START?"START":"SUSPEND");
@@ -301,6 +386,33 @@ class CydSource : public BluetoothA2DPSource {
         }
       }
     }else if(cmd==Drop){markOurDrop();esp_a2d_disconnect(p->addr);}
+    else if(cmd==MediaSuspend){
+      mediaPending=false;
+      // Only a running stream we started, outside pairing; never the STOPPING path.
+      if(linkConnected()&&s_media_state==2&&streamAudio==ESP_A2D_AUDIO_STATE_STARTED&&!session.pairing){
+        sendMedia(ESP_A2D_MEDIA_CTRL_SUSPEND);
+        streamIdle=true;
+      }
+    }else if(cmd==MediaCheck){
+      mediaPending=false;
+      // The CHECK the library sends while connecting is often refused (the sink is
+      // not ready yet), and it retries only on its 10 s heartbeat. Ask again now;
+      // its bt_app_av_media_proc turns a successful ack into START as usual.
+      if(s_a2d_state==APP_AV_STATE_CONNECTED&&s_media_state==0&&!session.pairing){
+        cmdAt[0]=millis();cmdMask|=1u<<1;
+        const esp_err_t rc=esp_a2d_media_ctrl(ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY);
+        Serial.printf("bt: media cmd=CHECK rc=%d (prompt)\n",int(rc));
+      }
+    }else if(cmd==MediaResume){
+      mediaPending=false;
+      if(streamIdle&&linkConnected()){
+        streamIdle=false;
+        // STARTING lets the library take the START ACK; a failed START leaves it
+        // IDLE, and its heartbeat then retries CHECK_SRC_RDY + START.
+        s_media_state=1;
+        if(!sendMedia(ESP_A2D_MEDIA_CTRL_START))s_media_state=0;
+      }else streamIdle=false;
+    }
     else if(cmd==Scan){const uint8_t none[6]{};session.begin(none,millis());}
     else if(cmd==ChaseOff)is_autoreconnect_allowed=false;
     session.drive(millis(),*this);publish();
@@ -645,6 +757,36 @@ void bt_tick() {
     intentSeen=intent;intentPulls=pulls;intentFrames=frames;
   }
 
+  // Idle stream: suspend after 10 s carrying nothing (paused, or the route is
+  // not Bluetooth), restart as soon as Bluetooth audio is wanted again.
+  static uint32_t quietSince=0;
+  const bool wanted=speaker_route()==OUT_BT&&audio_isPlaying();
+  // mediaPending is set before posting: the higher-priority BtAppT task can run
+  // the command, and clear the flag, before a2dp.media() returns.
+  auto postMedia=[](CydSource::Command cmd){
+    mediaPending=true;
+    if(!a2dp.media(cmd)){mediaPending=false;return false;}
+    return true;
+  };
+  if(mediaPending){}
+  else if(streamIdle){
+    quietSince=0;
+    if((wanted||!power_lever(PWR_A2DP))&&postMedia(CydSource::MediaResume))Serial.println("bt: idle stream resume queued");
+  }else if(power_lever(PWR_A2DP)&&!wanted&&bt_connected()&&!pairingActive&&
+           streamAudio==ESP_A2D_AUDIO_STATE_STARTED&&streamMedia==2){
+    if(!quietSince)quietSince=millis()|1;
+    else if(millis()-quietSince>=10000){quietSince=0;postMedia(CydSource::MediaSuspend);}
+  }else quietSince=0;
+  // Connected with media still IDLE: the connect-time CHECK was refused. Ask
+  // every 300 ms (at most 20 times per link) instead of the library's 10 s beat.
+  applyTxPower();
+  static uint32_t checkAt=0;static uint8_t checks=0;
+  if(!bt_connected()){checks=0;checkAt=millis()+300;}
+  else if(power_lever(PWR_BTFAST)&&!mediaPending&&!streamIdle&&!pairingActive&&streamMedia==0&&
+          checks<20&&int32_t(millis()-checkAt)>=0){
+    checkAt=millis()+300;++checks;postMedia(CydSource::MediaCheck);
+  }
+
   // Reach for the saved device rather than waiting to stumble across it.
   // Discovery only finds what is advertising, and a car advertises only while
   // its pairing screen is open. A known device is paged by address, which is
@@ -719,6 +861,59 @@ void bt_tick() {
     settings_save();
     Serial.printf("bt: saved speaker \"%s\"\n", g_settings.btName.c_str());
   }
+}
+
+// ---------------------------------------------------------------------------
+// Stop and restart the stack in place, for light sleep (power.cpp)
+// ---------------------------------------------------------------------------
+// With the main crystal as its low-power clock the controller forbids light
+// sleep while enabled, and the board has no free pins for a 32 kHz crystal.
+// end(false) deinitialises AVRCP, A2DP and the library's task -- documented by
+// the library as allowing the next start() -- then Bluedroid and the controller
+// are disabled without freeing their memory (deinit/mem_release would make a
+// restart impossible). start() re-enables both and repeats the stack-up path,
+// including its one page of the saved speaker, exactly as at boot.
+static bool stackStopped=false;
+
+bool bt_stackSuspended(){return stackStopped;}
+bool bt_stackSettled(){return bluetoothReady&&!stackStopped&&a2dp.stackUp();}
+bool bt_streamIdle(){return streamIdle;}
+
+bool bt_suspendStack(){
+  if(!bluetoothReady||stackStopped||!a2dp.stackUp())return false;
+  bluetoothReady=false;stackStopped=true;
+  a2dp.prepareStop();
+  a2dp.end(false);
+  const esp_err_t host=esp_bluedroid_disable();
+  const esp_err_t ctrl=esp_bt_controller_disable();
+  for(int i=0;i<200&&esp_bt_controller_get_status()==ESP_BT_CONTROLLER_STATUS_ENABLED;++i)delay(10);
+  portENTER_CRITICAL(&pairingMux);
+  state=ESP_A2D_CONNECTION_STATE_DISCONNECTED;disconnectPending=false;pairingActive=false;
+  portEXIT_CRITICAL(&pairingMux);
+  haveTarget=false;connectDeadline=0;pairResumeWanted=false;pairResumeIdleSince=0;
+  streamIdle=mediaPending=false;streamAudio=ESP_A2D_AUDIO_STATE_SUSPEND;streamMedia=0;
+  // The stack went down without a guaranteed AVRCP/A2DP disconnect event. Drop
+  // the volume link here, or the reconnect after wake finds it still "linked",
+  // skips the capability handshake and leaves the speaker's volume unsynced.
+  portENTER_CRITICAL(&volumeMux);volumeSync.connection(false);portEXIT_CRITICAL(&volumeMux);
+  audio_setRemoteVolume(false,0);
+  const bool ok=host==ESP_OK&&ctrl==ESP_OK&&esp_bt_controller_get_status()==ESP_BT_CONTROLLER_STATUS_INITED;
+  Serial.printf("bt: stack stopped host=%d controller=%d status=%d heap %u largest %u\n",int(host),int(ctrl),
+                int(esp_bt_controller_get_status()),ESP.getFreeHeap(),ESP.getMaxAllocHeap());
+  return ok;
+}
+
+bool bt_resumeStack(){
+  if(!stackStopped)return false;
+  stackStopped=false;
+  a2dp.set_auto_reconnect(true,1);  // the library's one page; bt_tick owns the rest
+  POLICY(boot(millis(),cyd::PairingSession::any(g_settings.btAddr)));
+  a2dp.start();
+  bluetoothReady=true;
+  const bool ok=esp_bt_controller_get_status()==ESP_BT_CONTROLLER_STATUS_ENABLED;
+  Serial.printf("bt: stack restarted controller=%d heap %u largest %u\n",int(esp_bt_controller_get_status()),
+                ESP.getFreeHeap(),ESP.getMaxAllocHeap());
+  return ok;
 }
 
 bool   bt_connected()   { return state == ESP_A2D_CONNECTION_STATE_CONNECTED; }

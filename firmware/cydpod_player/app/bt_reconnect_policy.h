@@ -12,7 +12,7 @@ namespace cyd {
 struct ReconnectPolicy {
   static const uint8_t  MAX_FAILED_PAGES    = 5;      // then hold until the owner acts
   static const uint32_t FIRST_PAGE_DELAY_MS = 5000;   // after signal loss / owner action
-  static const uint32_t BOOT_PAGE_WINDOW_MS = 30000;  // library's one boot page (10 s stack wait + page)
+  static const uint32_t BOOT_PAGE_WINDOW_MS = 20000;  // library's one boot page (0.5 s stack wait, or 10 s with btfast off, + page)
   static const uint32_t PAGE_TIMEOUT_MS     = 25000;  // a page with no answer counts as failed
   static const uint32_t PAIR_RESUME_WINDOW_MS = 30000; // resume-after-pairing is forgotten after this
   // Wait after the n-th failed page (n >= 1): 15, 30, 60, 120, 120 s.

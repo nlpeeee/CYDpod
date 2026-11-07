@@ -1,7 +1,8 @@
 // ===========================================================================
 // storage.h -- SD card: mount, fixed folders, the music library index
 // ===========================================================================
-//   /music   M4A AAC-LC files, subfolders allowed (two levels deep)
+//   /music   M4A AAC-LC files, subfolders allowed (three levels deep);
+//            .m3u/.m3u8 files here are playlists too (playlist.h)
 //   /bg      background GIFs, bg1.gif, bg2.gif, ...
 //   /playlists  .m3u playlists (playlist.h)
 //   /.sys    files the firmware owns: library index, title strips, frames
@@ -19,6 +20,7 @@
 
 #include <Arduino.h>
 #include <SD.h>
+#include <vector>
 
 // Rebuild progress: a phase name plus done/total (total > 0: "done / total", total < 0:
 // done is a percentage, total == 0: a bare count).
@@ -30,6 +32,10 @@ bool storage_begin(StorageProgressFn progress);   // mount, then scan and index 
 
 int      storage_trackCount();
 uint32_t storage_libraryCrc();         // changes whenever the track list does
+// .m3u/.m3u8 paths under /music found by storage_begin's scan (at most 200), in
+// directory order. playlist_begin reads them, then releases the memory.
+const std::vector<String>& storage_playlistFiles();
+void storage_releasePlaylistFiles();
 
 String storage_trackPath(int i);
 // Embedded M4A title, or file name without extension when missing.

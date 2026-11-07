@@ -715,6 +715,7 @@ void playerVolume(){
   shownVolume=level;
 }
 void playerOutput(){
+  if(!L::playerHasOutput(tft.width()))return;  // portrait: the volume track has the row
   const Palette& p=theme();const Rect r=L::outputFace<Rect>(tft.width(),tft.height());
   const bool lit=playerPressed==Output;const uint16_t bg=lit?p.pressed:p.band;
   tft.fillRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,bg);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,p.outline);

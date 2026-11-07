@@ -176,7 +176,8 @@ static void sceneRun(const std::string& dir,const Scene& s,bool pngs){
     const std::string tag=std::string(s.name)+" r"+std::to_string(rotation);
     check(classic_mode()==5,(tag+": Now Playing did not open").c_str());
     checkPlayer(s,tag);
-    // Owner-visible labels must be drawn whole, not shortened: '|' separated, the second list only on the 320 px panels.
+    // Owner-visible labels must be drawn whole, not shortened: '|' separated, the second list only on the 320 px panels
+    // (the output chip, and so the route name, is landscape-only).
     for(const char* list:{s.whole,s.wholeWide}){if(list==s.wholeWide&&tft.width()<L::WideMinW)continue;
       std::string all=list;size_t at=0;while(at<=all.size()&&!all.empty()){const size_t bar=all.find('|',at);const std::string one=all.substr(at,bar==std::string::npos?std::string::npos:bar-at);
         check(label(one.c_str()),(tag+": '"+one+"' was shortened or missing").c_str());if(bar==std::string::npos)break;at=bar+1;}}
@@ -235,9 +236,9 @@ static void run(){
   // Real labels from the owner's photo (CY-85), then stress cases: overflow, punctuation, digits, UTF-8 fallback.
   const Scene scenes[]={
     {"britney-bluetooth","...Baby One More Time","Britney Spears","...Baby One More Time (Digital Deluxe Version)","AirPods Pro 2",false,24,84000,true,85,6,"...Baby One More Time|Britney Spears|1:24|-2:36|24","AirPods Pro 2|7 / 85"},
-    {"britney-headphones","...Baby One More Time","Britney Spears","...Baby One More Time (Digital Deluxe Version)","",true,100,3725000,true,1285,123,"...Baby One More Time|Britney Spears|1:02:05|-0:00|100|Headphones",""},
+    {"britney-headphones","...Baby One More Time","Britney Spears","...Baby One More Time (Digital Deluxe Version)","",true,100,3725000,true,1285,123,"...Baby One More Time|Britney Spears|1:02:05|-0:00|100","Headphones"},
     {"overflow-punctuation","Don't Stop Me Now (feat. Queen & Friends) [Remastered 2011] #1","Elton John & Kiki Dee / The Band / Orchestra 100%","Greatest Hits, Vol. 1: 1970-2020!","JC2432W328C",false,7,0,true,12,0,"0:00|-4:00|7","1 / 12"},
-    {"unknown-duration","Short","A","","Speaker",false,0,5000,false,1,0,"Short|A|0:05|--:--|0|Speaker","1 / 1"},
+    {"unknown-duration","Short","A","","Speaker",false,0,5000,false,1,0,"Short|A|0:05|--:--|0","Speaker|1 / 1"},
     {"utf8-fallback","Beyonc\xC3\xA9 \xE2\x80\x93 Halo","\xE5\x91\xA8\xE6\x9D\xB0\xE4\xBC\xA6","\xE6\x99\xB4\xE5\xA4\xA9 (Caf\xC3\xA9 Edition)","AirPods Pro 2",false,50,125000,true,20,19,"2:05|-1:55|50","20 / 20"},
   };
   for(const Scene& s:scenes)sceneRun(dir,s,true);

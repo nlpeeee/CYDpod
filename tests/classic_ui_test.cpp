@@ -68,6 +68,12 @@ void audio_seekRelative(int s){relativeSeek=s;++seekCalls;}
 uint32_t audio_durationMs(){return seekAllowed?240000:0;}
 uint32_t audio_positionMs(){return positionMs;}
 uint32_t audio_trackSerial(){return serial;}
+// Power branch: sleep_mode.cpp sleeps the panel controller (power.h, lever "panel").
+// The host has no panel to sleep; levers report off, so the backlight path is unchanged.
+enum PowerLever : uint8_t;
+bool power_lever(PowerLever){return false;}
+void display_panelSleep(bool){}
+bool display_panelAsleep(){return false;}
 static int btCalls=0;static bool btConnected=true;
 bool bt_connected(){++btCalls;return btConnected;}
 bool bt_connecting(){++btCalls;return false;}
@@ -382,8 +388,9 @@ static void nowPlayingRegression(){
     const Rect f=L::favourite<Rect>(w);bool favourite=playlist_isFavourite(current);pressRun(200,10,0,[=](uint32_t t,int& x,int& y){x=t<60?f.x:f.x-7;y=18;});check(playlist_isFavourite(current)!=favourite,"favourite star toggles");tap(f.cx(),18);
     const Rect sh=L::playerToggle<Rect>(w,h,false),rep=L::playerToggle<Rect>(w,h,true);bool wasShuffle=shuffle;tap(sh.cx(),sh.cy());check(shuffle!=wasShuffle,"shuffle toggle");const int repeat=repeatMode;tap(rep.cx(),rep.cy());check(repeatMode==(repeat+1)%REPEAT_MODE_COUNT,"repeat toggle");
     const Rect play=L::transport<Rect>(w,h,1);const int toggles=toggleCalls,pressedFaces=tft.colorCount(theme().pressed);tx=play.cx();ty=play.cy();down=true;ui_tick(clockNow+=130);check(toggleCalls==toggles+1,"transport fires once on down");check(tft.colorCount(theme().pressed)>pressedFaces,"transport visibly pressed on touch-down");down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(toggleCalls==toggles+1,"transport release does nothing");
-    const Rect output=L::output<Rect>(w,h);pressRun(200,10,0,[=](uint32_t t,int& x,int& y){x=t<60?output.x:output.x-7;y=output.cy();});check(label("Audio Output"),"output chip opens Output page");
-    tap(20,20);const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
+    if(L::playerHasOutput(w)){const Rect output=L::output<Rect>(w,h);pressRun(200,10,0,[=](uint32_t t,int& x,int& y){x=t<60?output.x:output.x-7;y=output.cy();});check(label("Audio Output"),"output chip opens Output page");tap(20,20);}
+    else check(hit.w==w&&classic_target(w-1,hit.cy())==-25,"portrait: no output chip, the volume row is full width");
+    const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
     ui_redraw();pump();snapshot(rotation==0?"cy61-player-portrait.svg":rotation==1?"cy61-player-landscape.svg":"cy61-player-landscape3.svg");
   }
   tft.setRotation(0);home();tapTile(5);tap(120,300); // Settings -> mini-player text
@@ -1649,7 +1656,7 @@ int main(){try{
   tft.setRotation(1);ui_redraw();pump();tap(160,110);check(lastSeek>119000&&lastSeek<121000,"landscape progress geometry");
   tap(12,110);check(lastSeek==0,"progress start clamp");tap(306,110);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
   std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, Next on touch-down and recalibration claim\n";
-  tap(45,300);check(volume>30&&volume<40,"Player volume slider action (portrait track is 48 px from x=28 after CY-85: x=45 is 35 %)");snapshot("ui-player-volume.svg");
+  tap(86,300);check(volume>30&&volume<40,"Player volume slider action (portrait track is 166 px from x=28 with no output chip: x=86 is 34 %)");snapshot("ui-player-volume.svg");
   tap(20,20);check(classic_top()==2&&label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");

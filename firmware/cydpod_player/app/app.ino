@@ -45,6 +45,7 @@
 #include "catalog.h"
 #include "classic_screen.h"
 #include "sleep_mode.h"
+#include "power.h"
 #include "cpu_stats.h" // DIAG-CPU: loop-only diagnostics
 #include <esp_system.h>
 
@@ -291,7 +292,7 @@ static void serialCommands() {
   static bool over = false;
   while (Serial.available()) {
     const int c = Serial.read();
-    if (c == '\n' || c == '\r') { if (n && !over) { line[n] = 0; classic_command(line); } n = 0; over = false; }
+    if (c == '\n' || c == '\r') { if (n && !over) { line[n] = 0; if (!power_command(line)) classic_command(line); } n = 0; over = false; }
     else if (n < sizeof(line) - 1) line[n++] = (char)c;
     else over = true;
   }
@@ -320,6 +321,7 @@ void loop() {
   }
 
   ui_tick(millis());
+  power_tick(millis(), bluetoothStarted);
 
   static uint32_t lastStat = 0;
   const bool report = now - lastStat >= 10000 && !touch_isDown() &&
@@ -380,7 +382,7 @@ void loop() {
     ts.maxGapMs = 0;
     lastStat = now;
   }
-  delay(2);
+  delay(power_loopDelayMs());  // 2 ms; 20 ms while the screen is off (power.h)
 }
 
 #endif  // CYD_UPLOADER

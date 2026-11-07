@@ -23,6 +23,9 @@ void display_setRotation(uint8_t rot);
 
 // 0-100 %. PWM on the backlight pin.
 void display_setBacklight(uint8_t percent);
+// Panel controller sleep-in/out (power.h lever "panel"). Waking blocks ~120 ms.
+void display_panelSleep(bool asleep);
+bool display_panelAsleep();
 
 const char* display_panelName(uint16_t panelId);
 

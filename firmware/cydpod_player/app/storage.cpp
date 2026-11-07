@@ -129,6 +129,11 @@ static CYD_NOINLINE void addTrack(const String& p,File& f,File* output,StoragePr
   }
   ++scanned;if(progress&&output)progress("Reading song tags",scanned,plannedTracks);
 }
+// Playlist files met by the boot pass (playlist.h lists them as sources). Bounded,
+// and released by playlist_begin; not part of the library signature.
+static std::vector<String> listFiles;
+static const size_t kMaxListFiles=200;
+static int tooDeep=0;  // folders below the indexed depth, counted by the boot pass
 static void scanDir(const String& path,int depth,File* output,StorageProgressFn progress){
   File dir=SD.open(path);if(!dir||!dir.isDirectory()){scanOk=false;return;}
   for(File f=dir.openNextFile();f;f=dir.openNextFile()){
@@ -136,10 +141,11 @@ static void scanDir(const String& path,int depth,File* output,StorageProgressFn 
     if(name[0]!='.'){
       String p=path+"/"+name;
       if(f.isDirectory()){
-        f.close();if(depth<2)scanDir(p,depth+1,output,progress);
+        f.close();if(depth<3)scanDir(p,depth+1,output,progress);else if(!output)++tooDeep;
       }else{
         String low=p;low.toLowerCase();
         if(low.endsWith(".m4a") || low.endsWith(".wav") || low.endsWith(".mp3") || low.endsWith(".flac"))addTrack(p,f,output,progress);
+        else if(!output&&(low.endsWith(".m3u")||low.endsWith(".m3u8"))&&p.length()<256&&listFiles.size()<kMaxListFiles)listFiles.push_back(p);
       }
     }
     f.close();if(!scanOk)break;
@@ -281,7 +287,8 @@ bool storage_begin(StorageProgressFn progress){
   // Only pay the legacy full scan when neither sampled-format slot is usable.
   if(!va&&!vb){va=validate(CATALOGS[0],a,true);vb=validate(CATALOGS[1],b,true);}
   if(va||vb){active=vb&&(!va||int32_t(b.generation-a.generation)>0)?1:0;header=active?b:a;}
-  scanned=0;scanCrc=0;scanOk=true;skipped=0;scanDir("/music",0,nullptr,nullptr);
+  scanned=0;scanCrc=0;scanOk=true;skipped=0;tooDeep=0;listFiles.clear();scanDir("/music",0,nullptr,nullptr);
+  if(tooDeep)Serial.printf("catalog: %d folders below /music/a/b/c/ not indexed\n",tooDeep);
   // CT-04: the marker has done its job once this boot has read it. Removing it before
   // the build means a build that keeps failing cannot repeat on every boot.
   const bool force=SD.exists(REFRESH);if(force&&!readOnly)SD.remove(REFRESH);
@@ -300,6 +307,8 @@ bool storage_begin(StorageProgressFn progress){
   return true;
 }
 int storage_trackCount(){return active>=0?header.tracks:0;}
+const std::vector<String>& storage_playlistFiles(){return listFiles;}
+void storage_releasePlaylistFiles(){std::vector<String>().swap(listFiles);}
 uint32_t storage_libraryCrc(){return header.checksum;}
 bool storage_catalogReady(){return active>=0;}
 bool storage_catalogStale(){return stale;}

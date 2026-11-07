@@ -153,6 +153,13 @@ class CydSource : public BluetoothA2DPSource {
       portENTER_CRITICAL(&volumeMux);volumeSync.connection(rc->conn_stat.connected);portEXIT_CRITICAL(&volumeMux);
     }
     BluetoothA2DPSource::bt_av_hdl_avrc_ct_evt(event,param);
+    if(event==ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT){
+      const bool supported=esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_TEST,
+        &rc->get_rn_caps_rsp.evt_set,ESP_AVRC_RN_VOLUME_CHANGE);
+      const uint8_t initial=audio_volume();
+      portENTER_CRITICAL(&volumeMux);const bool started=volumeSync.capabilities(supported,initial);portEXIT_CRITICAL(&volumeMux);
+      if(started)Serial.printf("bt: initial volume sync target=%u%%\n",unsigned(initial));
+    }
   }
   void bt_app_av_sm_hdlr(uint16_t event,void* param) override {
     rollEventWindow(millis());

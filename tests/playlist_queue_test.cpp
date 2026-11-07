@@ -31,6 +31,9 @@ int storage_trackCount(){return total;}
 bool storage_readOnly(){return false;}
 uint32_t storage_libraryCrc(){return 1;}
 String storage_trackPath(int i){return library.empty()?String("/music/A/")+String(i)+".m4a":library.at(i);}
+static std::vector<String> musicLists;
+const std::vector<String>& storage_playlistFiles(){return musicLists;}
+void storage_releasePlaylistFiles(){}
 void storage_forEach(StorageEachFn fn){++scans;for(int i=0;i<total-(brokenScan?1:0);++i)fn(i,storage_trackPath(i),String(i));}
 int storage_browseCount(CatalogView){return total;}
 bool storage_browseEntry(CatalogView,int i,CatalogEntry& e){e.track=total-1-i;return !brokenView || i<total-2;}
@@ -119,7 +122,7 @@ static void m3uChecks(){
     allocationMax=0;const int before=scans;
     SerialCapture serial;
     check(playlist_select(playlist_sourceAt(SRC_M3U,0))==(found>0),"M3U selection result");
-    check((found==0||length==found)&&scans==before+1,"M3U found count/single library pass");
+    check((found==0||length==found)&&scans==before,"M3U found count/no library pass (path keys)");
     check(allocationMax<=4000,"M3U key allocation remains at most 4 KB");
     telemetryCheck(serial.finish(), "cmd: playlist list n=[0-9]+ found=[0-9]+ missing=[0-9]+ ambiguous=[0-9]+", "queue cache=miss", total, "ok", true);
     return playlist_lastMatchStats();
@@ -129,6 +132,15 @@ static void m3uChecks(){
   auto stats=run(first,25);check(stats.entries==25&&stats.byTail==25&&!stats.missing,"real 25/25 CRLF/BOM");
   for(int i=0;i<25;++i)check(at(i)==i,"real playlist order");
   stats=run(all,175);check(stats.entries==175&&stats.byTail==175,"real crate 175/175");
+  {
+    // A list beside its Tracks folder in /music: entries resolve exactly.
+    std::filesystem::create_directories(SD.root/"music/Alternative Wedding - UK Nostalgia");
+    {std::ofstream f(SD.root/"music/Alternative Wedding - UK Nostalgia/pack.m3u8",std::ios::binary);f<<first;}
+    musicLists={root+"pack.m3u8"};playlist_begin();
+    check(playlist_sourceCount(SRC_M3U)==2&&playlist_name(playlist_sourceAt(SRC_M3U,1))=="pack","list in /music listed by name");
+    check(playlist_select(playlist_sourceAt(SRC_M3U,1))&&length==25&&playlist_lastMatchStats().exact==25,"list in /music resolves exactly");
+    musicLists.clear();playlist_begin();
+  }
   stats=run(first+"Tracks/absent.m4a\r\n",25);check(stats.missing==1&&stats.entries==26,"missing counted");
   for(auto e:crate)library.push_back(String("/music/Second copy/")+e);
   total=library.size();playlist_begin();stats=run(first,25);
@@ -162,10 +174,12 @@ int main(){try{
     q->first=-1;q->cached=0;hostReadBudget=0;check(q->queueAt(0)==-1,"SD short read unavailable");hostReadBudget=-1;check(q->queueAt(0)==0,"retry after SD failure");
     const char* oldPath=q->path;hostWriteBudget=0;check(!playlist_select(2)&&q->path==oldPath&&q->queueAt(0)==0,"failed stage preserves live source");hostWriteBudget=-1;
     {
-      brokenScan=true; SerialCapture serial;
-      check(!playlist_select(2),"partial catalogue scan refused");
-      telemetryCheck(serial.finish(), "cmd: source folder 2", "queue", n-1, "fail", true);
-      brokenScan=false;
+      // A partial pass at boot leaves no path keys; a build then reads the catalogue and refuses it.
+      std::filesystem::remove(SD.root/".sys/sources.txt");brokenScan=true;playlist_begin();SerialCapture serial;
+      check(!playlist_select(1),"partial catalogue scan refused");
+      telemetryCheck(serial.finish(), "cmd: source favourites 1", "queue", n-1, "fail", true);
+      brokenScan=false;std::filesystem::remove(SD.root/".sys/sources.txt");playlist_begin();
+      const int before=scans;playlist_begin();check(scans==before,"unchanged library reuses sources and keys");
     }
     check(playlist_select(1)&&length==2&&at(0)==2&&at(1)==7,"favourites library order");
     check(playlist_select(3)&&length==3&&at(0)==7&&at(1)==2&&at(2)==7,"M3U duplicates/order/missing");

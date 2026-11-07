@@ -10,11 +10,15 @@
 //   1          Favourites                /.sys/fav.txt, one path per line
 //   2..        folders under /music      every folder that holds songs,
 //                                        including its subfolders' songs
-//   then       /playlists/*.m3u, *.m3u8  entries relative to /music, to the
-//                                        playlist's own folder, or absolute
+//   then       *.m3u, *.m3u8 in          entries relative to /music, to the
+//              /playlists or anywhere    playlist's own folder, or absolute
+//              in the /music tree
 //
-// Folders and playlists are listed once at boot in /.sys/sources.txt, so RAM
-// holds none of their names. Favourites are kept by PATH, not index, so a
+// Folders and playlists are listed at boot in /.sys/sources.txt (reused while
+// the library and the set of playlist files are unchanged), so RAM holds none
+// of their names. /.sys/paths.keys holds three path hashes per track, so a
+// list builds from about 18 KB of keys instead of rereading every catalogue
+// record; a folder is one run of tracks and needs no scan at all. Favourites are kept by PATH, not index, so a
 // re-index after new songs arrive does not shuffle them onto other songs; RAM
 // keeps a CRC per favourite to answer "is this one starred?".
 #pragma once

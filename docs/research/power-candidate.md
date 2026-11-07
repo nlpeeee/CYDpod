@@ -1,6 +1,6 @@
 # Power candidate: idle levers and in-place Sleep
 
-Date: 2026-11-07. Branch `cydpod/power`, firmware commit 39a74e5, built from `main` 3abebbe (v0.5.1).
+Date: 2026-11-07. Branch `cydpod/power`, firmware commit 9b68916, built from `main` 3abebbe (v0.5.1).
 Specification: `docs/specs/power-plan.md`, revision 2.
 
 ## What changed
@@ -17,6 +17,7 @@ Each item is a runtime lever (`pwr on|off <lever>`; levers live in RAM, a reset 
 | `sleep` | on | Sleep conditions: 5 min without playback **and** without touch; screen dark; screen timeout not "Off"; no pending open/seek; Bluetooth settled and not pairing, connecting or choosing a device. On entry: save the resume point, stop the Bluetooth stack in place, hold the backlight pin low, arm GPIO21 LOW + UART0 (+ the 1 s timer), then `esp_light_sleep_start()`. On wake, resume in place (no restart). |
 | (sleep timer) | — | When the sleep timer expires it fades and pauses playback, then requests Sleep at once (10 s window, same checks as `pwr sleepnow`) instead of waiting another 5 minutes. |
 | `backstop` | on | While asleep, wake and read the CST820 once: every 1 s once INT has woken the dark screen, every 50 ms until then, so a quick tap is still caught. |
+| `btfast` | on | Bluetooth stack-up (boot and every wake) waits 0.5 s instead of the library's 10 s before its one page of the saved speaker. Connected with media still IDLE (the connect-time CHECK_SRC_RDY was refused), `MediaCheck` asks again every 300 ms, up to 20 times per link, instead of waiting for the 10 s heartbeat. Off: the 10 s wait applies to later wakes, and only the heartbeat retries. Levers reset at reboot, so boot always uses the short wait. |
 
 Other changes:
 - `touch_begin` writes `0xED=200` (CST816-family IrqPluseWidth, 20 ms) and logs the read-back.
@@ -34,7 +35,7 @@ Other changes:
 `bt_resumeStack()`:
 1. Calls `set_auto_reconnect(true,1)`.
 2. Calls `policy.boot()`.
-3. Calls `a2dp.start()`. That re-enables the controller (INITED → ENABLED, Arduino `btStartMode`) and Bluedroid (INITIALIZED → enabled), recreates BtAppT and re-runs the library's stack-up. Stack-up waits **10 s** and then pages the saved speaker once, exactly as at boot.
+3. Calls `a2dp.start()`. That re-enables the controller (INITED → ENABLED, Arduino `btStartMode`) and Bluedroid (INITIALIZED → enabled), recreates BtAppT and re-runs stack-up. With `btfast` on, `CydSource::av_hdl_stack_evt` mirrors the library's 1.8.12 STACK_UP branch with a 0.5 s wait in place of 10 s, then pages the saved speaker once, as at boot. `BOOT_PAGE_WINDOW_MS` is 20 s (was 30 s).
 
 `bt_stackSettled()` waits for the library's heartbeat timer to exist. That timer is created last in stack-up, so Sleep and `pwr btcycle` never stop a stack that is still starting.
 
@@ -52,23 +53,23 @@ After a touch wake, the press is swallowed (1.5 s window), as for any dark-scree
 
 ## Software checks
 
-Run once, on the code of commit 39a74e5 (built immediately before committing, with no edits in between):
+Run once, on the code of commit 9b68916 (built immediately before committing, with no edits in between):
 
 ```
 powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel power
 PASS pristine MiniAAC + verified seek overlay staged
 PASS pinned Helix MP3-only core staged unchanged; heap buffers.c excluded
 PASS compact FLAC staged; legacy core/header excluded
-Sketch uses 1591925 bytes (80%) ... Global variables use 87928 bytes (26%)
-PASS single pool: 3ffc5788 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
+Sketch uses 1592629 bytes (81%) ... Global variables use 87944 bytes (26%)
+PASS single pool: 3ffc5798 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
 PASS compact FLAC staged; legacy core/header excluded
-Sketch uses 1592069 bytes (80%) ... Global variables use 87928 bytes (26%)
-PASS single pool: 3ffc5788 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
+Sketch uses 1592757 bytes (81%) ... Global variables use 87944 bytes (26%)
+PASS single pool: 3ffc5798 00007868 b _ZN12_GLOBAL__N_1L9codecPoolE
 PASS: compile-only checks completed; no device commands were run.
-SUMMARY board=jc2432w328c images built=2 total seconds=59.73
+SUMMARY board=jc2432w328c images built=2 total seconds=67.45
 ```
 
-Static RAM is 56 bytes above 0.5.1: the codec pool moved from 0x3ffc5750 to 0x3ffc5788.
+Static RAM is 72 bytes above 0.5.1: the codec pool moved from 0x3ffc5750 to 0x3ffc5798.
 
 No host tests were added. The new logic is hardware-facing: radio, light sleep and the controller's INT. **None of this is hardware evidence.** Every gate below is owner-measured.
 
@@ -83,7 +84,7 @@ No host tests were added. The new logic is hardware-facing: radio, light sleep a
 3. **Bluetooth cycle** (P3a gate):
    - Run `pwr btcycle 20` with the saved speaker in range.
    - Each cycle logs `pwr: btcycle N drift free … largest …` relative to cycle 1. Pass: within ±1024 B after cycle 20, and `min` stays above 10,240.
-   - The speaker must reconnect after each restart (about 10-15 s, because of the library's stack-up wait), and AAC must play afterwards.
+   - The speaker must reconnect after each restart (about 3-5 s with `btfast`; 10-15 s with it off), and AAC must play afterwards.
 4. **A2DP suspend** (P2):
    - Connected and paused for more than 10 s, expect `bt: media cmd=SUSPEND rc=0 (idle stream)` and an AUDIO SUSPEND event.
    - Play: `bt: idle stream resume queued`, then `bt: media cmd=START`. Audio should start within about 500 ms.
@@ -91,7 +92,7 @@ No host tests were added. The new logic is hardware-facing: radio, light sleep a
 5. **Sleep** (P3b):
    - `pwr sleepnow` (10 s window), or wait 5 min without playback or touch.
    - Expect `pwr: sleep entering` and `bt: stack stopped … status=1`.
-   - Touch: `pwr: woke from sleep after Ns cause=touch` (or `backstop`), the same screen and track, then `bt: stack restarted`, and the speaker reconnecting.
+   - Touch: `pwr: woke from sleep after Ns cause=touch` (or `backstop`), the same screen and track, then `bt: stack restarted`, `bt: stack up (0.5 s wait)`, `bt: connecting` about 0.5 s later, and after `bt: connected` a `bt: media cmd=CHECK rc=0 (prompt)` and `bt: media cmd=START` within about 0.5 s. Target: about 4 s from wake to sound. Repeat once with `pwr off btfast` for comparison.
    - S6 reading with `pwr off backstop` and with it on.
    - Run 20 touch wakes, and compare the `pwr: sleep after heap` lines.
 
@@ -103,9 +104,23 @@ No host tests were added. The new logic is hardware-facing: radio, light sleep a
 
 - Second run: after a pause the idle suspend worked (`bt: media cmd=SUSPEND rc=0`), but Play never queued the resume, so the speaker stayed silent until a manual disconnect and reconnect. Cause: a race left `mediaPending` set. Fixed in 39a74e5.
 
+## Third run (firmware 39a74e5): wake-to-audio timing
+
+Sleep worked and drew too little for the owner's USB meter to show. Reconnecting and playing after the wake took about 22 s:
+
+| Step | Log ms | Gap |
+|---|---|---|
+| `pwr: woke from sleep`, `bt: stack restarted` | ~382,000 | |
+| `bt: connecting` | 394,713 | ~12 s: the library's 10 s stack-up wait |
+| `bt: connected` | 397,560 | 2.8 s: page and A2DP connect |
+| `bt: media cmd=START`, AUDIO STARTED | 404,698 | 7.1 s: the connect-time CHECK was refused (`status=1`), and the retry waited for the 10 s heartbeat |
+
+Boot showed the same post-connect gap: connected at 42.3 s, START at 51.4 s. Both waits are addressed by `btfast` in 9b68916.
+
 ## Known limits
 
-- Every wake from Sleep makes the speaker wait for the library's 10 s stack-up delay before its single page.
+- The 0.5 s stack-up wait mirrors pinned library code (ESP32-A2DP 1.8.12). A library update must re-check `CydSource::av_hdl_stack_evt`.
+- A speaker that pages the board itself in the first 0.5 s after stack-up is the race the library's 10 s wait guarded against; not yet seen on the board.
 - If the speaker was connected when Sleep began, Sleep disconnects it. The reconnect after wake is the library's boot page, then the normal policy.
 - On the wired route, the I2S clocks stop during light sleep. Listen for a pop at sleep and wake.
 - `touchsleep` and the 0xED pulse register are unverified on the CST820. The INT pin uses the board's own pull-up; `pinMode` is unchanged.

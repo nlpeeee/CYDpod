@@ -49,12 +49,12 @@ void printStatus(uint32_t now) {
   Serial.printf("stat: pwr state=%s levers=", sleep_screenOff() ? "Idle" : "Active");
   for (int i = 0; i < PWR_LEVER_COUNT; ++i) Serial.printf("%s%s=%d", i ? "," : "", NAMES[i], int(levers[i]));
   const uint32_t quiet = min(now - lastPlayAt, sleep_idleMs(now));
-  Serial.printf(" sleepIn=%lds panel=%s bt=%s stream=%s int edges=%lu intWakes=%lu pollWakes=%lu verified=%d pulse=%u "
+  Serial.printf(" sleepIn=%lds panel=%s bt=%s stream=%s int edges=%lu intWakes=%lu pollWakes=%lu verified=%d pulse=%u irqctl=0x%02x intHigh=%d "
                 "sleeps=%lu lastWake=%s lastSleepS=%lu spurious=%lu backstopWakes=%lu\n",
                 long(int32_t(POWER_SLEEP_AFTER_MS - quiet) / 1000), display_panelAsleep() ? "asleep" : "awake",
                 bt_stackSuspended() ? "suspended" : bt_stackSettled() ? "up" : "starting",
                 bt_streamIdle() ? "suspended" : "normal", (unsigned long)t.intEdges, (unsigned long)t.intWakes,
-                (unsigned long)t.pollWakes, int(t.intVerified), unsigned(t.pulseReg), (unsigned long)sleeps, lastWake,
+                (unsigned long)t.pollWakes, int(t.intVerified), unsigned(t.pulseReg), unsigned(t.irqCtl), int(t.intHigh), (unsigned long)sleeps, lastWake,
                 (unsigned long)(lastSleepMs / 1000), (unsigned long)spurious, (unsigned long)backstopWakes);
 }
 
@@ -106,7 +106,10 @@ void enterSleep(uint32_t now, bool bluetoothStarted) {
   }
   gpio_hold_en(gpio_num_t(CYD_TFT_BL_PIN));
   esp_sleep_enable_gpio_wakeup();
-  if (levers[PWR_BACKSTOP]) esp_sleep_enable_timer_wakeup(1000000ULL);
+  // Backstop period: 1 s once INT has woken the dark screen; 50 ms otherwise,
+  // so a quick tap (~100 ms) is still caught by a single read.
+  if (levers[PWR_BACKSTOP])
+    esp_sleep_enable_timer_wakeup(touch_idleStats().intVerified ? 1000000ULL : 50000ULL);
   if (uart_set_wakeup_threshold(UART_NUM_0, 3) == ESP_OK) esp_sleep_enable_uart_wakeup(UART_NUM_0);
   const uint32_t asleepAt = millis();
   lastWake = sleepUntilWake();
@@ -139,7 +142,7 @@ bool sleepAllowed(uint32_t now, bool bluetoothStarted) {
   if (c.track >= 0 || c.seekMs >= 0 || c.opening || c.seeking) return false;
   if (bluetoothStarted && !bt_stackSuspended() &&
       (!bt_stackSettled() || bt_pairing() || bt_connecting() || bt_choosing())) return false;
-  // Never sleep on a wake path not yet seen working: the 1 s backstop reads an
+  // Never sleep on a wake path not yet seen working: the backstop reads an
   // awake CST820, otherwise a touch must have woken the dark screen by INT.
   const bool backstopWorks = levers[PWR_BACKSTOP] && !levers[PWR_TOUCHSLEEP];
   return backstopWorks || touch_idleStats().intVerified;

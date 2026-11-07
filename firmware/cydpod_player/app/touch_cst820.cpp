@@ -44,7 +44,7 @@ volatile bool intFlag = false;
 void IRAM_ATTR onInt() { ++intEdges; intFlag = true; }
 bool idle = false, idleAuto = false, windowByInt = false, lastWakeByInt = false;
 uint32_t windowUntil = 0, lastBackstop = 0, intWakes = 0, pollWakes = 0;
-uint8_t pulseReg = 0;
+uint8_t pulseReg = 0, irqCtl = 0;
 void attachInt() { attachInterrupt(digitalPinToInterrupt(CYD_TOUCH_INT_PIN), onInt, FALLING); }
 
 void failed(uint32_t now) {
@@ -82,7 +82,9 @@ bool ready(uint32_t now) {
 } // namespace
 
 void touch_begin() {
-  pinMode(CYD_TOUCH_INT_PIN, INPUT); // controller output; do not drive it
+  // Controller output; never driven. The weak pull-up keeps an open-drain INT
+  // from floating (board pull-up unconfirmed: no edges were seen without it).
+  pinMode(CYD_TOUCH_INT_PIN, INPUT_PULLUP);
   pinMode(CYD_TOUCH_RST_PIN, OUTPUT);
   digitalWrite(CYD_TOUCH_RST_PIN, LOW); delay(10);
   digitalWrite(CYD_TOUCH_RST_PIN, HIGH); delay(300);
@@ -94,6 +96,10 @@ void touch_begin() {
   if (!awake) failed(lastReset);
   if (awake && writeReg(0xed, 200) && readReg(0xed, pulseReg))
     Serial.printf("touch: CST820 INT pulse register 0xED=%u\n", unsigned(pulseReg));
+  // CST816-family IrqCtl (0xFA): EnTouch 0x40 | EnChange 0x20 pulse INT on contact
+  // and on movement. Unverified on the CST820; the read-back is logged.
+  if (awake && writeReg(0xfa, 0x60) && readReg(0xfa, irqCtl))
+    Serial.printf("touch: CST820 IrqCtl 0xFA=0x%02x INT level %d\n", unsigned(irqCtl), digitalRead(CYD_TOUCH_INT_PIN));
   attachInt();
   Serial.printf("touch: CST820 addr=0x15 SDA%d SCL%d RST%d INT%d 400kHz ready=%d calibration=none\n",
                 CYD_TOUCH_SDA_PIN, CYD_TOUCH_SCL_PIN, CYD_TOUCH_RST_PIN, CYD_TOUCH_INT_PIN, awake);
@@ -141,11 +147,13 @@ bool touch_confirmedLift(uint32_t& firstZeroMs) {
 }
 
 // Screen off: read only inside a 500 ms window after an INT edge, or at the
-// 250 ms backstop. Once a press is down every pass reads, as when lit.
+// 250 ms backstop. Once a press is down every pass reads, as when lit. Until
+// INT has produced an edge this boot every pass reads (20 ms when dark): a
+// quick tap falls between 250 ms polls.
 static cst820::Report idleReport(uint32_t now) {
   if (intFlag) { intFlag = false; windowUntil = now + 500; windowByInt = true; }
   const bool inWindow = int32_t(now - windowUntil) < 0;
-  if (!tracker.down() && !inWindow) {
+  if (intEdges && !tracker.down() && !inWindow) {
     if (now - lastBackstop < 250) return {};
     lastBackstop = now; windowByInt = false;
   }
@@ -173,7 +181,8 @@ void touch_setIdle(bool on, bool autoSleep) {
 }
 
 TouchIdleStats touch_idleStats() {
-  return {intEdges, intWakes, pollWakes, intWakes > 0 && lastWakeByInt, pulseReg};
+  return {intEdges, intWakes, pollWakes, intWakes > 0 && lastWakeByInt, pulseReg, irqCtl,
+          digitalRead(CYD_TOUCH_INT_PIN) == HIGH};
 }
 
 bool touch_sleepPrepare() {

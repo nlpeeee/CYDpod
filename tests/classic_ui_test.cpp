@@ -136,7 +136,8 @@ static bool limitSaveAllowed=true,appliedLimit=true;
 bool settings_setHeadphoneLimit(bool on){++limitSaves;if(!limitSaveAllowed)return false;g_settings.headphoneLimit=on;return true;}
 void wired_setHeadphoneLimit(bool on){++limitRequests;appliedLimit=on;}
 static int eqApplies=0;static bool eqLastOn=false;static int8_t eqLast[5]={};
-void eq_apply(bool on,const int8_t* g){++eqApplies;eqLastOn=on;for(int b=0;b<5;++b)eqLast[b]=g[b];}
+void eq_apply(bool on,const int8_t g[5]){  // array form: MSVC mangles it differently from a pointer
+  ++eqApplies;eqLastOn=on;for(int b=0;b<5;++b)eqLast[b]=g[b];}
 static uint8_t liveRoute=OUT_BT;
 static bool savedParked=false;
 bool settings_saveOutputResume(uint8_t){++restartSaves;savedParked=liveRoute==OUT_NONE&&!playing;return saveAllowed;}
@@ -725,8 +726,8 @@ static void equalizerRegression(){
     const Rect mid=L::eqTrack<Rect>(w,h,2,5);
     tap(mid.cx(),mid.y+mid.h);check(g_settings.eqGain[2]==-12,"bottom of the 1 kHz slider sets -12 dB");
     const Rect preset=L::eqControl<Rect>(w,1),reset=L::eqControl<Rect>(w,2),toggle=L::eqControl<Rect>(w,0);
-    tap(preset.cx(),preset.cy());check(same(g_settings.eqGain,{8,4,0,0,0})&&label("Bass")&&eqLast[0]==8,"Preset from Custom selects Bass");
-    tap(preset.cx(),preset.cy());check(same(g_settings.eqGain,{-2,0,4,4,0})&&label("Vocal"),"Preset cycles to Vocal");
+    tap(preset.cx(),preset.cy());check(same(g_settings.eqGain,{6,6,2,0,0})&&label("Bass")&&eqLast[0]==6,"Preset from Custom selects Bass");
+    tap(preset.cx(),preset.cy());check(same(g_settings.eqGain,{-2,0,4,4,2})&&label("Vocal"),"Preset cycles to Vocal");
     tap(reset.cx(),reset.cy());check(same(g_settings.eqGain,{0,0,0,0,0})&&g_settings.eqOn&&label("Flat"),"Reset sets every band flat");
     tap(toggle.cx(),toggle.cy());check(!g_settings.eqOn&&!eqLastOn&&label("EQ Off"),"On/Off switches the EQ off");
     const Rect c=L::eqColumn<Rect>(w,h,0,5);

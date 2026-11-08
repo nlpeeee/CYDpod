@@ -46,6 +46,9 @@ struct Settings {
   uint8_t  screenTimeout = 2;             // Off / 30 s / 1 min / 5 min; dim halfway
   uint8_t  sleepTimer = 0;                  // Off / 15 / 30 / 60 / 90 minutes
   bool     headphoneLimit = true;          // wired digital output limit; NVS hpLimit
+  // 5-band EQ (eq.h): off by default; gains in dB, -12..+12. NVS eqOn / eqGain.
+  bool     eqOn = false;
+  int8_t   eqGain[5] = {0, 0, 0, 0, 0};
   uint8_t  volume     = 40;                 // 0-100
   // Where the sound comes out: OUT_BT or OUT_WIRED (out_route.h). Bluetooth by default; a
   // stored speaker choice from an older build is read back as Bluetooth.

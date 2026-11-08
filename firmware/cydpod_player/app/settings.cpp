@@ -26,6 +26,10 @@ void settings_begin() {
   s.volume     = min<uint8_t>(prefs.getUChar("vol", s.volume), 100);
   // Read the raw boolean byte: absent, wrong type/size or values >1 default On.
   s.headphoneLimit = prefs.getUChar("hpLimit", 1) != 0;
+  s.eqOn = prefs.getUChar("eqOn", 0) == 1;
+  // A blob of another size is not ours: keep the flat default.
+  if (prefs.getBytesLength("eqGain") == sizeof(s.eqGain)) prefs.getBytes("eqGain", s.eqGain, sizeof(s.eqGain));
+  for (int8_t& g : s.eqGain) g = g < -12 ? -12 : g > 12 ? 12 : g;
   s.outRoute   = outRouteSanitize(prefs.getUChar("out", s.outRoute));
 #if CYD_DEFAULT_OUT_ROUTE >= 0
   storedOutRoute = s.outRoute;
@@ -120,6 +124,8 @@ bool settings_save() {
   ok = (prefs.putUChar("sleepTime",s.sleepTimer) == 1) && ok;
   ok = (prefs.putBool("hpLimit", s.headphoneLimit) == 1) && ok;
   ok = (prefs.putUChar("vol",      s.volume) == 1) && ok;
+  ok = (prefs.putUChar("eqOn",     s.eqOn ? 1 : 0) == 1) && ok;
+  ok = (prefs.putBytes("eqGain",   s.eqGain, sizeof(s.eqGain)) == sizeof(s.eqGain)) && ok;
 #if CYD_DEFAULT_OUT_ROUTE >= 0
   // Writing the forced route would clobber the saved choice; only a route the user
   // picked in the UI (anything other than the forced one) is persisted.

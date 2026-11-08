@@ -134,6 +134,7 @@ static int restartSaves=0,limitSaves=0,limitRequests=0;
 static bool limitSaveAllowed=true,appliedLimit=true;
 bool settings_setHeadphoneLimit(bool on){++limitSaves;if(!limitSaveAllowed)return false;g_settings.headphoneLimit=on;return true;}
 void wired_setHeadphoneLimit(bool on){++limitRequests;appliedLimit=on;}
+int eqApplies=0;void eq_apply(bool,const int8_t*){++eqApplies;}
 static uint8_t liveRoute=OUT_BT;
 static bool savedParked=false;
 bool settings_saveOutputResume(uint8_t){++restartSaves;savedParked=liveRoute==OUT_NONE&&!playing;return saveAllowed;}
@@ -1275,7 +1276,7 @@ static void navigationGraph(){
   std::cout<<"NAV_GRAPH rotation "<<navRotation<<": "<<classes.size()<<" pages, "<<nodes.size()<<" page/scroll states\n";
   for(const auto& e:edges){std::cout<<"  "<<e.first<<" ->";for(const auto& to:e.second)std::cout<<' '<<to;std::cout<<'\n';}
   check(unknown.empty(),"a screen outside Classic and Bluetooth became current");
-  const std::set<std::string> expected{"Bluetooth","Classic.About","Classic.Catalog","Classic.Display","Classic.Home","Classic.Keyboard","Classic.Options","Classic.Output","Classic.Playback","Classic.Player","Classic.Playlists","Classic.Refresh","Classic.Search","Classic.Settings","Classic.SourceSongs","Classic.Sources","Classic.System"};
+  const std::set<std::string> expected{"Bluetooth","Classic.About","Classic.Catalog","Classic.Display","Classic.Home","Classic.Keyboard","Classic.Options","Classic.Output","Classic.Playback","Classic.Player","Classic.Playlists","Classic.Refresh","Classic.Search","Classic.Settings","Classic.SourceSongs","Classic.Sources","Classic.System","Classic.Equalizer"};
   for(const auto& want:expected)check(classes.count(want)>0,("page not reachable from Home: "+want).c_str());
   for(const auto& got:classes)check(expected.count(got)>0,("unexpected page reachable from Home: "+got).c_str());
 }

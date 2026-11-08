@@ -151,3 +151,95 @@ Static RAM did not change from the first EQ build. The page keeps two bytes of p
 - While a track plays, open the page from Now Playing → Options and hear the change.
 - Confirm that a sideways drag on a slider never goes back.
 - Read `stat: eq` with all five bands active.
+
+## Sound-quality investigation and fix
+
+### What the owner heard
+
+With the EQ on, every preset sounded quieter and thinner than bypass, and the result was phasey or uneven. The owner asked me to check the maths against other EQs.
+
+### Diagnosis
+
+**The filter maths was correct.** `tests/eq_ffmpeg_check.sh` ran three comparisons:
+
+- the same design through FFmpeg's `equalizer` filter, which uses the RBJ peaking formula with `t=q`, chained with the same Q, internal gains and output gain;
+- the same design in double precision;
+- the firmware fixed-point path.
+
+FFmpeg and double precision agreed exactly, with **0 LSB difference** on all six settings: four presets, all bands at −12 dB, and a smile curve. The fixed-point path differs from double precision by at most 6 LSB, 0.3–1.5 LSB RMS, with a mean within 0.06 LSB. A per-stage probe traced almost all of that difference to Direct Form I truncation noise in the 60 Hz stage. On noise that stage measured 0.48–0.56 LSB RMS, which is low-frequency rumble around −93 dBFS, so it can't be heard. At 1 kHz the error is under 0.01 LSB, and at 4 kHz and above under 0.002 LSB.
+
+**The problems were design choices in the first release.**
+
+1. **Gain staging.** The cascade folded in −(peak + 1 dB), so every preset was a net cut and no frequency rose above bypass. Measured mean level on −20 dBFS pink noise, from `ffmpeg volumedetect` on the A/B files:
+
+   | File | Mean level | Against bypass |
+   |---|---:|---:|
+   | Bypass | −37.2 dB | |
+   | Bass, old | −44.0 dB | −6.8 dB |
+   | Vocal, old | −41.4 dB | −4.2 dB |
+   | Treble, old | −44.8 dB | −7.6 dB |
+   | Loudness, old | −42.2 dB | −5.0 dB |
+
+2. **Ripple between bands.** With Q 0.9 and two octaves between centres, all bands at +12 dB gave +7.2 to +14.4 dB across 60 Hz–14 kHz, a 7.3 dB swing. All bands at +6 dB gave a 3.7 dB swing. Vocal dipped 1.5 dB at 2 kHz, between its two boosts. A wider Q alone still leaves about 5 dB.
+3. **Presets.** Bass put +8 dB at 60 Hz, below what a small Bluetooth speaker plays, so mostly the overall cut was audible.
+
+### Changes
+
+- **Interaction-corrected design** (Välimäki & Liski's accurate cascade graphic EQ), with Q 0.5.
+  - All bands at +12 dB now span +11.0 to +12.7 dB (1.66 dB ripple). All at +6 dB span +5.56 to +6.29 dB (0.73 dB).
+  - Any single band at ±12 or +6 dB lands within 0.6 dB of its target at its centre and within 1 dB of 0 at the other centres.
+  - I tested Q 0.3–1.2 with the correction. Q 0.5 balances ripple against accuracy on single bands and alternating settings.
+- **Q3.29 coefficients**, needed because internal gains now reach ±18 dB. The Xtensa loop changed only its clamp constant, output shift and bias.
+- **Half-loudness-matched output gain**, a stereo-linked −1 dBFS limiter, and a 10 ms glide with `retarget()` continuity.
+- **Presets retuned:**
+
+  | Preset | Gains (dB) |
+  |---|---|
+  | Bass | +6 +6 +2 0 0 |
+  | Vocal | −2 0 +4 +4 +2 |
+  | Treble | 0 0 +2 +6 +6 |
+  | Loudness | +6 +4 0 +2 +6 |
+
+**New preset levels.** On the same noise, from `volumedetect`, and the designed net response from `eq_core_test`:
+
+| Preset | Mean level | Against bypass | Net at 60 / 250 / 1k / 4k / 14k Hz (dB) |
+|---|---:|---:|---|
+| Bass | −36.0 dB | +1.2 dB | +4.3 +4.3 +0.4 −1.6 −1.7 |
+| Vocal | −37.1 dB | +0.1 dB | −3.2 −1.2 +2.6 +2.7 +0.7 |
+| Treble | −36.5 dB | +0.7 dB | −1.7 −1.6 +0.4 +4.5 +4.4 |
+| Loudness | −35.6 dB | +1.6 dB | +4.5 +2.6 −1.2 +0.9 +4.7 |
+
+### Checks
+
+- **`tests/build_eq.sh` (WSL):** PASS, and the sanitizer build passes too. The log is `.tools/logs/eq-host.log`.
+
+  ~~~
+  curve: all +12 dB spans +11.02..+12.68 dB from 60 Hz to 14 kHz (ripple 1.66 dB)
+  curve: all +6 dB spans +5.56..+6.29 dB (ripple 0.73 dB)
+  response all+12  worst 0.0042 dB, noise max error 6.09 LSB, mean 0.050 LSB
+  limiter: sine sweep        peak 29205 (-1.00 dBFS), frames limited 2594
+  limiter: square 1 kHz      peak 29205 (-1.00 dBFS), frames limited 1997
+  PASS: eq core (corrected curve, loudness staging, response vs float, limiter, bit-exact bypass, continuity, presets)
+  ~~~
+
+  Every limiter case peaks at or below −1.00 dBFS. The Bass preset on −20 dBFS noise never limits. Switching the EQ on starts at unity overall gain.
+- **`tests/build_eq_xtensa.sh`:** PASS. The Q3.29 loop matches `stageRef` across 600 cases and 116,400 words, at 21 instructions per sample. The log is `.tools/logs/eq-xtensa-sim.log`.
+- **`tests/eq_ffmpeg_check.sh`:** PASS, with the results given under Diagnosis. The log is `.tools/logs/eq-ffmpeg-check.log`.
+- **Output stage cost:** compiled for Xtensa, it is about 45 instructions per frame. It calls only `__divsf3`, and only on limited frames, and it now converts float to int32 in hardware rather than through a float→int64 libcall. I estimate +0.8% of a 240 MHz core, so all five stages running costs roughly 5% in total. This is modelled, not measured.
+- **Compile:** `tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -PcmRingFrames 6144 -BuildLabel eq5band-fix` printed `PASS: compile-only checks completed; no device commands were run.` and `PASS single pool` (0x7868) for both images.
+
+  | Image | Static RAM | Flash | Δ vs UI build | Δ vs v0.5.4 |
+  |---|---:|---:|---|---|
+  | Bluetooth | 80,572 B | 1,320,113 B | +48 B RAM, +2,620 B flash | +904 B RAM, +20,552 B flash |
+  | Wired | 80,572 B | 1,320,249 B | +48 B RAM, +2,636 B flash | +896 B RAM, +20,548 B flash |
+
+### Listening files
+
+`sh tests/eq_ffmpeg_check.sh <music-file>` writes `tests/out/eq/ab/*.wav`: bypass, then old and new for each preset, from the first 60 s of any track FFmpeg can read. Without a file it uses −20 dBFS pink noise. Listening on headphones on a PC separates the EQ itself from the speaker.
+
+### Still open, on the board
+
+- the boot self-test, measured cycles per frame, and `stat: eq … limited N` during normal music;
+- how the new presets sound on the JBL Flip 3 and on AirPods;
+- underruns with all five stages running;
+- `design N us` on the ESP32, because the corrected design does about 450 double-precision transcendental calls per slider step on the loop task.

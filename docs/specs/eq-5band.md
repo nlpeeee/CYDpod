@@ -29,9 +29,21 @@ A gain change reaches the ear after the PCM already in the ring has played, up t
 | 4 | 4 kHz | RBJ peaking |
 | 5 | 14 kHz | RBJ peaking |
 
-- Q is 0.9 for every band, about 1.5 octaves wide. Adjacent bands overlap, so the response is smooth with no notches between centres.
+- Q is 0.5 for every band. With two octaves between centres, a narrower Q leaves dips between the bands. The first release used Q 0.9: with every band at +12 dB it swung between +7.2 and +14.4 dB, and the owner heard that as phasey and uneven.
 - Gain runs from −12 to +12 dB. The UI steps 2 dB, giving 13 positions. Stored values are whole dB, and anything outside the range is clamped on load.
-- The cascade runs in ascending frequency, using only the bands whose gain is not zero.
+- **Sliders are targets, not filter gains.** Neighbouring bands overlap, so `designBiquads()` solves for the internal filter gains, using the interaction-matrix least-squares method of Välimäki & Liski's accurate cascade graphic EQ.
+  - The solve aims for the combined response to equal each slider at its centre, and the mean of the two neighbouring sliders at the geometric midpoint between them.
+  - It starts from a 12 dB reference matrix, refines twice with each filter's actual response at its current gain, and clamps the result to ±18 dB.
+- **Accuracy, from the host test:**
+
+  | Setting | Response |
+  |---|---|
+  | All bands +12 dB | +11.0 to +12.7 dB from 60 Hz to 14 kHz |
+  | All bands +6 dB | +5.6 to +6.3 dB |
+  | Any single band at ±12 or +6 dB | Within 0.6 dB of its target at its centre; within 1 dB of 0 at the other centres |
+
+  Settings that alternate between extremes, such as +12 −12 +12, are only approximated, because the bands are this broad.
+- The cascade runs in ascending frequency, using only the bands whose internal gain is at least 0.05 dB. A lone slider can therefore activate its neighbours for small corrections of about 1–2 dB.
 
 ## Number formats and arithmetic
 
@@ -39,59 +51,74 @@ The C++ reference in `eq_core.h` and the Xtensa loop in `eq_xtensa.h` follow thi
 
 | Quantity | Format |
 |---|---|
-| Coefficients | Q2.30 int32 `{b0, b1, b2, −a1, −a2}`, normalised by a0 |
+| Coefficients | Q3.29 int32 `{b0, b1, b2, −a1, −a2}`, normalised by a0. Internal gains reach ±18 dB, where b0 is about 2.7, beyond the range of Q2.30. |
 | Sample in the cascade | int32, int16 full scale = 2^28 (`x << 13`) |
 | Product | `mulsh(c, s) = (int64(c)·s) >> 32`, floored. This is one MULSH instruction. |
-| Accumulator | int32, 2^26 per full scale: the sum of five products, plus 2 |
-| Stage output | the accumulator clamped to ±(2^28 − 1), then `y = (acc << 2) + 2` |
-| Output | `(y + 2^12) >> 13`, saturated to int16 |
+| Accumulator | int32, 2^25 per full scale: the sum of five products, plus 2 |
+| Stage output | the accumulator clamped to ±(2^27 − 1), then `y = (acc << 3) + 4` |
+| Output | `y` × output gain (below), then `(v + 2^12) >> 13`, saturated to int16 |
 
 The structure is Direct Form I, with x1, x2, y1 and y2 history for each band and channel.
 
 ### Rounding
 
-MULSH floors each of the five products, which biases each one by about −½ step. The +2 on the accumulator removes most of that bias. The +2 on the output, which is half an accumulator step, returns through −a1−a2 ≈ 1 and cancels the rest.
-
-This matters for the low bands. The DC gain of the 60 Hz band's feedback path is 1/(1+a1+a2), about 13,700. Without the cancellation, the host test measured about 3.5 LSB of DC offset.
+MULSH floors each of the five products, which biases each one by about −½ step. The +2 on the accumulator removes most of that bias. The +4 on the output, which is half an accumulator step, returns through −a1−a2 ≈ 1 and cancels the rest. Without this, the low band's DC gain of 1/(1+a1+a2) turned the bias into several LSB of offset. The host test now measures a mean error within ±0.25 LSB.
 
 ### No accumulator wrap
 
-- Stage outputs are bounded to |y| < 2^30.
-- `design()` rejects any stage whose |b0|+|b1|+|b2|+|a1|+|a2| reaches 8, which keeps |acc| < 2^31.
-- Every single-band gain, plus 3,000 random combinations, passes the host test. The largest sum is about 7.0, from the 60 Hz band.
+- Stage outputs are bounded to |y| ≤ 2^30.
+- `design()` rejects any stage whose |b0|+|b1|+|b2|+|a1|+|a2| reaches 16, which keeps |acc| < 2^31.
+- Every single-band gain, 3,000 random combinations and the alternating extremes all pass the host test.
 
 ### Precision
 
-The accumulator step is 2^−11 of an int16 LSB. Coefficient quantisation at 2^−30 places the 60 Hz poles well within tolerance.
+- **Accumulator step:** 2^−10 of an int16 LSB.
+- **Remaining error:** mostly Direct Form I truncation noise in the 60 Hz stage, whose poles sit close to the unit circle. On noise a single 60 Hz stage measures about 0.5 LSB RMS against double precision, which is low-frequency rumble around −93 dBFS. At 1 kHz and above the error is under 0.01 LSB.
+- **Against an independent EQ:** FFmpeg's `equalizer` filter, which uses the same RBJ formula, matches the double-precision design to 0 LSB on every preset. The fixed-point path is within 6 LSB maximum and 1.5 LSB RMS of it. `tests/eq_ffmpeg_check.sh` runs this comparison.
 
 ## When coefficients are recomputed
 
-`eq_apply(on, gains)` runs on the loop task at boot and after each Equalizer row tap.
+`eq_apply(on, gains)` runs on the loop task at boot and on every Equalizer page change.
 
-1. It designs the active biquads in double precision.
-2. It evaluates the cascade's |H| at 160 log-spaced points from 20 Hz to 20 kHz, plus the band centres.
-3. It computes the pre-gain and quantises the coefficients.
-4. It publishes the result under a small spinlock with a serial number. The serial line prints `eq: … design N us`.
+1. It solves the internal gains.
+2. It designs the active biquads in double precision.
+3. It evaluates the cascade on a log grid, using a cosine-only |H|² formula so each grid point costs one cosine.
+4. It derives the scale and the output gain.
+5. It quantises the coefficients.
+6. It publishes the result under a small spinlock with a serial number. The serial line prints `eq: … stages … peak … level … design N us`.
 
-The decoder compares that serial number once per `pushFrames()` call and copies the new set at a chunk boundary. The decoder never designs anything and never waits on a design.
+The decoder compares that serial number once per `pushFrames()` call and adopts the new set at a chunk boundary. The decoder never designs anything and never waits on a design.
 
-## Headroom and saturation
+## Gain staging and limiting
 
-- **Pre-gain:** G = min(1, 10^(−1/20) / max|H|). It is folded into the first active stage's b coefficients, so it costs nothing at run time. The extra 1 dB margin covers wideband peaks. With all five bands at +12 dB, the cascade peak is +14.47 dB and the pre-gain is −15.47 dB. A full-scale sine at any frequency then leaves at about −1 dBFS. The host test measured −1.02 dBFS with no clipped samples.
-- **Per-stage saturation:** each stage clamps its accumulator to ±4× full scale (+12 dB of internal headroom) before shifting. The final conversion saturates to int16. Saturation clips; it never wraps.
-- **Limits of what headroom can promise:** a filter's peak gain on wideband input exceeds its sinusoidal peak, and so does a square wave's Gibbs overshoot. A full-scale square wave through five +12 dB bands has ideal output above full scale, and there the output saturates cleanly. In the host test that output stayed within 3.3 LSB of the clipped ideal. "No clipping" holds for full-scale sinusoids and for normal programme material with the 1 dB margin. It is not a guarantee for full-scale synthetic square waves.
-- **Level change:** boosting bands lowers the overall level, so the EQ never needs a limiter. Turning bands up makes the other frequencies quieter rather than clipping.
+The first release folded −(peak + 1 dB) into the cascade. That made every preset a net cut: Bass measured 6.8 dB quieter than bypass on pink noise, and the other presets 4–7.6 dB quieter. Users of Spotify's and iOS's EQs make the same complaint. Most phone EQs instead apply a boost as real gain and catch peaks with a limiter, and that is what this design now does.
+
+- **Scale:** `min(1, 1/max|H|)` is folded into the first stage. On a sine no stage can reach full scale, whatever the sliders.
+- **Output gain:** `10^(pre/20) / scale`, applied after the cascade.
+  - `pre` is minus half of the pink-weighted average power boost from 100 Hz to 10 kHz, clamped to ≤ 0.
+  - The overall level therefore rises by half the average boost. The boosted region is clearly louder than bypass, and the rest stays close to its old level.
+  - **Bass (+6 +6 +2 0 0):** +4.3 dB at 60 and 250 Hz, +0.4 dB at 1 kHz, −1.7 dB at 14 kHz. Overall it is +1.7 dB.
+  - **Measured on pink noise:** the new presets are 0.1–1.6 dB louder than bypass, where the old ones were 4–7.6 dB quieter.
+- **Limiter:** a stereo-linked peak limiter on the output gain.
+  - Threshold −1 dBFS, with instant attack and no look-ahead, so the gain falls on the sample that would exceed the threshold.
+  - Release time constant about 150 ms.
+  - Host test: with every band at +12 dB and full-scale sines, squares, noise, DC and impulses, the output peaks at exactly −1.00 dBFS. The Bass preset on −20 dBFS noise never limits.
+  - `stat: eq … limited N` counts the frames it reduced in each window.
+- **Glide:** the output gain follows its target with a time constant of about 10 ms. When a design replaces another, `State::retarget()` keeps scale × gain continuous before the glide starts.
+  - Switching the EQ on starts at exactly unity overall gain and glides to the new level.
+  - Changing a preset or moving a slider never steps the level.
+- **Per-stage saturation:** each stage clamps its accumulator to ±4× full scale before shifting. It is now a safety net that clips rather than wraps; the limiter makes the output decision.
 
 ## Stereo
 
-Left and right share coefficients and keep separate history. The loop runs one channel at a time over the interleaved int32 chunk with an 8-byte stride, so it needs no deinterleave copy.
+Left and right share coefficients and keep separate history. The loop runs one channel at a time over the interleaved int32 chunk with an 8-byte stride, so it needs no deinterleave copy. The limiter is linked across the two channels, so the stereo image does not shift.
 
 ## State changes
 
-- **Track change or seek:** `requestFlush()` runs on the decoder and calls `eq_flush()`. History is cleared, so a new track never hears the previous track's ringing.
-- **A band switching on:** a band that was at 0 dB, and so not running, starts as the identity filter with x = y = its input history. That input history is the previous running band's output history, or the raw input. Turning a band on mid-song therefore gives no step. The host `seed` test measured a 194 LSB step against a typical 175 LSB.
-- **Coefficient changes on running bands:** history is kept and the DF1 structure absorbs the change. A band leaving the cascade is at ±2 dB at that moment, so the discontinuity is small.
-- **Turning the whole EQ on:** this starts every band from zero history. The pre-gain level step is inherent in turning the EQ on.
+- **Track change or seek:** `requestFlush()` runs on the decoder and calls `eq_flush()`. History is cleared and the output gain is set straight to its target, so a new track never hears the previous track's ringing.
+- **A band starting to run:** a band whose internal gain was 0, and so was not running, starts as the identity filter with x = y = its input history. That input history is the previous running band's output history, or the raw input. The host `seed` test measured a 178 LSB step across a design change, against a typical 360 LSB step.
+- **Coefficient changes on running bands:** history is kept and the DF1 structure absorbs the change.
+- **Turning the whole EQ on:** the overall gain starts at unity and glides (see above).
 
 ## Bypass
 
@@ -101,12 +128,12 @@ The EQ is bypassed when it is switched off or every band is at 0 dB. In bypass `
 - The only cost is one volatile compare per batch of up to 128 frames.
 - No filter, scratch copy or cycle counter runs.
 
-A single band at 0 dB is also skipped, so the cost scales with the number of active bands.
+A band whose internal gain is about 0 dB is also skipped, so the cost scales with the number of running stages.
 
 ## Implementation
 
-- **`eq_core.h`:** pure C++ design, reference stage, history seeding and chunk processing. The host tests use it.
-- **`eq_xtensa.h`:** `cydeq_stage_xtensa`, the windowed-ABI LX6 loop in IRAM. It uses MULSH, MIN/MAX and the zero-overhead LOOP, at 21 instructions per sample per stage. All 14 free registers are used: five coefficients, four history words, the clamp limit, the pointer and three temporaries. The history pointer is spilled to `sp+0` under `entry a1, 48`, the same layout GCC uses for leaf locals, which keeps it clear of the window save area.
+- **`eq_core.h`:** pure C++ design (interaction-corrected), reference stage, output gain and limiter, history seeding and chunk processing. The host tests and `tests/eq_render.cpp` use it.
+- **`eq_xtensa.h`:** `cydeq_stage_xtensa`, the windowed-ABI LX6 loop in IRAM. It uses MULSH, MIN/MAX and the zero-overhead LOOP, at 21 instructions per sample per stage. The output stage (gain glide, limiter and conversion) is C in `eq_core.h` and costs about 45 instructions per frame. It calls a software float divide only on frames the limiter reduces. All 14 free registers are used: five coefficients, four history words, the clamp limit, the pointer and three temporaries. The history pointer is spilled to `sp+0` under `entry a1, 48`, the same layout GCC uses for leaf locals, which keeps it clear of the window save area.
 - **`eq.cpp`/`eq.h`:** publication, the decoder entry points and statistics.
   - It processes in 32-frame chunks through a 256-byte int32 scratch buffer and a 128-byte int16 output buffer.
   - It brackets each chunk with `esp_cpu_get_cycle_count()`.
@@ -142,10 +169,12 @@ A single band at 0 dB is also skipped, so the cost scales with the number of act
   | Preset | Gains, 60 Hz → 14 kHz (dB) |
   |---|---|
   | Flat | 0 0 0 0 0 |
-  | Bass | +8 +4 0 0 0 |
-  | Vocal | −2 0 +4 +4 0 |
-  | Treble | 0 0 0 +4 +8 |
-  | Loudness | +6 +2 0 +2 +6 |
+  | Bass | +6 +6 +2 0 0 |
+  | Vocal | −2 0 +4 +4 +2 |
+  | Treble | 0 0 +2 +6 +6 |
+  | Loudness | +6 +4 0 +2 +6 |
+
+  These values were retuned for small speakers: Bass covers 60 and 250 Hz together, because a speaker such as the JBL Flip 3 barely reproduces 60 Hz.
 
   The Preset button cycles through this list in order. From Custom it goes to Bass. Any preset other than Flat switches the EQ on, and Flat leaves the switch as it is.
 - **Serial:**
@@ -154,5 +183,6 @@ A single band at 0 dB is also skipped, so the cost scales with the number of act
 
 ## Not included
 
-- A frequency-response curve drawing, user-saved presets, shelving bands, per-route EQ settings and a limiter.
-- A board-measured cost of 2%. The modelled cost of the loop alone is about 0.85% of a 240 MHz core per active band, or about 4.3% for five bands. The board figures replace these estimates once the owner captures them.
+- A frequency-response curve drawing, user-saved presets, shelving bands, per-route EQ settings and a manual preamp.
+- Volume-aware headroom, which would use spare headroom below 100% volume instead of the limiter. Volume is applied after the ring, so the cascade's int16 output cannot use that headroom.
+- A board-measured cost of 2%. The modelled cost is about 0.8% of a 240 MHz core per running stage, plus about 0.8% for the output stage and limiter, or roughly 5% with all five stages running. The board figures from the self-test and `stat: eq` replace these estimates.

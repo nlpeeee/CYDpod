@@ -63,4 +63,5 @@ The coupon is the tub's bottom-right corner: the power button, the insert boss a
 - The TF card sits about 3 mm inside the wall. Use a fingernail or a SIM tool; the scoop under the slot helps you grab an ejected card.
 - The slanted button slot leaves 45° edges on the outside. They're cosmetic.
 - Audio: the jack hole reaches the rim, so a 4.5 mm notch at the top of the jack is closed by the lid.
+- P6 has 1 mm of free space on every side for wires. The cell overhangs P6's corner with only 0.4 mm above the housing, so don't route wires over the top.
 - Antenna performance with the audio module over the ESP32 hasn't been tested.

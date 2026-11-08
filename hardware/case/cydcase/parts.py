@@ -203,6 +203,9 @@ def chassis(env):
     # Keep-outs (components and plug grow upward through anything above them only to their top + 0.3).
     for name, (x0, x1, y0, y1, h) in P.COMPONENTS.items():
         part -= box(x0 - 0.3, x1 + 0.3, y0 - 0.3, y1 + 0.3, B["z_back"] - 1, B["z_back"] + h + 0.3)
+    for name, g in P.WIRE_CLEAR.items():          # wire run: g on every side (flattens the (-39,40) tube)
+        x0, x1, y0, y1, h = P.COMPONENTS[name]
+        part -= box(x0 - g, x1 + g, y0 - g, y1 + g, B["z_back"] - 1, B["z_back"] + h + 0.3)
     bx0, bx1, by0, by1, bz0, bz1 = P.BATT_PLUG
     part -= box(bx0 - 0.3, bx1 + 0.3, by0 - 0.3, by1 + 0.3, bz0 - 1, bz1 + 0.3)
     if audio:

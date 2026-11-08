@@ -40,6 +40,8 @@ COMPONENTS = {
 # firmware/cydpod_player/app/board.h). Removing them lowers the cell. Owner decision.
 EXT_IO = ("P6", "CN1", "P3")
 BOARD_MODS = dict(remove_ext_io=False)
+# Free space kept on every side of a connector, PCB to housing top, for a wire run. D (owner 2026-11-08).
+WIRE_CLEAR = dict(P6=1.0)
 
 # Vertical battery plug standing in BATT-conn (E, v4 envelope).
 BATT_PLUG = (28.9, 34.5, -6.0, -2.0, 11.3, 14.3)

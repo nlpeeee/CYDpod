@@ -91,6 +91,13 @@ def build(variant: str, cell_x0=None, cell_y0=-1.6, remove_ext_io=None) -> Envel
     for name, (x0, x1, y0, y1, h) in comps.items():
         parts["C_" + name] = box(x0, x1, y0, y1, b["z_back"], b["z_back"] + h)
     parts["BattPlug"] = box(*P.BATT_PLUG)
+    wire_cuts = []
+    for name, g in P.WIRE_CLEAR.items():
+        if name in comps:
+            x0, x1, y0, y1, h = comps[name]
+            zz = (b["z_back"], b["z_back"] + h)
+            wire_cuts.append(box(x0 - g, x1 + g, y0 - g, y1 + g, *zz))
+            parts["Wire" + name] = wire_cuts[-1] - box(x0, x1, y0, y1, zz[0] - 1, zz[1] + 1)
 
     jack_top = 0.0
     if audio:
@@ -129,7 +136,10 @@ def build(variant: str, cell_x0=None, cell_y0=-1.6, remove_ext_io=None) -> Envel
         else:
             parts["Screw" + tag] = cyl_z(x, y, f["screw_clear_d"], insert_floor, lid_top)
             parts["ScrewHead" + tag] = cyl_z(x, y, f["head_d"] + 0.2, head_seat, lid_top)
-            parts["Tube" + tag] = cyl_z(x, y, f["tube_od"], b["z_back"], lid_under)
+            tube = cyl_z(x, y, f["tube_od"], b["z_back"], lid_under)
+            for w in wire_cuts:
+                tube = tube - w
+            parts["Tube" + tag] = tube
             screws[tag] = round(head_seat - insert_floor, 2)
     if audio:
         x, y = f["lid_screw_audio"]

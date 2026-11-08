@@ -15,6 +15,7 @@
 | Audio module hole | Ø3.2 at (−39, −2.1) from the vendor STEP, coaxial with the PCB hole within 0.1 mm (v4 had −3.7) |
 | Button | Tongue 14 × 6 mm, 1.2 mm thick, hinged at x 34.4, bending in the layer plane. Top slot 0.5 mm (bridge); bottom slot at 45° so the free tongue's underside is self-supporting. Nub at x 23.9 with a 45° underside, 0.15 mm off SW1; Z 7.0–9.6 and 4 mm wide to absorb ±1 mm. Raised oval pad (8 × 6 mm base, 45° sides, 0.3 mm dish). Estimated press force about 4 N (PETG flexure ~2.6 N + SW1 1.6 N); root strain about 0.8% |
 | Ports | USB-C 12.4 × 7.0 R2.5 with 0.5 mm 45° lead-in; TF 17.1 × 3.0 with an upward-facing finger scoop under it; audio jack Ø6.4 with lead-in, opened to the rim above its 45° points |
+| P6 wire run | ≥ 1.0 mm free on every side of the P6 housing, from the PCB to the housing top (owner request 2026-11-08). Toward the top wall it's 1.25 mm, toward CN1 1.0 mm. The chassis tube at (−39, 40) is flattened on its P6 side, leaving 0.8 mm of tube wall there. Checked as the `WireP6` keep-out in both overlap checks |
 | Screen | v4/reference window (60 × 47 at the land) with 0.6 mm 45° chamfer + 0.6 mm land; glass pocket 71 × 51 × 1.2; right-hand bosses trimmed to the glass-pocket footprint |
 
 ## Checks (final run)
@@ -29,7 +30,7 @@ Logs are under `.tools/logs/` in the worktree.
 | Overhang-check controls | 13 mm cantilever T fails; 8 mm bridge passes; 30 mm bridge fails |
 | Exported print STLs, edge manifoldness | 0 non-manifold edges in all 8 files; Bambu Studio `--info` reports `manifold = yes` |
 | Bambu Studio 2.x CLI slice, stock A1 0.4 / 0.20 mm Standard / Bambu PETG Basic, supports off | All 8 parts `Success.` with no warning (`case-slice-final.log`) |
-| Ray-cast wall thickness (tub, 4000 samples) | p1 0.83 mm. Thin readings are only the intended 0.6 mm window land and the 45° edges where the slanted button slot meets the wall faces. Lid min 0.55 (counterbore floors). Chassis ≥ 1.0 |
+| Ray-cast wall thickness (tub, 4000 samples) | p1 0.83 mm. Thin readings are only the intended 0.6 mm window land and the 45° edges where the slanted button slot meets the wall faces. Lid min 0.55 (counterbore floors). Chassis ≥ 1.0, except 0.8 at the flattened (−39, 40) tube beside P6 |
 
 The real slicer caught one problem my checker missed. The first spherical thumb dish around the TF slot left a lip that Bambu flagged as a "floating cantilever". I localised it by slicing regions, then replaced the dish with an upward-facing scoop. The checker's thresholds were tightened against controls during the run: bridges must be supported at both ends and ≤ 20 mm.
 

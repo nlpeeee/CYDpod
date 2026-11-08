@@ -1,6 +1,6 @@
 # Trimmed Bluedroid for CYDpod
 
-Status: candidate, 2026-11-08. Owner decision: start the memory work by trimming Bluedroid.
+Status: released in 0.5.3 (2026-11-08). Owner decision: start the memory work by trimming Bluedroid.
 
 ## Why
 
@@ -41,7 +41,9 @@ Unchanged: ESP32-A2DP, codecs, PCM ring, core assignments, and every non-Bluetoo
 
 Both builds pin their version strings (`version.txt` in the project and the ESP-IDF tree), so git state never shows up as a difference. The libraries, generated linker scripts and `sdkconfig.h` files that differ between the two builds are the complete set of artefacts the Bluetooth options affect. `tools/bluedroid/make-libs.py` copies Espressif's 3.3.10 package and replaces only those artefacts with the trimmed builds. Everything else stays Espressif's original binary.
 
-The patched package is kept beside the stock one (`esp32-libs/3.3.10.stock`). `dependencies.lock.json` still names stock 3.3.10, so other builds and the 0.5.2 build kit are unaffected until the board accepts this.
+The patched package is kept beside the stock one (`esp32-libs/3.3.10.stock`).
+
+Status 0.5.3: accepted on the owner's board and made the default. `dependencies.lock.json` pins the overlay (`bluedroidOverlay`), the 0.5.3 build kit applies it, and `tools/check.ps1` refuses stock libraries unless `-StockBluetoothLibs` is passed.
 
 ## Pass criteria
 

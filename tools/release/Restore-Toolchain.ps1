@@ -19,6 +19,8 @@ if ((Get-FileHash -LiteralPath $kit -Algorithm SHA256).Hash -ne '774e51c9bf1617d
 if ($LASTEXITCODE -ne 0) { throw 'Could not extract the W328C toolchain archive.' }
 & python -I (Join-Path $PSScriptRoot 'Restore-A2DP.py') $sourceRoot
 if ($LASTEXITCODE -ne 0) { throw 'Could not restore the pinned A2DP library overlay.' }
+& python -I (Join-Path $PSScriptRoot 'Restore-Bluedroid.py') $sourceRoot
+if ($LASTEXITCODE -ne 0) { throw 'Could not apply the pinned trimmed-Bluedroid overlay.' }
 
 $root = $sourceRoot.Replace('\', '/')
 $arduinoData = "$root/.deps/arduino" | ConvertTo-Json -Compress
@@ -37,4 +39,4 @@ build_cache:
   path: $arduinoCache
 "@
 [IO.File]::WriteAllText((Join-Path $sourceRoot '.tools/arduino-cli.yaml'), $config + "`n")
-Write-Output 'PASS W328C 0.5.1 toolchain restored.'
+Write-Output 'PASS W328C 0.5.3 toolchain restored (trimmed Bluedroid).'

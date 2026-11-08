@@ -589,5 +589,48 @@
         "CYD_UPLOADER"
       ]
     }
-  ]
+  ],
+  "bluedroidOverlay": {
+    "name": "esp32-libs-cydpod-bt",
+    "base": "esp32-libs 3.3.10",
+    "archive": "esp32-libs-3.3.10-cydpod-bt.zip",
+    "sha256": "01e45ae8d0cfc0599af8c0b7e0e993286e3ef9469dad7b8a57c62b6ef581f90b",
+    "espIdf": "v5.5.4 735507283d",
+    "toolchain": "esp-14.2.0_20260121",
+    "defconfigSha256": "e3e955e9d0e76ae4e95d57b055fa6d4e290be252d8834b396b04bb65099439b5",
+    "patches": {
+      "0001-avrc-ct-forward-volume-interim.patch": "fa5ade4d70626c44ba773a11afd2219d64d88004820f3fbb5bf199c0bd653da6"
+    },
+    "files": {
+      "dio_qspi/include/sdkconfig.h": {
+        "stock": "1ce600ddcbc213ab68d518f5150d99fa26a325e1992cfbcd521860de5e65dc72",
+        "cydpod": "0cfb200ce8b99684a3695cd24281ae2694530018bb548f65117f941c7959a368"
+      },
+      "lib/libbt.a": {
+        "stock": "d500529efd1d391492a4e5798f39f722e3bf0bbc359ff7c819bce56b1ca7141f",
+        "cydpod": "e5288350dfb0f9720d46459debc3f51a3c3dca185319378c5489620f4ce8b73d"
+      },
+      "lib/libesp_hid.a": {
+        "stock": "7607bb8dca65771d8e3cf31c64c25e8e4006cf391d635df9982a4ab4f2b20cb3",
+        "cydpod": "8ac6fc414cbf8593a97d35f18835f828a5f32b57df9a8246205266be1409034c"
+      },
+      "lib/libprotocomm.a": {
+        "stock": "8a07bbc9e30b20266e6b3ad7bdb30ce9f133820b7e3e84589b941e82ce6f4bc4",
+        "cydpod": "36ec781f944cc08966bdfe40e48ac165b4764f0618297467af6e63b05be5c6bd"
+      },
+      "qio_qspi/include/sdkconfig.h": {
+        "stock": "d10e864388ee37191e43a605bef5b99033cc51e939aa5425169d231647735b6b",
+        "cydpod": "9cadcf81671b2f9e66f82db8bc3e989bb871cb8c54d8e7af394a0c15055148e5"
+      },
+      "sdkconfig": {
+        "stock": "725f5c5eef387946183f54d3d793fb6dc12f242b401688f83ab21e7c5a5ee853",
+        "cydpod": "cfaa214ea98fb8869a6db48ba710cb202cf4a5902ff8458e7b0b60b7a3b7af93"
+      },
+      "versions.txt": {
+        "stock": "fc010fecb82fd91a41c000613d209244912a80dee09a0a78452af18b5f01ceaf",
+        "cydpod": "bb7499b490313c75f8c6fd6636c75b969c172e6c2679ee3b665baa3a8292b388"
+      }
+    },
+    "howBuilt": "tools/bluedroid/README.md"
+  }
 }

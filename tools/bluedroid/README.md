@@ -27,8 +27,11 @@ py -3.12 -m venv .tools/idf-venv
 powershell -NoProfile -File tools/bluedroid/build-libs.ps1
 python tools/bluedroid/make-libs.py E:/dev/CYDpod E:/dev/CYDpod/.tools/esp32-libs-cydpod-bt
 powershell -NoProfile -File tools/bluedroid/use-libs.ps1 trim
-powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel bluedroid-trim
-powershell -NoProfile -File tools/bluedroid/use-libs.ps1 stock
+python tools/bluedroid/make-overlay.py E:/dev/CYDpod E:/dev/CYDpod/.tools/release-0.5.3
 ```
 
-`dependencies.lock.json` still names Espressif's stock package. Normal builds and the 0.5.2 build kit use stock until the trimmed stack is accepted on the board.
+From 0.5.3 the trimmed package is the default:
+- `tools/check.ps1` refuses to build on stock libraries unless you pass `-StockBluetoothLibs` (after `use-libs.ps1 stock`).
+- `make-overlay.py` packs the seven changed files as `esp32-libs-3.3.10-cydpod-bt.zip` and writes their stock and trimmed hashes to `bluedroidOverlay` in `dependencies.lock.json`.
+- The release build kit carries that archive. `tools/release/Restore-Bluedroid.py` checks it and applies it when the kit is restored.
+- A checkout set up with `tools/setup.ps1` gets Espressif's package. Apply the overlay from the build kit, or rebuild it with the steps above.

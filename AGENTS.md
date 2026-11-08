@@ -14,7 +14,7 @@ The maintained checkout is `E:\dev\CYDpod`, backed by the private `nlpeeee/CYDpo
 
 - Reuse the existing codecs, Bluetooth, I2S, display and filesystem paths. Preserve pinned dependency provenance and third-party notices. Keep caches, downloads, binaries and release archives out of Git.
 - Run the cheapest checks relevant to the actual changes, once on the final code. Do not repeat passing checks or hardware tests the user has already validated unless a new change or unresolved concern justifies it. Keep long output in `.tools/logs/`; quote PASS/FAIL evidence.
-- Firmware compile-only default: Windows PowerShell 5.1 `tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing`. Run host audio checks and firmware compilation sequentially: both restage MiniAAC.
+- Firmware compile-only default: Windows PowerShell 5.1 `tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -PcmRingFrames 6144` (needs the trimmed Bluedroid, `tools/bluedroid/use-libs.ps1 trim`). Run host audio checks and firmware compilation sequentially: both restage MiniAAC.
 - Preserve the exact accepted firmware when cutting a documentation/package-only release. Record both the firmware source commit and release source tag/commit, and verify all flash regions and archive checksums.
 - Do not turn compile or host-test success into a claim of hardware qualification. Actual AirPods Pro 2, wired output and timed playback/scrolling measurements remain separate acceptance evidence.
 - Identify the actual CYD before opening, resetting or flashing a serial port. Never infer a COM port from enumeration alone, and never format user media automatically.

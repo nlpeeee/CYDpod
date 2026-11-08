@@ -278,15 +278,94 @@ const char* title(){return pageTitle(page());}
 // (whole-glyph "..." when too wide). Non-ASCII keeps the existing UTF-8 strip path, with its
 // native strip height. `y` is the vertical centre of capitals for the sized faces.
 using cydtext::Face;
+bool marqueeHoldsStrip=false; // the Now Playing marquee is scrolling the loaded UTF-8 strip
 void playerText(const char* value,int x,int y,Face face,int width,uint16_t fg,uint16_t bg,int align=cydtext::HAlignCentre){
   if(!listPress&&!thumbDrag&&!flingActive&&!cydtext::ascii(value)){ui_text(String(value),x,y,uint8_t(3+align),fg,bg,width);return;}
-  titles_release(); // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip.
+  // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip -- unless the marquee is
+  // scrolling it, so the once-a-second time labels do not force an SD reload every second.
+  if(!marqueeHoldsStrip)titles_release();
   char label[128],fitted[128];cydlib::copyText(label,value);
   for(char* c=label;*c;++c)if((unsigned char)*c<32)*c=' ';
   // A title too wide for the large bold face steps down to the compact bold face before any ellipsis.
   if(face==Face::Title&&cydtext::width(face,label)>width)face=Face::TitleCompact;
   cydtext::fit(face,label,fitted,sizeof(fitted),width);
   cydtext::draw(face,fitted,x,y,align,fg);
+}
+// Now Playing marquee. A title, artist or album too wide for the screen scrolls through one lap,
+// ONE label at a time, then rests with its usual ellipsis while the next overflowing label takes a
+// turn. Each step repaints one band opaquely: no heap and no sprite; ASCII glyphs come from flash,
+// UTF-8 labels from the single strip titles.cpp already holds. Steps yield to a low audio ring.
+enum : uint8_t {MarqueeIdle,MarqueeArm,MarqueeLead,MarqueeScroll}; // Arm: the hold starts on the first tick's clock
+struct Marquee{uint8_t overflow=0,label=0,phase=MarqueeIdle;bool strip=false;int16_t offset=0,period=0;uint32_t key=0,at=0;};
+Marquee marquee;
+const char* marqueeText(int label){return label==0?playingInfo.title:label==1?playingInfo.artist:playingInfo.album;}
+int marqueeY(int label){return (label==0?L::PlayerTitleY:label==1?L::PlayerArtistY:L::PlayerAlbumY)+L::playerTextOffset(tft.height());}
+uint16_t marqueeInk(int label){return label?theme().dim:theme().text;}
+// A title only overflows once even the compact bold face does not fit, so that is the face it scrolls in.
+Face marqueeFace(int label){return label?Face::Label:Face::TitleCompact;}
+int marqueeWidth(){return tft.width()-2*L::PlayerTextInset;}
+// The rows a label owns: its face's ink (or the strip), cut at the midpoints to its neighbours.
+Rect marqueeBand(int label,bool strip){
+  const int cy=marqueeY(label),dy=L::playerTextOffset(tft.height());
+  int above=TITLE_STRIP_H/2,below=TITLE_STRIP_H-TITLE_STRIP_H/2;
+  if(!strip)cydtext::rowExtent(marqueeFace(label),above,below);
+  const int top=max(cy-above,label?(marqueeY(label-1)+cy)/2:L::PlayerTextTop+dy);
+  const int bottom=min(cy+below,label<2?(cy+marqueeY(label+1))/2:L::PlayerTextTop+L::PlayerTextH+dy);
+  return {L::PlayerTextInset,top,marqueeWidth(),bottom-top};
+}
+void marqueeReset(){marquee=Marquee{};marqueeHoldsStrip=false;}
+// After playerTrack drew the three labels: which overflow. A UTF-8 label's width is its strip's,
+// read while that label's strip is still the loaded one.
+void marqueeMeasure(int label){
+  const char* text=marqueeText(label);int full=0;
+  if(cydtext::ascii(text))full=cydtext::width(marqueeFace(label),text);
+  else if(titles_loaded())full=titles_width();
+  if(full>marqueeWidth())marquee.overflow|=uint8_t(1u<<label);
+}
+void marqueeNext(uint32_t now){
+  const int from=marquee.label;int next=from;
+  for(int i=1;i<=3;++i){const int at=(from+i)%3;if(marquee.overflow&(1u<<at)){next=at;break;}}
+  // Only one overflowing UTF-8 label: keep its strip through the hold instead of re-reading it.
+  marqueeHoldsStrip=marquee.strip&&next==from;
+  marquee.label=uint8_t(next);marquee.phase=MarqueeLead;marquee.offset=0;marquee.at=now+L::MarqueeHoldMs;
+}
+void marqueeStart(){
+  if(!marquee.overflow)return;
+  marquee.label=marquee.overflow&1?0:marquee.overflow&2?1:2;
+  marquee.phase=MarqueeArm;
+}
+// Back to the resting draw: clear the band, then exactly what playerTrack shows.
+void marqueeRest(int label){
+  const Rect b=marqueeBand(label,marquee.strip);
+  tft.fillRect(b.x,b.y,b.w,b.h,theme().bg);
+  playerText(marqueeText(label),tft.width()/2,marqueeY(label),label?Face::Label:Face::Title,marqueeWidth(),marqueeInk(label),theme().bg);
+}
+void marqueeTick(uint32_t now){
+  if(marquee.phase==MarqueeIdle)return;
+  if(marquee.phase==MarqueeArm){marquee.phase=MarqueeLead;marquee.at=now+L::MarqueeHoldMs;return;}
+  // Never wait longer than one hold, whichever clock armed it (enter() ticks with millis()).
+  if(int32_t(marquee.at-now)>L::MarqueeHoldMs)marquee.at=now+L::MarqueeHoldMs;
+  if(int32_t(now-marquee.at)<0)return;
+  // Background paint backs off: a low ring, a seek preview or a finger on the glass all come first.
+  if(audio_bufferLow()||seekPreview||touch_isDown()){marquee.at=now+L::MarqueeStepMs;return;}
+  const int label=marquee.label;const char* text=marqueeText(label);
+  if(marquee.phase==MarqueeLead){
+    marquee.strip=!cydtext::ascii(text);
+    if(marquee.strip){
+      if(!titles_load(String(text))){marquee.strip=false;marqueeNext(now);return;}
+      marquee.key=titles_loadedKey();marquee.period=int16_t(titles_width()+L::MarqueeGap);marqueeHoldsStrip=true;
+    }else marquee.period=int16_t(cydtext::width(marqueeFace(label),text)+L::MarqueeGap);
+    marquee.offset=0;marquee.phase=MarqueeScroll;
+  }else if(marquee.strip&&titles_loadedKey()!=marquee.key){
+    // Another UTF-8 label replaced the strip (a header or output-chip redraw): rest and move on.
+    marqueeRest(label);marqueeNext(now);return;
+  }
+  marquee.offset=int16_t(marquee.offset+L::MarqueeStepPx);
+  if(marquee.offset>=marquee.period){marqueeRest(label);marqueeNext(now);return;}
+  const Rect b=marqueeBand(label,marquee.strip);
+  if(marquee.strip)titles_draw(b,marquee.offset,L::MarqueeGap,marqueeInk(label),theme().bg);
+  else cydtext::drawWindow(marqueeFace(label),text,marquee.offset,L::MarqueeGap,b.x,b.y,b.w,b.h,marqueeY(label),marqueeInk(label),theme().bg);
+  marquee.at=now+L::MarqueeStepMs;
 }
 // "24 / 85", degrading to "24/85" and then "24" rather than ever cutting a number in half.
 void queuePosition(int pos,int length,int x,int y,int width,uint16_t fg,uint16_t bg){
@@ -736,13 +815,16 @@ void playerTrack(){
 #endif
   const int dy=L::playerTextOffset(tft.height()),width=tft.width()-2*L::PlayerTextInset;
   tft.fillRect(0,L::PlayerTextTop,tft.width(),L::PlayerTextH+dy,p.bg);
-  playerText(playingInfo.title,tft.width()/2,L::PlayerTitleY+dy,Face::Title,width,p.text,p.bg);
-  playerText(playingInfo.artist,tft.width()/2,L::PlayerArtistY+dy,Face::Label,width,p.dim,p.bg);
-  playerText(playingInfo.album,tft.width()/2,L::PlayerAlbumY+dy,Face::Label,width,p.dim,p.bg);
+  marqueeReset();
+  playerText(playingInfo.title,tft.width()/2,L::PlayerTitleY+dy,Face::Title,width,p.text,p.bg);marqueeMeasure(0);
+  playerText(playingInfo.artist,tft.width()/2,L::PlayerArtistY+dy,Face::Label,width,p.dim,p.bg);marqueeMeasure(1);
+  playerText(playingInfo.album,tft.width()/2,L::PlayerAlbumY+dy,Face::Label,width,p.dim,p.bg);marqueeMeasure(2);
+  marqueeStart();
   shownProgress=shownSecond=-1;shownSerial=audio_trackSerial();playerHeader();
 }
 void playerTick(uint32_t now){
   if(shownVolume!=audio_volume())playerVolume();
+  if(shownSerial==audio_trackSerial())marqueeTick(now); // a new track first repaints through playerTrack
   if(lastPlayer&&now-lastPlayer<250&&!seekPreview)return;lastPlayer=now;
   const Palette& p=theme();if(shownSerial!=audio_trackSerial())playerTrack();if(shownPlaying!=audio_isPlaying())playerTransport();
   const uint32_t pos=seekPreview?seekMs:audio_positionMs(),duration=audio_durationMs();
@@ -832,7 +914,7 @@ void enter(){
 void leave(){
   finishFling(inputNow());claimPending=false;
   flushScrollLines();
-  seekPreview=false;armVolumeSave();flushSettings();dirty=0;titles_release();
+  seekPreview=false;armVolumeSave();flushSettings();dirty=0;marqueeReset();titles_release();
   // ui_go calls leave after a navigation push/pop: current() is the destination.
   // Retain only for this source page or its Player (including mini-player return).
   const Page* source=page().mode==Mode::SourceSongs?&page():page().mode==Mode::Player?

@@ -185,6 +185,7 @@ bool titles_load(const String& text) {
 }
 
 bool titles_loaded() { return strip != nullptr; }
+uint32_t titles_loadedKey() { return strip ? stripKey : 0; }
 int  titles_width()  { return stripW; }
 
 void titles_draw(const Rect& box, int scrollX, int gap, uint16_t fg, uint16_t bg) {

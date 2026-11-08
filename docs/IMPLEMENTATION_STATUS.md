@@ -1,3 +1,7 @@
+## 0.5.4 release checkpoint — 8 November 2026
+
+Version 0.5.4 is 0.5.3 plus scrolling Now Playing labels (one overflowing title, artist or album at a time, +16 B static RAM) and a corrected transmit power readback: `esp_bredr_tx_power_set` is asynchronous, so CYDpod now waits up to ~20 ms before logging the level. Firmware compiled from 2a7b1a0 on the 0.5.3 trimmed Bluedroid; the release image itself is compile-checked, not yet board-run. See [0.5.4 release notes](releases/0.5.4.md).
+
 ## 0.5.3 release checkpoint — 8 November 2026
 
 Version 0.5.3 makes a trimmed Bluedroid the default. It is rebuilt from ESP-IDF v5.5.4 without BLE, BLE Mesh, BluFi or HFP, runs the radio Classic only, and gives the BTC/BTU tasks 4 KB stacks; free heap after Bluetooth starts rises from about 34 KB to 84 KB. The release also adds robust speaker volume sync, adopts the speaker's own volume on connect (Bluedroid patch 0001), and enlarges the PCM ring to 6,144 frames. The exact board-tested candidate 4 firmware (6026ec7) is preserved. The +6 dBm transmit power still reads back +3 dBm and is under investigation. See [0.5.3 release notes](releases/0.5.3.md).

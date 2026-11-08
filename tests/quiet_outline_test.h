@@ -110,7 +110,10 @@ static void screens(){
   const Rect r=L::transport<Rect>(320,240,1);
   tft.resetStreamCounts();SCREEN_CLASSIC.press(PRESS_DOWN,r.cx(),r.cy());transaction(1,80*52,52,false);
   tft.resetStreamCounts();SCREEN_CLASSIC.press(PRESS_UP,r.cx(),r.cy());transaction(1,80*52,52,false);
-  tft.resetStreamCounts();positionMs+=1000;ui_tick(clockNow+=1000);transaction(0,0,0,false);
+  tft.resetStreamCounts();positionMs+=1000;ui_tick(clockNow+=1000);
+  // The overflowing album now scrolls (Now Playing marquee): its text band may stream; no icon cell may.
+  {size_t band=0;for(const auto& v:tft.windows)if(v.x==L::PlayerTextInset&&v.w==320-2*L::PlayerTextInset&&v.y>=L::PlayerTextTop&&v.y+v.h<=L::PlayerTextTop+L::PlayerTextH)++band;
+   check(band==tft.windows.size(),("time tick streams no icon cell, only the marquee text band: windows "+std::to_string(tft.windows.size())+", band "+std::to_string(band)).c_str());}
   classic_hostTrackInfo(nullptr);
   std::cout<<"CY90_DIRTY_OK: idle/time ticks stream 0 icon cells; Play touch-down and release stream exactly 1 cell each; production player PNGs rotations 0/1/3\n";
 }

@@ -162,6 +162,8 @@ void touch_position(int& x,int& y){if(useTracker)tracker.landing(x,y);else{x=tx;
 void touch_livePosition(int& x,int& y){if(useTracker)tracker.live(x,y);else{x=tx;y=ty;}}
 bool touch_rawPosition(int& x,int& y){if(!useTracker||!tracker.down())return false;tracker.raw(x,y);return true;}
 bool titles_load(const String&){return false;}
+uint32_t titles_loadedKey(){return 0;}
+bool titles_loaded(){return false;}
 void titles_release(){}
 int titles_width(){return 0;}
 void titles_draw(const Rect&,int,int,uint16_t,uint16_t){}
@@ -350,6 +352,46 @@ static void playerRedrawRegression(){
   }
   tft.setRotation(0);home();
   std::cout<<"PASS player right edge: cache invalidation, Shuffle and Repeat preserve pixels in four rotations and all repeat modes\n";
+}
+// Now Playing marquee: an overflowing ASCII title holds, then scrolls in its own band (artist and
+// album untouched), then returns to its ellipsis; short labels never scroll; a low ring pauses it.
+void classic_hostTrackInfo(const cydlib::Record*);
+static void marqueeRegression(){
+  namespace L=cydclassic::layout;
+  static cydlib::Record rec{};
+  const unsigned savedRotation=tft.getRotation();const uint8_t savedSetting=g_settings.rotation;
+  strcpy(rec.title,"An Extremely Long Song Title That Cannot Possibly Fit On One Player Line");
+  strcpy(rec.artist,"Short Artist");strcpy(rec.album,"Album");
+  classic_hostTrackInfo(&rec);
+  for(unsigned rotation:{1u,0u}){
+    tft.setRotation(rotation);g_settings.rotation=uint8_t(rotation);toPlayer();ui_redraw();
+    const int w=tft.width(),dy=L::playerTextOffset(tft.height());
+    auto band=[&](int y0,int y1){std::vector<uint16_t> v;for(int y=y0;y<y1;++y)for(int x=0;x<w;++x)v.push_back(tft.pixel(x,y));return v;};
+    const int titleTop=L::PlayerTextTop+dy,titleBottom=(L::PlayerTitleY+L::PlayerArtistY)/2+dy;
+    const auto rest=band(titleTop,titleBottom),below=band(titleBottom,L::PlayerTextTop+L::PlayerTextH+dy);
+    check(shown(rec.title)&&!label(rec.title),"overflowing title rests as whole glyphs plus ...");
+    tft.labels.clear();ui_tick(clockNow+=L::MarqueeHoldMs/2);
+    check(!label(rec.title)&&band(titleTop,titleBottom)==rest,"marquee holds before it scrolls");
+    for(int i=0;i<40;++i)ui_tick(clockNow+=L::MarqueeStepMs);
+    const auto moving=band(titleTop,titleBottom);
+    check(label(rec.title)&&moving!=rest,"after the hold the full title scrolls through the title band");
+    check(band(titleBottom,L::PlayerTextTop+L::PlayerTextH+dy)==below,"artist and album rows are never painted by the title marquee");
+    testBufferLow=true;for(int i=0;i<20;++i)ui_tick(clockNow+=L::MarqueeStepMs);
+    check(band(titleTop,titleBottom)==moving,"a low audio ring pauses the marquee");
+    testBufferLow=false;
+    auto ellipsis=[&](){const std::string full=rec.title;for(const auto& l:tft.labels)if(l.size()>3&&l.compare(l.size()-3,3,"...")==0&&full.compare(0,l.size()-3,l,0,l.size()-3)==0)return true;return false;};
+    tft.labels.clear();
+    for(int i=0;i<600&&!ellipsis();++i)ui_tick(clockNow+=L::MarqueeStepMs); // one lap is ~(text+gap)/2 steps
+    check(ellipsis(),"after one lap the title rests with its ellipsis again");
+    tft.labels.clear();for(int i=0;i<80;++i)ui_tick(clockNow+=L::MarqueeStepMs);
+    check(label(rec.title),"marquee keeps cycling the only overflowing label after its hold");
+  }
+  strcpy(rec.title,"Short Title");
+  tft.setRotation(1);g_settings.rotation=1;toPlayer();ui_redraw();
+  tft.labels.clear();for(int i=0;i<100;++i)ui_tick(clockNow+=L::MarqueeStepMs);
+  check(!label("Short Title")&&!label("Short Artist"),"labels that fit never scroll");
+  classic_hostTrackInfo(nullptr);tft.setRotation(savedRotation);g_settings.rotation=savedSetting;
+  std::cout<<"PASS Now Playing marquee: hold, scroll in band, ring-low pause, rest, short labels static\n";
 }
 static void nowPlayingRegression(){
   namespace L=cydclassic::layout;
@@ -1763,6 +1805,7 @@ int main(){try{
   compactChromeRegression();
   playerRedrawRegression();
   nowPlayingRegression();
+  marqueeRegression();
   textq::run();
   iconq::run();
   touchRegression();

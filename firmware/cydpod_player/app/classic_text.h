@@ -22,4 +22,12 @@ int fit(Face face,const char* s,char* out,size_t capacity,int maxW);
 // Draws the glyph runs of s (already fitted) with the cap-height centre at cy, transparently.
 // hAlign: 0 x is the left edge, 1 centre, 2 right edge. Returns the drawn width.
 int draw(Face face,const char* s,int x,int cy,int hAlign,uint16_t fg);
+// Rows any printable glyph of the face can ink around the cap-height centre cy:
+// from cy-above (inclusive) to cy+below (exclusive).
+void rowExtent(Face face,int& above,int& below);
+// Marquee window: paints the box (x,y,w,h) opaquely, one scanline at a time from a stack row, with
+// s repeated every width(s)+gap px, starting scrollX px into it. cy is the cap-height centre, as for
+// draw(). The box must lie on the panel and be at most MaxWindowW wide. No heap, no sprite.
+constexpr int MaxWindowW=320;
+void drawWindow(Face face,const char* s,int scrollX,int gap,int x,int y,int w,int h,int cy,uint16_t fg,uint16_t bg);
 }

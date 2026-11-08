@@ -32,6 +32,7 @@ bool titles_prepareAll(TitleProgressFn progress);
 // Load the strip for `text` into RAM. False if none cached.
 bool titles_load(const String& text);
 bool titles_loaded();
+uint32_t titles_loadedKey(); // identifies the loaded strip; 0 when none is loaded
 void titles_release(); // drop the last non-ASCII label on context changes
 int  titles_width();
 

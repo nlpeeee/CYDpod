@@ -40,6 +40,8 @@ constexpr int PlayerFavouriteInset=90,PlayerOptionsInset=48,PlayerHeaderIcon=16;
 // Text rows are the vertical centre of capitals (classic_text.h); 12 pt bold title, 9 pt artist and album.
 constexpr int PlayerTitleY=52,PlayerArtistY=76,PlayerAlbumY=97;
 constexpr int PlayerTextH=70,PlayerTextTop=40,PlayerTextInset=14;
+// Now Playing marquee: an overflowing label holds, scrolls ~33 px/s through one full lap, then rests.
+constexpr int MarqueeHoldMs=1500,MarqueeStepMs=60,MarqueeStepPx=2,MarqueeGap=32;
 constexpr int PlayerTimeBottom=105,PlayerTimeClearBottom=112,PlayerTimeClearH=18;
 constexpr int ProgressInset=14,ProgressBottom=124,ProgressH=8,KnobR=8,KnobBorder=2;
 constexpr int SeekInset=6,SeekBottom=140,SeekH=40,TransportBottom=92,ControlH=52;

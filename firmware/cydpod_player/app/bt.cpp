@@ -88,8 +88,14 @@ static void applyTxPower(){
   const bool on=power_lever(PWR_BTTX);
   if(txApplied==int8_t(on))return;
   if(!txDefRead&&esp_bredr_tx_power_get(&txDefMin,&txDefMax)==ESP_OK)txDefRead=true;
-  const esp_err_t rc=esp_bredr_tx_power_set(txDefMin,on?ESP_PWR_LVL_P6:txDefMax);
+  const esp_power_level_t want=on?ESP_PWR_LVL_P6:txDefMax;
+  const esp_err_t rc=esp_bredr_tx_power_set(txDefMin,want);
+  // The set only queues a message to the controller task (libbtdm_app
+  // bredr_txpwr_set -> btdm_task_post); the levels change when that task runs
+  // bredr_txpwr_set_inter. Reading back at once returns the old values, so
+  // wait (at most ~20 ms) for the controller to apply it.
   esp_power_level_t mn,mx;esp_bredr_tx_power_get(&mn,&mx);
+  for(int i=0;rc==ESP_OK&&mx!=want&&i<20;++i){delay(1);esp_bredr_tx_power_get(&mn,&mx);}
   Serial.printf("bt: tx power rc=%d level min=%d max=%d (default %d..%d, level 6 = +6 dBm)\n",
                 int(rc),int(mn),int(mx),int(txDefMin),int(txDefMax));
   txApplied=int8_t(on);
@@ -175,10 +181,9 @@ class CydSource : public BluetoothA2DPSource {
   // A background page ended without a link: counted, never shown as an error.
   void pageFailed(const char* operation){POLICY(pageFailed(millis()));Serial.printf("bt: page failed: %s\n",operation);}
  protected:
-  // BR/EDR transmit power only takes effect when set between controller enable
-  // and Bluedroid's profile start (esp_bredr_tx_power_set notes). Set from
-  // bt_tick it returned OK yet read back unchanged (owner logs: max=5, +3 dBm).
-  // Also runs on the Sleep restart, which comes through here too.
+  // BR/EDR transmit power is set between controller enable and Bluedroid's
+  // profile start (esp_bredr_tx_power_set notes), so the first page already
+  // uses it. Also runs on the Sleep restart, which comes through here too.
   bool bt_start() override {
     const bool ok=BluetoothA2DPSource::bt_start();
     if(ok){txApplied=-1;applyTxPower();}

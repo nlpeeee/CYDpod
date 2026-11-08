@@ -3,17 +3,18 @@ from itertools import combinations
 
 # Pairs that touch or nest by design (zero volume is still required where it matters).
 ALLOWED = {
-    ("PCB", "Screw"), ("PCB", "ScrewShort"),            # shanks pass the Ø3.2 holes; Ø3.4 keep-out bites 0.1 mm
-    ("Screw", "Tube"), ("ScrewShort", "ScrewHeadShort"),
+    ("PCB", "Screw"), ("PCB", "ScrewShort"), ("Module", "ScrewShort"),            # shanks pass the Ø3.2 holes; Ø3.4 keep-out bites 0.1 mm
+    ("Screw", "Tube"), ("ScrewShort", "ScrewHeadShort"), ("Screw", "ScrewHead"), ("ScrewLid", "ScrewHeadLid"),
+    ("ScrewHead", "Tube"),
     ("Cell", "CellSwellFoam"),
     ("C_TF", "SDTravel"),                                # the card enters the socket
 }
 # Solids that leave the cavity on purpose.
-LEAVES_CAVITY = ("Screw", "ScrewShort", "SDTravel", "Module")   # module: jack nose enters the wall bore
+LEAVES_CAVITY = ("Screw", "SDTravel", "Module")   # module: jack nose enters the wall bore
 
 
 def _kind(name):
-    for prefix in ("ScrewHeadShort", "ScrewShort", "Screw", "Tube"):
+    for prefix in ("ScrewHeadShort", "ScrewHeadLid", "ScrewHead", "ScrewShort", "ScrewLid", "Screw", "Tube"):
         if name.startswith(prefix):
             return prefix
     return name

@@ -100,7 +100,7 @@ All three parts print with flat faces on the bed and every overhang at or under 
 |---|---|---|
 | 0 Measure | Filled measurement table, cell bought | All values above recorded in `docs/research/case-v5-measurements.md` |
 | 1 Port | build123d parameter module + envelope model | Envelope overlaps match v4's zero-overlap set |
-| 2 Design | Tub, chassis, lid, flexure, both variants | Geometry and printability checks pass |
+| 2 Design | Tub, chassis, lid, flexure, both variants | Geometry and printability checks pass. **Done 2026-11-07**: `docs/research/case-v5-phase2.md` |
 | 3 Coupons | Coupon STLs, print, adjust | Button clicks, insert holds, lid seats |
 | 4 Full print | v5 parts, renders, notes | Assembled with real cell; fit and feel accepted by the user |
 | 5 Release | `releases/<version>/hardware/v5*`, notes | Packaged with checksums like v4 |

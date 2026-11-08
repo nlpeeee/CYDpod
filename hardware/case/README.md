@@ -33,5 +33,14 @@ Each variant writes `hardware/case/out/<variant>/envelope.step` and `report.json
 | `cydcase/envelope.py` | Phase 1 keep-out model: PCB, rear components, battery plug, WeAct module (header pins stripped), cell + swelling/foam, M3 screw shanks and chassis tubes, SD-card path, cavity |
 | `cydcase/checks.py` | Pairwise overlap volumes and cavity containment |
 | `build.py` | CLI, STEP export, report |
+| `cydcase/parts.py` | Phase 2 printed parts: Tub, Chassis, Lid, audio Spacer, and the test Coupon |
+| `cydcase/printcheck.py` | STL overhang/bridge check (with an end-support probe) and ray-cast wall thickness |
+| `build_parts.py` | Builds both variants, checks overlaps and printability, exports print-orientation STLs to `out/<variant>/print/` and named copies to `out/print-ready/`, prints `CASE_V5_PARTS_PASS/FAIL` |
+| `sections.py`, `render.py`, `render_sections.py` | Section slabs and Blender previews under `out/<variant>/renders/` |
 
-Printed parts (tub, chassis, lid) come in Phase 2 and must clear the envelope solids.
+Printing, parts list and assembly: [PRINTING.md](PRINTING.md). Phase 2 evidence: `docs/research/case-v5-phase2.md`.
+
+```powershell
+.tools/venv-case/Scripts/python -I hardware/case/build_parts.py
+& 'C:\Program Files\Blender Foundation\Blender 5.1\blender.exe' -b --python-exit-code 1 -P hardware/case/render.py -- hardware/case/out/no-audio
+```

@@ -54,7 +54,7 @@ MODULE = dict(
     step=Path(r"E:\dev\research\i2s-module\repo\Hardware\WeAct-I2SEarphoneModuleV1 3D.step"),  # S
     # v4 placement: x' = y + x0, y' = -x + y0, z' = z + face_z (rotate -90 about Z).
     x=-24.26, y=18.3, face_z=13.1, board_t=1.59144,  # S/V4
-    hole=(-39.0, -3.7),                                # V4
+    hole=(-39.0, -2.1), hole_d=3.2,                    # S (STEP): coaxial with the PCB hole (-39,-2) within 0.1
     jack_x=-29.6858, jack_z=15.753, jack_d=6.4,        # S
     jack_top_z=18.21,                                  # V4
     strip_headers=True,                                # D: pins removed, wires soldered to pads
@@ -78,19 +78,26 @@ STACK = dict(
 
 CASE = dict(
     wall=1.6,                                  # D
-    cavity_x=43.25,                            # v4: PCB + 0.25 per side
-    cavity_y0=-7.75, cavity_y1=45.25,          # v4 + 1.0 at the top edge for the cell and edge roll
-    cavity_r=1.85,                             # PCB corner R1.6 + 0.25
-    outer_r=6.5,                               # D target plan radius
+    cavity_x=43.6,                             # D: PCB + 0.6 per side, lets the corner radius grow to 2.8
+    cavity_y0=-7.75, cavity_y1=45.25,          # v4 + 1.0 at the top edge
+    cavity_r=2.8,                              # D: tangent-clears the PCB R1.6 corners + 0.25
+    wall_edge=1.4,                             # D: wall at the front chamfer and at the rim
+    bulge=0.6,                                 # D: barrel bulge at mid-height (sine profile)
+    front_chamfer=1.0,                         # D: 45 deg, bed side
     pocket_floor_z=2.4,                        # R
 )
 
 FASTENERS = dict(
     screw_d=3.0, screw_clear_d=3.4,            # M3 (owner 2026-11-07)
-    head_d=5.7, head_h=1.65,                   # ISO 7380 button head
+    head_d=6.0, head_h=1.2,                    # D: low/wafer head M3 (<= 6.0 x 1.2)
+    cbore_d=6.4, cbore_depth=1.25,             # D: lid counterbore
+    btn_head_d=5.7, btn_head_h=1.65,           # ISO 7380, audio short corner
+    spacer_od=6.0,                             # D: audio spacer between the PCB rear and the module
     insert_len=4.0, insert_hole_d=4.0,         # M3 x 4 short insert
+    insert_floor_z=0.8,                        # D: hole bottom in the tub boss (bezel 0.8 below)
+    boss_d=7.5,                                # D: tub seat boss
     tube_od=6.4,                               # D: chassis screw tube
-    chassis_t=1.5,                             # D: chassis frame above the PCB rear face
+    lid_screw_audio=(-39.0, 28.0),             # D: 4th lid screw (audio) into a chassis insert
 )
 
 # TF card straight-path proxy (v4) and ports.

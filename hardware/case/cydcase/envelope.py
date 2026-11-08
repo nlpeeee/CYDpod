@@ -114,20 +114,29 @@ def build(variant: str, cell_x0=None, cell_y0=-1.6, remove_ext_io=None) -> Envel
     lid_top = lid_under + P.STACK["lid"]
 
     # Fasteners: shank keep-out from the insert floor to the lid top; chassis tubes over the PCB.
-    insert_floor = b["z_front"] - f["insert_len"]
+    insert_floor = f["insert_floor_z"]
+    head_seat = lid_top - f["cbore_depth"]
     short_corner = tuple(b["holes"][0]) if audio else None    # (-39,-2) sits under the module
     screws = {}
     for x, y in b["holes"]:
         tag = f"{x:+.0f}{y:+.0f}"
         if (x, y) == short_corner:
-            head_z0 = b["z_back"] + f["chassis_t"]
+            # One M3 clamps the module, a printed spacer and the PCB into the tub insert.
+            head_z0 = P.MODULE["face_z"]
             parts["ScrewShort" + tag] = cyl_z(x, y, f["screw_clear_d"], insert_floor, head_z0)
-            parts["ScrewHeadShort" + tag] = cyl_z(x, y, f["head_d"] + 0.4, head_z0, head_z0 + f["head_h"] + 0.2)
+            parts["ScrewHeadShort" + tag] = cyl_z(x, y, f["btn_head_d"] + 0.4, head_z0, head_z0 + f["btn_head_h"] + 0.2)
             screws[tag] = round(head_z0 - insert_floor, 2)
         else:
             parts["Screw" + tag] = cyl_z(x, y, f["screw_clear_d"], insert_floor, lid_top)
+            parts["ScrewHead" + tag] = cyl_z(x, y, f["head_d"] + 0.2, head_seat, lid_top)
             parts["Tube" + tag] = cyl_z(x, y, f["tube_od"], b["z_back"], lid_under)
-            screws[tag] = round(lid_top - 0.3 - insert_floor, 2)   # head sits in a recess 0.3 below the top skin
+            screws[tag] = round(head_seat - insert_floor, 2)
+    if audio:
+        x, y = f["lid_screw_audio"]
+        parts["ScrewLid"] = cyl_z(x, y, f["screw_clear_d"], lid_under - 5.9, lid_top)
+        parts["ScrewHeadLid"] = cyl_z(x, y, f["head_d"] + 0.2, head_seat, lid_top)
+        screws["lid4"] = round(head_seat - (lid_under - 5.9), 2)
+    env.z = dict(lid_under=lid_under, lid_top=lid_top, head_seat=head_seat, insert_floor=insert_floor)
 
     parts["SDTravel"] = box(*P.SD_TRAVEL)
 

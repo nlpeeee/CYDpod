@@ -115,17 +115,44 @@ A single band at 0 dB is also skipped, so the cost scales with the number of act
 
 ## Settings and UI
 
-- **Storage:** `Settings::eqOn` (NVS `eqOn`, uchar, off by default) and `Settings::eqGain[5]` (NVS `eqGain`, 5-byte blob, flat by default). `settings_save()` saves them with the other keys. A blob of the wrong size is ignored and stays flat.
-- **Navigation:** Settings → Playback has a fifth row, Equalizer, which shows On or Off and opens the Equalizer page.
-- **Equalizer page:** it reuses the Settings list rows, following the Display page's Brightness −/+ pattern.
-  - Row 0: Equalizer On/Off.
-  - Ten rows of `60 Hz −`, `60 Hz +` … `14 kHz +`, each showing its band's gain, for example `+4 dB`.
-  - Reset to flat.
-  - Editing a band switches the EQ on, so the change is audible. Each tap saves and calls `eq_apply()`.
-- **Serial:** `stat: eq on … bands … pregainCdB … kernel xtensa|c++ frames … cycPerFrame … cpu …%` prints every report window and shows the measured cost on the decoder core.
+- **Storage:** `Settings::eqOn` (NVS `eqOn`, uchar, off by default) and `Settings::eqGain[5]` (NVS `eqGain`, 5-byte blob, flat by default). `settings_save()` saves them with the other keys. A blob of the wrong size is ignored and stays flat. Presets are not stored: the name shown is derived from the gains.
+- **Navigation:** two rows open the Equalizer page, and both show On or Off.
+  - Settings → Playback, fifth row.
+  - Now Playing → Options, fifth row.
+
+  In landscape, both lists show four rows, so the Equalizer row is reached by scrolling.
+- **Equalizer page (`Mode::Equalizer`):** a browse page with the standard header and the mini-player. Its geometry lives in `classic_layout.h` (`eqControl`, `eqColumn`, `eqTrack`, `eqStepAt`/`eqStepY`), and paint and input share those rectangles.
+  - **Buttons:** a strip of three under the header.
+    - **EQ On/Off:** filled when on.
+    - **Preset:** shows the matching preset name, or Custom.
+    - **Reset:** sets every band flat.
+
+    The buttons act on release, with the same press highlight as the Home tiles.
+  - **Sliders:** five equal columns, one per band.
+    - Each column shows the gain at the top (for example `+4`), a vertical track running from −12 dB at the bottom to +12 dB at the top with a 0 dB tick, a knob, and the band label (`60`, `250`, `1k`, `4k`, `14k`).
+    - Pressing or dragging anywhere in a column sets that band to the nearest 2 dB step and repaints only that column.
+    - When the EQ is off, the tracks are drawn in the disabled colour, but they still respond.
+  - **Applying changes:**
+    - Editing a band switches the EQ on.
+    - `eq_apply()` runs only when the snapped value changes.
+    - NVS is written once, on release.
+    - A slider drag never triggers swipe-back.
+- **Presets (`cydeq::Presets`):**
+
+  | Preset | Gains, 60 Hz → 14 kHz (dB) |
+  |---|---|
+  | Flat | 0 0 0 0 0 |
+  | Bass | +8 +4 0 0 0 |
+  | Vocal | −2 0 +4 +4 0 |
+  | Treble | 0 0 0 +4 +8 |
+  | Loudness | +6 +2 0 +2 +6 |
+
+  The Preset button cycles through this list in order. From Custom it goes to Bass. Any preset other than Flat switches the EQ on, and Flat leaves the switch as it is.
+- **Serial:**
+  - `cmd: eq toggle|preset|reset` for each button press.
+  - `stat: eq on … bands … pregainCdB … kernel xtensa|c++ frames … cycPerFrame … cpu …%` every report window. This shows the measured cost on the decoder core.
 
 ## Not included
 
-- A visual curve or slider page. Rows were chosen to reuse the existing list paths and add no new drawing code.
-- Presets, shelving bands, per-route EQ settings and a limiter.
+- A frequency-response curve drawing, user-saved presets, shelving bands, per-route EQ settings and a limiter.
 - A board-measured cost of 2%. The modelled cost of the loop alone is about 0.85% of a 240 MHz core per active band, or about 4.3% for five bands. The board figures replace these estimates once the owner captures them.

@@ -101,5 +101,53 @@ The EQ allocates no heap. The 98-byte loop lives in IRAM. Most of the flash grow
 ## Not run or not established
 
 - **Board checks:** audio quality, the self-test result, the measured cycles and `idle1` with the EQ on and off, Bluetooth and wired playback, and the Settings → Playback → Equalizer page on the panel.
-- **Classic UI host suite:** `tests/classic_ui_test.cpp` gained an `eq_apply` stub and the new `Classic.Equalizer` page in its reachable-page set. Its runner (`tests/build_catalog.cmd`) needs MSVC `cl`, which this machine lacks, so it was not run. The firmware compile covers `classic_screen.cpp`.
+- **Classic UI host suite under MSVC:** `tests/build_catalog.cmd` needs MSVC `cl`, which this machine lacks. The g++ build of the suite, described below, stands in for it.
+- **Wired UI variant (`classic_ui_test_wired`):** not run on the host. The firmware compile covers the wired image.
 - **Full host-media suites:** these were not rerun because `-SkipHostMedia` was set. The decoder and codec paths are unchanged apart from the `pushFrames` wrapper.
+
+## Graphical Equalizer page and presets
+
+This round replaced the list rows with a slider page (`Mode::Equalizer`). It also added a fifth Options row, Equalizer, and five presets in `cydeq::Presets`. The UI is described in the spec under Settings and UI.
+
+**`tests/build_eq.sh` (WSL):** PASS. It now also checks that every preset designs, sits on the 2 dB grid, matches back to itself and cycles in order, and that Custom gains are detected and cycle to Bass. The line from `.tools/logs/eq-host.log`:
+
+~~~
+PASS: eq core (response vs float, full-scale headroom, bit-exact bypass, band seeding, presets)
+~~~
+
+**Classic UI suite:** MSVC is not installed, so I built `tests/classic_ui_test.cpp` and the same sources as `build_catalog.cmd` with WSL g++ 14.2. I used `-DCYDPOD_CATALOG_HOST` and the catalog shim, and made the fixture with the cmd file's own ffmpeg command. I ran it with `CYDPOD_UI_CONTINUE=1`. The log is `.tools/logs/eq-ui-gcc-run.log`.
+
+The new regression passed:
+
+~~~
+PASS EQ-5BAND Equalizer page: Playback and Options entry, sliders, presets, Reset, On/Off, no swipe-back from sliders, all rotations
+~~~
+
+It covers the following in all four rotations:
+
+- the page opens from Playback and from Options;
+- the top of the 60 Hz track gives +12 dB and switches the EQ on, saves on release, and the page shows `+12`, `EQ On` and `Custom`;
+- the bottom of the 1 kHz track gives −12 dB;
+- Preset goes from Custom to Bass, then Vocal;
+- Reset sets every band flat;
+- On/Off switches the EQ off;
+- a sideways drag across a slider does not navigate back.
+
+The same g++ build fails 12 other assertions. These are the golden geometry and dialog tables, Refresh/Upload confirmations, BT-A disconnect, a refused Bluetooth cancel, and marquee hold. I built the PR's previous commit (2928669) the same way, in a temporary worktree I have since removed. It fails exactly the same 12 assertions. They come from the g++ build of an MSVC-targeted suite, not from this change. The MSVC run remains open.
+
+**Compile:** `tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -PcmRingFrames 6144 -BuildLabel eq5band-ui` passed for both images. It printed `PASS: compile-only checks completed; no device commands were run.` and `PASS single pool` (0x7868).
+
+| Image | Static RAM | Flash | Δ flash vs first EQ build | Δ vs v0.5.4 |
+|---|---:|---:|---:|---|
+| Bluetooth | 80,524 B | 1,317,493 B | +1,456 B | +856 B RAM, +17,932 B flash |
+| Wired | 80,524 B | 1,317,613 B | +1,468 B | +848 B RAM, +17,912 B flash |
+
+Static RAM did not change from the first EQ build. The page keeps two bytes of press state, which fit in existing padding.
+
+**Board (owner):**
+
+- In portrait and landscape, drag each slider and check the knob, the fill and the gain label.
+- Press On/Off, Preset and Reset.
+- While a track plays, open the page from Now Playing → Options and hear the change.
+- Confirm that a sideways drag on a slider never goes back.
+- Read `stat: eq` with all five bands active.

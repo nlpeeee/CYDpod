@@ -35,10 +35,8 @@ constexpr int DisplayRows=CYD_TOUCH_CAPACITIVE?4:5;
 // Landscape -> landscape flipped -> portrait -> portrait flipped, so every rotation can be reached
 // and left again (rotation 1 is the W328C's upright landscape, board.h).
 const char* const RotationName[4]={"Portrait","Landscape","Portrait flipped","Landscape flipped"};
-// EQ: On/Off, a - and + row per band, then Reset to flat.
-constexpr int EqRows=2+2*cydeq::Bands;
-const char* const EqBandName[cydeq::Bands]={"60 Hz","250 Hz","1 kHz","4 kHz","14 kHz"};
-String eqGainLabel(int db){return db>0?String("+")+String(db)+" dB":String(db)+" dB";}
+// EQ-5BAND: band labels under the Equalizer page's sliders (cydeq::CentreHz).
+const char* const EqBandName[cydeq::Bands]={"60","250","1k","4k","14k"};
 uint8_t nextRotation(uint8_t rotation){static const uint8_t next[4]={2,3,1,0};return next[rotation&3];}
 void resetPin(){g_settings.webPin="000000";settings_save();}
 struct Row {
@@ -240,6 +238,10 @@ void applySearch(uint32_t now){
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44;
 constexpr int TileBase=-50; // Home tile i is target TileBase-i
 constexpr int Back=-10,Home=-11,Thumb=-12,Now=-14,Prev=-20,Play=-21,Next=-22,Options=-24,Slider=-25,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
+// Equalizer page: band columns are EqBandBase-band; the three buttons have their own targets.
+constexpr int EqBandBase=-60,EqToggle=-70,EqPreset=-71,EqReset=-72;
+int eqBandOf(int target){return target<=EqBandBase&&target>EqBandBase-cydeq::Bands?EqBandBase-target:-1;}
+int eqButtonOf(int target){return target==EqToggle?0:target==EqPreset?1:target==EqReset?2:-1;}
 Page miniReturn{};uint8_t miniReturnDepth=0;uint32_t miniPressUntil=0;bool miniQueued=false;
 Page& page(){return navigation.current();}
 bool browse(){return page().mode!=Mode::Player&&page().mode!=Mode::Keyboard;}
@@ -474,6 +476,56 @@ void paintTile(int i,bool pressed){
   ui_text(String(names[i]),r.cx(),r.y+r.h-L::TileLabelBottom,MC_DATUM,ink,face,r.w-2*L::TileTextInset);
 }
 void paintTiles(){for(int i=0;i<L::TileCount;++i)paintTile(i,false);}
+// EQ-5BAND Equalizer page: On/Off, Preset and Reset buttons over five vertical sliders.
+// Paint and input share classic_layout.h's eqControl/eqColumn/eqTrack rectangles.
+constexpr int EqSteps=(cydeq::MaxDb-cydeq::MinDb)/cydeq::StepDb;
+int eqPressed=-1;bool eqDragged=false;
+void eqButton(int i,bool pressed){
+  const Palette& p=theme();const Rect r=L::eqControl<Rect>(tft.width(),i);
+  const bool primary=i==0&&g_settings.eqOn;
+  const uint16_t face=pressed?p.pressed:primary?p.btnActive:p.band,ink=pressed?p.onPressed:primary?p.onControlActive:p.text;
+  tft.fillRoundRect(r.x,r.y,r.w,r.h,L::EqControlRadius,face);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::EqControlRadius,p.outline);
+  const int preset=cydeq::presetMatch(g_settings.eqGain);
+  const char* label=i==0?(g_settings.eqOn?"EQ On":"EQ Off"):i==1?(preset<0?"Custom":cydeq::Presets[preset].name):"Reset";
+  ui_text(String(label),r.cx(),r.cy(),MC_DATUM,ink,face,r.w-2*L::TileTextInset);
+}
+void eqColumn(int band){
+  const Palette& p=theme();const int w=tft.width(),h=tft.height();
+  const Rect c=L::eqColumn<Rect>(w,h,band,cydeq::Bands),t=L::eqTrack<Rect>(w,h,band,cydeq::Bands);
+  const int gain=cydeq::clampGain(g_settings.eqGain[band]);const bool on=g_settings.eqOn;
+  const uint16_t fill=on?p.bar:p.disabled;
+  tft.fillRect(c.x,c.y,c.w,c.h,p.bg);
+  ui_text(gain>0?String("+")+String(gain):String(gain),t.cx(),c.y+L::EqLabelH/2,MC_DATUM,on?p.text:p.dim,p.bg,c.w);
+  tft.fillRoundRect(t.x,t.y,t.w,t.h,t.w/2,p.barBg);
+  const int zero=L::eqStepY(EqSteps/2,t.y,t.h,EqSteps),knob=L::eqStepY((gain-cydeq::MinDb)/cydeq::StepDb,t.y,t.h,EqSteps);
+  if(knob!=zero)tft.fillRect(t.x,min(knob,zero),t.w,abs(knob-zero),fill);
+  tft.drawFastHLine(t.cx()-L::EqZeroHalf,zero,2*L::EqZeroHalf+1,p.outline);
+  tft.fillCircle(t.cx(),knob,L::KnobR,p.bg);tft.fillCircle(t.cx(),knob,L::KnobR-L::KnobBorder,fill);
+  ui_text(String(EqBandName[band]),t.cx(),c.y+c.h-L::EqLabelH/2,MC_DATUM,p.dim,p.bg,c.w);
+}
+void eqPaint(){for(int i=0;i<L::EqControls;++i)eqButton(i,false);for(int b=0;b<cydeq::Bands;++b)eqColumn(b);}
+// Press or drag in a column: snap to the 2 dB grid. Editing a band switches the EQ on, so the
+// change is heard. Coefficients are redesigned only when the value changes; NVS is written on release.
+void eqBandAt(int band,int y){
+  const Rect t=L::eqTrack<Rect>(tft.width(),tft.height(),band,cydeq::Bands);
+  const int gain=cydeq::MinDb+L::eqStepAt(y,t.y,t.h,EqSteps)*cydeq::StepDb;
+  const bool wasOn=g_settings.eqOn;
+  if(gain==g_settings.eqGain[band]&&wasOn)return;
+  g_settings.eqGain[band]=int8_t(gain);g_settings.eqOn=true;eqDragged=true;
+  eq_apply(g_settings.eqOn,g_settings.eqGain);
+  if(wasOn){eqColumn(band);eqButton(1,false);}else eqPaint();
+}
+void eqRelease(){if(eqDragged){settings_save();eqDragged=false;}}
+// Buttons act on release. A preset other than Flat switches the EQ on; Flat keeps the switch.
+void eqActivate(int button){
+  if(button==0)g_settings.eqOn=!g_settings.eqOn;
+  else if(button==1){const int next=cydeq::presetNext(g_settings.eqGain);
+    for(int b=0;b<cydeq::Bands;++b)g_settings.eqGain[b]=cydeq::Presets[next].gain[b];
+    if(next)g_settings.eqOn=true;}
+  else for(int8_t& gain:g_settings.eqGain)gain=0;
+  Serial.printf("cmd: eq %s\n",button==0?"toggle":button==1?"preset":"reset");
+  settings_save();eq_apply(g_settings.eqOn,g_settings.eqGain);eqPaint();
+}
 // Fixed text scratch keeps ASCII painting allocation-free; UTF-8 retains the legacy strip loader.
 void rowText(const char* value,int y,int width,uint16_t fg,uint16_t bg){
   if(!listPress&&!thumbDrag&&!flingActive&&!cydtext::ascii(value)){
@@ -618,8 +670,8 @@ int rowCount(){
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
-    case Mode::Settings:return 6;case Mode::System:return 4;case Mode::Playback:return 5;case Mode::Equalizer:return EqRows;case Mode::Display:return DisplayRows;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 2 : 0);
-    case Mode::Options:return 4;case Mode::Refresh:return 2;
+    case Mode::Settings:return 6;case Mode::System:return 4;case Mode::Playback:return 5;case Mode::Display:return DisplayRows;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 2 : 0);
+    case Mode::Options:return 5;case Mode::Refresh:return 2;
     default:return 0;
   }
 }
@@ -656,13 +708,7 @@ void fetchRow(int at){
       if(at==OUT_SELECTABLE_COUNT){setRow(r,g_settings.headphoneLimit?"Headphone limit: On":"Headphone limit: Off",String("Digital output limit (wired only)"));break;}
 #endif
       if(at==OUT_SELECTABLE_COUNT+1){setRow(r,"Switch back to Bluetooth if there is no sound",String(),false,true);break;}const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
-    case Mode::Equalizer:
-      if(at==0)setRow(r,"Equalizer",String(g_settings.eqOn?"On":"Off"));
-      else if(at<=2*cydeq::Bands){const int band=(at-1)/2;
-        setRow(r,(String(EqBandName[band])+((at-1)%2?" +":" -")).c_str(),eqGainLabel(g_settings.eqGain[band]));}
-      else setRow(r,"Reset to flat",String("All bands 0 dB"));
-      break;
-    case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):String(),at==3);break;}
+    case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output","Equalizer"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):at==4?String(g_settings.eqOn?"On":"Off"):String(),at>=3);break;}
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
     default:break;
   }
@@ -896,7 +942,7 @@ void enter(){
   rowUtf8.reserve(128);
 #endif
   finishFling(inputNow());claimPending=false;
-  seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
+  seekPreview=false;playerPressed=tilePressed=eqPressed=-1;eqDragged=false;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
   motionPainted=motionFetched=false;motionOffset=page().offsetPx;motionDirection=0;
   if(page().mode==Mode::SourceSongs){
     if(!previewMatches(page().source)){
@@ -915,6 +961,7 @@ void enter(){
   if(page().mode==Mode::Keyboard){keyboardPaint();searchShownCount=searchShownProgress=-1;}
   else if(page().mode==Mode::Player){playerTrack();playerTransport(true);playerBottom();lastPlayer=0;playerTick(millis());}
   else if(page().mode==Mode::Home)paintTiles();
+  else if(page().mode==Mode::Equalizer)eqPaint();
   else if(page().mode==Mode::Message){
     // Bounded, word-wrapped ASCII status text; music labels use cached UTF-8 strips.
     tft.setTextColor(theme().text,theme().bg);tft.setTextFont(2);tft.setTextWrap(true);tft.setCursor(14,80);
@@ -1098,17 +1145,9 @@ void activate(int at){
         if(next==g_settings.outRoute)break;
         if(!output_switch(next)){message("Unable to change output. Try again.");break;}
         invalidate();header();}break;
-    case Mode::Equalizer:
-      if(at==0)g_settings.eqOn=!g_settings.eqOn;
-      else if(at<=2*cydeq::Bands){
-        // Editing a band switches the EQ on, so the change is heard.
-        int8_t& gain=g_settings.eqGain[(at-1)/2];
-        gain=int8_t(cydeq::clampGain(gain+((at-1)%2?cydeq::StepDb:-cydeq::StepDb)));g_settings.eqOn=true;
-      }else for(int8_t& gain:g_settings.eqGain)gain=0;
-      settings_save();eq_apply(g_settings.eqOn,g_settings.eqGain);invalidate();break;
     case Mode::Options:
       if(at==0)toggleFavourite();
-      else if(at==1)cycleShuffle();else if(at==2)cycleRepeat();else show(Mode::Output);break;
+      else if(at==1)cycleShuffle();else if(at==2)cycleRepeat();else if(at==3)show(Mode::Output);else show(Mode::Equalizer);break;
     case Mode::Refresh:
       if(at==1)back();else if(storage_refreshNextBoot()){g_settings.lastTrack=audio_currentTrack();g_settings.lastPath=storage_trackPath(audio_currentTrack());g_settings.lastPosMs=audio_positionMs();settings_save();ESP.restart();}
       else message("Cannot write refresh request. Check SD card.");break;
@@ -1142,6 +1181,11 @@ int targetAt(int x,int y){
     return L::mini<Rect>(tft.width(),tft.height(),0).contains(x,y)?Play:L::mini<Rect>(tft.width(),tft.height(),2).contains(x,y)?Next:Now;
   }
   if(page().mode==Mode::Home){for(int i=0;i<L::TileCount;++i)if(L::tile<Rect>(tft.width(),tft.height(),i).contains(x,y))return TileBase-i;return -1;}
+  if(page().mode==Mode::Equalizer){
+    for(int i=0;i<L::EqControls;++i)if(L::eqControl<Rect>(tft.width(),i).contains(x,y))return i==0?EqToggle:i==1?EqPreset:EqReset;
+    for(int b=0;b<cydeq::Bands;++b)if(L::eqColumn<Rect>(tft.width(),tft.height(),b,cydeq::Bands).contains(x,y))return EqBandBase-b;
+    return -1;
+  }
   if(browse()&&L::strip<Rect>(tft.width(),tft.height()).contains(x,y))return count>rows()?Thumb:-1;
   const int local=y-L::HeaderH;const int at=(local+page().offsetPx)/L::RowH;
   return local>=0&&local<rows()*L::RowH&&at<count?at:-1;
@@ -1170,7 +1214,7 @@ void transportDown(int target){
   lastPlayer=0; // repaint the transport and track now, not on the next 250 ms tick
 }
 // Swipe-back is a shortcut for the Back button on browse pages, started in the body (not header, mini-player or strip).
-bool swipeable(){return browse()&&navigation.depth>1&&gesture.target!=Slider&&gesture.y>=L::HeaderH&&gesture.y<L::miniY(tft.height())&&gesture.x<tft.width()-L::StripW;}
+bool swipeable(){return browse()&&navigation.depth>1&&gesture.target!=Slider&&eqBandOf(gesture.target)<0&&gesture.y>=L::HeaderH&&gesture.y<L::miniY(tft.height())&&gesture.x<tft.width()-L::StripW;}
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
@@ -1197,6 +1241,7 @@ bool press(PressPhase phase,int x,int y){
     }
     if(page().mode==Mode::Keyboard&&hit>=KeyBase){editQuery(hit);gesture.claimed=true;return true;}
     if(hit==Slider){volumeChanged=false;volumeAt(x);return true;}
+    if(eqBandOf(hit)>=0){eqBandAt(eqBandOf(hit),y);return true;}
     if(hit==Seek){
       seekCancelled=!audio_canSeek();seekPreview=!seekCancelled;
       seekDuration=audio_durationMs();seekSerial=audio_trackSerial();seekPreviewAt(x);return true;
@@ -1207,12 +1252,14 @@ bool press(PressPhase phase,int x,int y){
       if(gesture.claimed)return true;
     }
     if(tileOf(hit)>=0){tilePressed=tileOf(hit);paintTile(tilePressed,true);return false;}
+    if(eqButtonOf(hit)>=0){eqPressed=eqButtonOf(hit);eqButton(eqPressed,true);return false;}
     highlight=hit>=0&&page().mode!=Mode::Keyboard?hit-topRow():-1;if(highlight>=0&&highlight<rows()&&cachedRow(hit).absolute==hit&&cachedRow(hit).valid)paintRow(highlight,true);
     return false;
   }
   if(page().mode==Mode::Keyboard&&gesture.target>=KeyBase)return true; // captured character: no slide/release/hold repeat
   if(phase==PRESS_MOVE){
     if(gesture.target==Slider){volumeAt(x);return true;}
+    if(eqBandOf(gesture.target)>=0){eqBandAt(eqBandOf(gesture.target),y);return true;}
     if(gesture.target==Seek){
       if(abs(y-gesture.y)>cydclassic::Gesture::SlopFar||seekSerial!=audio_trackSerial())seekCancelled=true;
       if(!seekCancelled)seekPreviewAt(x);return true;
@@ -1234,6 +1281,7 @@ bool press(PressPhase phase,int x,int y){
     // Show what a release would do: lit while within the slop, plain once outside, lit again on return.
     const bool inside=!gesture.claimed&&!gesture.strayed&&within(x,y,cydclassic::Gesture::SlopNear);
     if(tileOf(gesture.target)>=0){const int want=inside?tileOf(gesture.target):-1;if(want!=tilePressed){tilePressed=want;paintTile(tileOf(gesture.target),inside);}return gesture.claimed||gesture.strayed;}
+    if(eqButtonOf(gesture.target)>=0){const int want=inside?eqButtonOf(gesture.target):-1;if(want!=eqPressed){eqPressed=want;eqButton(eqButtonOf(gesture.target),inside);}return gesture.claimed||gesture.strayed;}
     if(page().mode==Mode::Player){const int pressed=inside?gesture.target:-1;if(pressed!=playerPressed){playerPressed=pressed;playerTransport();playerHeader();playerOutput();}return claimed;}
     if(!inside&&highlight>=0){paintRow(highlight,false);dimmed=highlight;highlight=-1;}
     else if(inside&&highlight<0&&dimmed>=0){highlight=dimmed;dimmed=-1;paintRow(highlight,true);}
@@ -1279,6 +1327,7 @@ bool press(PressPhase phase,int x,int y){
         viewportPending=true;thumbUntil=inputNow()+L::ThumbHoldMs;gesture.claimed=true;ready=-1;highlight=dimmed=-1;return true;}
     }
     if(gesture.target==Slider){armVolumeSave();gesture.target=-1;return true;}
+    if(eqBandOf(gesture.target)>=0){eqRelease();gesture.target=-1;return true;}
     if(gesture.target==Seek){
       seekPreview=false;shownProgress=shownSecond=-1;lastPlayer=0;
       if(!seekCancelled&&within(x,y,cydclassic::Gesture::SlopNear)&&seekSerial==audio_trackSerial()){
@@ -1290,6 +1339,7 @@ bool press(PressPhase phase,int x,int y){
     if(browse()&&(gesture.target==Play||gesture.target==Next)&&int32_t(screenNow-miniPressUntil)>=0){playerPressed=-1;miniPlayer();}
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next)return true; // already acted on touch-down
     if(tilePressed>=0){const int lit=tilePressed;tilePressed=-1;if(page().mode==Mode::Home)paintTile(lit,false);}
+    if(eqPressed>=0){const int lit=eqPressed;eqPressed=-1;if(page().mode==Mode::Equalizer)eqButton(lit,false);}
     if(swipeable()&&gesture.swipeBack(x,y)){ready=-1;highlight=dimmed=-1;back();return true;}
     const bool ok=gesture.activate(within(x,y,cydclassic::Gesture::SlopNear));
     ready=ok?gesture.target:-1;
@@ -1308,6 +1358,7 @@ void touch(TouchEvent ev,int,int){
   if(page().mode==Mode::Keyboard&&target!=Back&&target!=-1){if(target==KeyDone){if(searchSession.pending||searchSession.state==SearchState::Error)scheduleSearch(0);back();}else editQuery(target);return;}
   if(target>=0){activate(target);return;}
   if(tileOf(target)>=0){openTile(tileOf(target));return;}
+  if(eqButtonOf(target)>=0){eqActivate(eqButtonOf(target));return;}
   switch(target){
     case Back:back();break;
     case Home:classic_home();ui_go(SCR_CLASSIC);break;

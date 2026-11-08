@@ -134,7 +134,8 @@ static int restartSaves=0,limitSaves=0,limitRequests=0;
 static bool limitSaveAllowed=true,appliedLimit=true;
 bool settings_setHeadphoneLimit(bool on){++limitSaves;if(!limitSaveAllowed)return false;g_settings.headphoneLimit=on;return true;}
 void wired_setHeadphoneLimit(bool on){++limitRequests;appliedLimit=on;}
-int eqApplies=0;void eq_apply(bool,const int8_t*){++eqApplies;}
+static int eqApplies=0;static bool eqLastOn=false;static int8_t eqLast[5]={};
+void eq_apply(bool on,const int8_t* g){++eqApplies;eqLastOn=on;for(int b=0;b<5;++b)eqLast[b]=g[b];}
 static uint8_t liveRoute=OUT_BT;
 static bool savedParked=false;
 bool settings_saveOutputResume(uint8_t){++restartSaves;savedParked=liveRoute==OUT_NONE&&!playing;return saveAllowed;}
@@ -704,6 +705,39 @@ static void tapSettingsRow(int idx){
   tapRow(idx-classic_top());
 }
 static void tapBackButton(){tap(cydclassic::layout::HeaderBackX,cydclassic::layout::HeaderTextY);}
+// EQ-5BAND: the Equalizer page from Settings > Playback and from Now Playing > Options, in every
+// rotation: slider press, Preset cycling, Reset, On/Off, and no swipe-back from a slider drag.
+static void equalizerRegression(){
+  namespace L=cydclassic::layout;
+  auto same=[](const int8_t* a,std::initializer_list<int> b){int i=0;for(int v:b)if(a[i++]!=v)return false;return true;};
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);g_settings.rotation=uint8_t(rotation);
+    g_settings.eqOn=false;for(int8_t& g:g_settings.eqGain)g=0;
+    toPlayback();tapSettingsRow(4);
+    check(shown("Equalizer")&&label("EQ Off")&&label("Flat")&&label("Reset")&&label("60")&&label("14k"),"Equalizer page from Playback");
+    const int w=tft.width(),h=tft.height(),depth=int(classic_depth());
+    const Rect top=L::eqTrack<Rect>(w,h,0,5);
+    int applies=eqApplies,saves=settingsSaves;
+    tap(top.cx(),top.y);
+    check(g_settings.eqOn&&g_settings.eqGain[0]==12&&eqApplies>applies&&eqLastOn&&eqLast[0]==12,"top of the 60 Hz slider sets +12 dB and switches the EQ on");
+    check(settingsSaves>saves&&label("+12")&&label("EQ On")&&label("Custom"),"slider release saves and repaints");
+    const Rect mid=L::eqTrack<Rect>(w,h,2,5);
+    tap(mid.cx(),mid.y+mid.h);check(g_settings.eqGain[2]==-12,"bottom of the 1 kHz slider sets -12 dB");
+    const Rect preset=L::eqControl<Rect>(w,1),reset=L::eqControl<Rect>(w,2),toggle=L::eqControl<Rect>(w,0);
+    tap(preset.cx(),preset.cy());check(same(g_settings.eqGain,{8,4,0,0,0})&&label("Bass")&&eqLast[0]==8,"Preset from Custom selects Bass");
+    tap(preset.cx(),preset.cy());check(same(g_settings.eqGain,{-2,0,4,4,0})&&label("Vocal"),"Preset cycles to Vocal");
+    tap(reset.cx(),reset.cy());check(same(g_settings.eqGain,{0,0,0,0,0})&&g_settings.eqOn&&label("Flat"),"Reset sets every band flat");
+    tap(toggle.cx(),toggle.cy());check(!g_settings.eqOn&&!eqLastOn&&label("EQ Off"),"On/Off switches the EQ off");
+    const Rect c=L::eqColumn<Rect>(w,h,0,5);
+    dragRun(c.cx(),c.y+c.h/2,{{c.cx()+40,c.y+c.h/2},{c.cx()+120,c.y+c.h/2}});
+    check(int(classic_depth())==depth&&shown("Equalizer"),"a sideways drag across the sliders does not go back");
+    toPlayer();const Rect o=L::options<Rect>(w);tap(o.cx(),o.cy());
+    check(shown("Options")&&classic_depth()>=2,"Options opens from Now Playing");
+    tapSettingsRow(4);check(shown("Equalizer")&&label("EQ On"),"Equalizer opens from Options (the drag above switched it on)");
+  }
+  g_settings.eqOn=false;for(int8_t& g:g_settings.eqGain)g=0;tft.setRotation(0);g_settings.rotation=0;ui_redraw();pump();
+  std::cout<<"PASS EQ-5BAND Equalizer page: Playback and Options entry, sliders, presets, Reset, On/Off, no swipe-back from sliders, all rotations\n";
+}
 // Keys are found through the real hit map; 1000 is the key target base in classic_screen.cpp.
 static bool findKey(char c,int& x,int& y){
   for(int yy=cydclassic::layout::KeyY;yy<tft.height();yy+=4)for(int xx=0;xx<tft.width();xx+=4)if(classic_target(xx,yy)==1000+c){x=xx;y=yy;return true;}
@@ -1813,6 +1847,7 @@ int main(){try{
   miniPlayerRegression();
   homeTilesRegression();
   settingsRegression();
+  equalizerRegression();
   themeRegression();
   themePreviews();
   bluetoothCandidateRegression();

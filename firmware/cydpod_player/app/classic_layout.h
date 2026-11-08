@@ -105,4 +105,24 @@ constexpr inline int tileCols(int h){return h<PortraitMinH?3:2;}
 constexpr inline int tileW(int w,int h){return (w-TileMargin-TileGap*tileCols(h))/tileCols(h);}
 constexpr inline int tileH(int h){return (h-HeaderH-FooterH-TileTop-TileBottom-(TileCount/tileCols(h)-1)*TileGap)/(TileCount/tileCols(h));}
 template<class R> constexpr inline R tile(int w,int h,int i){return {TileMargin+(i%tileCols(h))*(tileW(w,h)+TileGap),HeaderH+TileTop+(i/tileCols(h))*(tileH(h)+TileGap),tileW(w,h),tileH(h)};}
+// EQ-5BAND Equalizer page: a strip of three buttons (On/Off, Preset, Reset) under the header,
+// then one full-height column per band down to the mini-player. The whole column is the
+// band's hit area; inside it, the gain label, a vertical track and the band label.
+constexpr int EqMargin=8,EqControlTop=4,EqControlH=28,EqControlGap=6,EqControlRadius=6,EqControls=3;
+constexpr int EqColumnsGap=4,EqLabelH=14,EqTrackW=8,EqZeroHalf=10;
+constexpr inline int eqTop(){return HeaderH+EqControlTop+EqControlH+EqColumnsGap;}
+template<class R> constexpr inline R eqControl(int w,int i){
+  return {EqMargin+i*((w-2*EqMargin-(EqControls-1)*EqControlGap)/EqControls+EqControlGap),HeaderH+EqControlTop,
+          (w-2*EqMargin-(EqControls-1)*EqControlGap)/EqControls,EqControlH};
+}
+template<class R> constexpr inline R eqColumn(int w,int h,int band,int bands){return {band*w/bands,eqTop(),(band+1)*w/bands-band*w/bands,miniY(h)-eqTop()};}
+template<class R> constexpr inline R eqTrack(int w,int h,int band,int bands){
+  return {band*w/bands+((band+1)*w/bands-band*w/bands-EqTrackW)/2,eqTop()+EqLabelH+KnobR,EqTrackW,miniY(h)-eqTop()-2*(EqLabelH+KnobR)};
+}
+// Step index 0..steps from a y inside the track (top = steps), rounded to the nearest step;
+// eqStepY is its inverse, so paint and input share the same positions.
+constexpr inline int eqStepAt(int y,int top,int height,int steps){
+  return y<=top?steps:y>=top+height?0:((top+height-y)*steps+height/2)/height;
+}
+constexpr inline int eqStepY(int step,int top,int height,int steps){return top+height-step*height/steps;}
 } } // namespace cydclassic::layout

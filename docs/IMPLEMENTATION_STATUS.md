@@ -1,3 +1,7 @@
+## 0.5.5 release checkpoint — 8 November 2026
+
+Version 0.5.5 adds the 5-band fixed-point EQ (Equalizer page, presets, 0.6–0.7% of a core on the board) and the earbud work: Bluedroid patches 0002 (link counters, runtime SBC rate) and 0003 (full A2DP packets), an adaptive SBC rate that starts every link at 328 kbps, Play reconnecting earbuds that dropped the link, peer-suspend restarts and a congestion-only quiet UI. Firmware compiled from 010c6f6; compile and host suites PASS, owner runs on development builds. See [0.5.5 release notes](releases/0.5.5.md).
+
 ## 0.5.4 release checkpoint — 8 November 2026
 
 Version 0.5.4 is 0.5.3 plus scrolling Now Playing labels (one overflowing title, artist or album at a time, +16 B static RAM) and a corrected transmit power readback: `esp_bredr_tx_power_set` is asynchronous, so CYDpod now waits up to ~20 ms before logging the level. Firmware compiled from 2a7b1a0 on the 0.5.3 trimmed Bluedroid; the release image itself is compile-checked, not yet board-run. See [0.5.4 release notes](releases/0.5.4.md).

@@ -175,6 +175,15 @@ class CydSource : public BluetoothA2DPSource {
   // A background page ended without a link: counted, never shown as an error.
   void pageFailed(const char* operation){POLICY(pageFailed(millis()));Serial.printf("bt: page failed: %s\n",operation);}
  protected:
+  // BR/EDR transmit power only takes effect when set between controller enable
+  // and Bluedroid's profile start (esp_bredr_tx_power_set notes). Set from
+  // bt_tick it returned OK yet read back unchanged (owner logs: max=5, +3 dBm).
+  // Also runs on the Sleep restart, which comes through here too.
+  bool bt_start() override {
+    const bool ok=BluetoothA2DPSource::bt_start();
+    if(ok){txApplied=-1;applyTxPower();}
+    return ok;
+  }
   int32_t get_audio_data_volume(uint8_t* data,int32_t len) override {
     // Absolute volume is applied by the receiver, not again by this library.
     return audio_remoteVolume()?get_audio_data(data,len):BluetoothA2DPSource::get_audio_data_volume(data,len);

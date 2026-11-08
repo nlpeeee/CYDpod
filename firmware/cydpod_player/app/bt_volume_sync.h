@@ -54,7 +54,7 @@ struct BtVolumeSync {
     if(!linked||rawVolume>127)return false;
     ++reports;reported=rawVolume;
     if(initializing&&inFlight)return false; // That command's reply completes the handshake.
-    const bool first=initializing;
+    const bool first=initializing||!absolute; // also before the capability reply
     initializing=awaitingReport=false;absolute=true;
     if(!pending&&!inFlight)value=reported;
     dirty=true;return first;

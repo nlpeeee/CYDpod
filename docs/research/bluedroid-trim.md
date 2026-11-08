@@ -76,3 +76,12 @@ Package: `releases/candidates/bluedroid-trim`. Compare against the boot log of t
 - It costs 8 KiB of heap, allocated at boot. On candidate 1 the lowest free heap was 46.7 KB while streaming and 23.7 KB once while reconnecting after Sleep. Expect about 8 KB less on both.
 - Screen-wake dropouts are separate. CYDpod-side counters stayed clean through every wake (`missingFrames=0`, `underruns 0`, pull gap about 27 ms), so the cause is probably the radio link, and a bigger ring may not help them.
 - Compile-only PASS (log `.tools/logs/bluedroid-trim3-check.log`): Bluetooth 1,297,537 B / 79,652 B static, wired 1,297,681 B / 79,660 B. The ring's index arithmetic was checked on the host for 4,096, 6,144 and 6,000 frames. Not yet run on the board.
+
+## Candidate 3 on the board, and candidate 4 (2026-11-08)
+
+Owner log (JBL Flip 3, candidate 3):
+- Volume adoption works: on each connect `reports` counts up, `sends=0` and `reportWaits=0`, and the screen took the speaker's 38% and 25%. The `adopted` log line was missing, because the report arrived before the capability reply. Candidate 4 prints it in that case too.
+- The ring held: `underruns 0` throughout, lowest fill 4,736/6,144.
+- The JBL dropouts are radio-side. In steady playback the stack stopped pulling audio for 896 ms, then 207 ms (the second window includes a screen wake). Free heap fell by about 22 KB (`heap 38944 … largest 17396`) while Bluedroid queued packets it could not send. CYDpod's own counters stayed clean.
+- The +9 dBm transmit power has never applied. `bt: tx power rc=0 … max=5` means +3 dBm, ESP-IDF's default. `esp_bredr_tx_power_set` only takes effect between controller enable and profile start, and CYDpod called it at STACK_UP, after the profiles. Candidate 4 calls it from a `bt_start()` override, right after the controller is enabled, on boot and on the Sleep restart.
+- Check on the board: `bt: tx power … max=7`.

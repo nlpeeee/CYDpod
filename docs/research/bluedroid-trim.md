@@ -85,3 +85,9 @@ Owner log (JBL Flip 3, candidate 3):
 - The JBL dropouts are radio-side. In steady playback the stack stopped pulling audio for 896 ms, then 207 ms (the second window includes a screen wake). Free heap fell by about 22 KB (`heap 38944 … largest 17396`) while Bluedroid queued packets it could not send. CYDpod's own counters stayed clean.
 - The +9 dBm transmit power has never applied. `bt: tx power rc=0 … max=5` means +3 dBm, ESP-IDF's default. `esp_bredr_tx_power_set` only takes effect between controller enable and profile start, and CYDpod called it at STACK_UP, after the profiles. Candidate 4 raises the maximum to +6 dBm (owner: one step before +9) and calls it from a `bt_start()` override, right after the controller is enabled, on boot and on the Sleep restart.
 - Check on the board: `bt: tx power … max=6`.
+
+## Candidate 4 on the board (2026-11-08)
+
+- Transmit power still did not apply: `bt: tx power rc=0 level min=4 max=5 (default 4..5, level 6 = +6 dBm)`. `esp_bredr_tx_power_set` returns OK, but `esp_bredr_tx_power_get` still reads back the default +3 dBm, now right after controller enable as well. Both attempts (at STACK_UP, then from `bt_start()`) failed. The controller (`libbtdm_app.a`) is closed source, so the cause needs a separate investigation rather than another speculative change.
+- The owner reports the JBL "seems happier". Over this short session, steady playback held a pull gap of about 27 ms with no stalls, minimum heap 42 KB and `underruns 2` around manual track and seek changes. With transmit power unchanged, the improvement can't be credited to it.
+- Volume adoption is confirmed on both speakers: `bt: speaker reports volume 57%, adopted` (Xiaomi) and `50%, adopted` (JBL), with `sends=0` and `reportWaits=0`.

@@ -19,6 +19,10 @@ Owner board runs on 8 November 2026 used the diagnostic build (`docs/research/ai
 - **Pairing messages.** `bt: paired with` printed on every authentication, including with a stored key, so the logs could not show whether the FreeBuds re-paired.
 - **MP3 seeks.** Seeks into MP3s took 13–23 s. That is a separate bug: `codec_track.cpp` replays the file from frame 0.
 
+## Packet counts
+
+In the owner logs, the AirPods took about 668 packets per 10 s at 328 kbps and about 333 per 10 s at 229 kbps, both with MTU 1008. With frames of 119 B and 83 B, that comes to about 614 B and 857 B per packet. Bluedroid's 30 ms tick holds about 10.3 frames, but only 8 fit a 328 kbps packet, so every tick also sent a 2–3 frame leftover packet. Patch 0003 sends whole packets only (`docs/specs/bt-rate-and-earbuds.md`).
+
 ## Background
 
 - **How TWS earbuds share one link.** True-wireless sets keep one ACL link to the source. The primary bud either relays audio to the secondary, or the secondary sniffs the primary's link and only the primary acknowledges. Roles can swap when one bud is in a worse position, in the case, or low on battery. That costs airtime on the one link and can suspend or drop the stream ([Qualcomm TWS whitepaper](https://assets.qualcomm.com/rs/385-TWS-803/images/whitepaper-the-evolution-of-true-wireless-technology-2020.pdf), [Google seamless role-switch patent](https://patents.google.com/patent/US12108493)).

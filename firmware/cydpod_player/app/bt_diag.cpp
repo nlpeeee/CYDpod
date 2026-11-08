@@ -26,7 +26,11 @@ extern volatile uint32_t cydpod_av_l2c_bufs_max __attribute__((weak));
 extern volatile uint32_t cydpod_av_l2c_stalls __attribute__((weak));
 extern volatile uint32_t cydpod_av_drops __attribute__((weak));
 extern volatile uint32_t cydpod_av_writes __attribute__((weak));
+extern volatile uint8_t cydpod_a2d_src_full_packets __attribute__((weak));  // patch 0003
+extern volatile uint32_t cydpod_a2d_src_pkts __attribute__((weak));
+extern volatile uint32_t cydpod_a2d_src_frames __attribute__((weak));
 }
+static bool packing() { return &cydpod_a2d_src_full_packets && &cydpod_a2d_src_pkts && &cydpod_a2d_src_frames; }
 
 static bool stackDiag() { return &cydpod_a2d_src_txq_drops && &cydpod_av_writes; }
 static bool rateControl() { return &cydpod_a2d_src_rate_kbps && &cydpod_a2d_src_apply; }
@@ -118,6 +122,7 @@ static void applyRate(const char* why) {
 static uint32_t lastDrops = 0, lastLimited = 0, lastStalls = 0, lastAvDrops = 0, lastWrites = 0;
 static uint32_t statDrops = 0, statLimited = 0, statStalls = 0, statAvDrops = 0, statWrites = 0;
 static uint32_t statTxqMax = 0, statL2cMax = 0;
+static uint32_t packPkts = 0, packFrames = 0;   // patch 0003 counters at the last stat line
 
 static void printStat() {
   int tmin, tmax; readTx(tmin, tmax);
@@ -129,16 +134,23 @@ static void printStat() {
     return;
   }
   const BtLinkMemo* m = peerValid ? memoFind(peerAddr) : nullptr;
+  char fpp[24] = "fpp=? pack=?";
+  if (packing()) {
+    const uint32_t pk = cydpod_a2d_src_pkts - packPkts, fr = cydpod_a2d_src_frames - packFrames;
+    packPkts = cydpod_a2d_src_pkts; packFrames = cydpod_a2d_src_frames;
+    snprintf(fpp, sizeof fpp, "fpp=%lu.%lu pack=%s", (unsigned long)(pk ? fr / pk : 0),
+             (unsigned long)(pk ? (fr * 10 / pk) % 10 : 0), cydpod_a2d_src_full_packets ? "on" : "off");
+  }
   Serial.printf("stat: a2dlink mode=%s(%u) sniffs=%lu rssiDelta=%s txpwr=%d..%d rate=%u%s policy=%u down=%u up=%u "
                 "bitpool=%d peerBp=%u..%u mtu=%u edr=%u writes=+%lu txqMax=%lu txqDrops=+%lu limited=+%lu "
-                "l2cMax=%lu l2cStalls=+%lu avDrops=+%lu memo=%u/%u quietUi=%d\n",
+                "l2cMax=%lu l2cStalls=+%lu avDrops=+%lu memo=%u/%u quietUi=%d %s\n",
                 modeName(linkMode), unsigned(linkInterval), (unsigned long)sniffEntries, rssi, tmin, tmax,
                 unsigned(cydpod_a2d_src_bitrate), rate.pinned ? "(pinned)" : "", unsigned(rate.kbps()),
                 unsigned(rate.downs), unsigned(rate.ups), int(cydpod_a2d_src_bitpool),
                 unsigned(cydpod_a2d_src_peer_minbp), unsigned(cydpod_a2d_src_peer_maxbp), unsigned(cydpod_a2d_src_mtu),
                 unsigned(cydpod_a2d_src_edr), (unsigned long)statWrites, (unsigned long)statTxqMax, (unsigned long)statDrops,
                 (unsigned long)statLimited, (unsigned long)statL2cMax, (unsigned long)statStalls, (unsigned long)statAvDrops,
-                m ? unsigned(m->rateKbps) : 0u, m ? unsigned(m->flags) : 0u, int(btlink_quietUi()));
+                m ? unsigned(m->rateKbps) : 0u, m ? unsigned(m->flags) : 0u, int(btlink_quietUi()), fpp);
   statDrops = statLimited = statStalls = statAvDrops = statWrites = statTxqMax = statL2cMax = 0;
 }
 
@@ -248,6 +260,12 @@ bool btdiag_command(const char* line) {
     applyRate(kbps ? "pinned by btd" : "automatic");
     return true;
   }
+  if (strcmp(verb, "pack") == 0) {
+    if (!packing()) { Serial.println("btd: pack needs the full-packet libbt (patch 0003)"); return true; }
+    if (strcmp(a, "on") == 0 || strcmp(a, "off") == 0) cydpod_a2d_src_full_packets = strcmp(a, "on") == 0;
+    Serial.printf("btd: full A2DP packets %s (until reboot)\n", cydpod_a2d_src_full_packets ? "on" : "off");
+    return true;
+  }
   if (strcmp(verb, "forget") == 0) {
     memset(g_settings.btLinks, 0, sizeof(g_settings.btLinks)); memoDirty = true;
     Serial.println("btd: link memory cleared (rates and earbud flags)");
@@ -289,7 +307,7 @@ bool btdiag_command(const char* line) {
     Serial.printf("btd: qos t_poll %lu rc=%d (reply follows)\n", (unsigned long)slots, int(esp_bt_gap_set_qos(peerAddr, slots)));
     return true;
   }
-  Serial.println("btd: commands are btd | btd rate auto|<kbps> | btd ui auto|quiet|on | btd forget | btd txpwr <min> <max> | btd pkt all|basic|2dh5|3dh5|<hex> | btd qos <slots>");
+  Serial.println("btd: commands are btd | btd rate auto|<kbps> | btd ui auto|quiet|on | btd pack on|off | btd forget | btd txpwr <min> <max> | btd pkt all|basic|2dh5|3dh5|<hex> | btd qos <slots>");
   return true;
 }
 #endif  // !CYD_UPLOADER

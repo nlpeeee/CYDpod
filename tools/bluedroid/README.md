@@ -11,7 +11,7 @@ Spec: [docs/specs/trimmed-bluedroid.md](../../docs/specs/trimmed-bluedroid.md). 
 | File | Purpose |
 |---|---|
 | `defconfig.cydpod-bt` | The only configuration change: Bluetooth options applied to Espressif's shipped `sdkconfig` |
-| `patches/*.patch` | Bluedroid source patches applied to the trim build only (0001: forward the speaker's volume report; 0002: A2DP link counters and runtime SBC rate, docs/specs/bt-rate-and-earbuds.md) |
+| `patches/*.patch` | Bluedroid source patches applied to the trim build only (0001: forward the speaker's volume report; 0002: A2DP link counters and runtime SBC rate; 0003: send full A2DP packets; docs/specs/bt-rate-and-earbuds.md) |
 | `build-libs.ps1` | Builds ESP-IDF v5.5.4 twice in one directory, stock and trimmed, with the pinned xtensa toolchain |
 | `make-libs.py` | Copies Espressif's package and replaces only the artefacts that differ between the two builds (`libbt.a`, `libesp_hid.a`, `libprotocomm.a`, `sdkconfig`, the two `sdkconfig.h`) |
 | `use-libs.ps1` | Switches the Arduino core between stock and trimmed |

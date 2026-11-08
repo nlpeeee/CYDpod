@@ -20,6 +20,23 @@ Patch 0002 is applied with 0001 to the trimmed build. The overlay in `dependenci
 - Setting `cydpod_a2d_src_apply` makes the media task re-run `btc_a2dp_source_encoder_update()` at its next tick. That is the same update START runs, applied between packets, so the rate changes mid-stream.
 - The peer's maximum bitpool still bounds the result.
 
+## Packet packing (patch 0003, `tools/bluedroid/patches/0003-a2dp-src-full-packets.patch`)
+
+Bluedroid's media timer ticks every 30 ms. At 44.1 kHz a tick holds about 10.3 SBC frames of 128 samples. A packet takes at most `floor((MTU-1)/frame length)` frames, capped at 15.
+
+| SBC rate | Frame | Frames per full packet (MTU 1008) | Stock packets/s | Full packets/s |
+|---|---|---|---|---|
+| 328 kbps (bitpool 53) | 119 B | 8 (952 B) | about 67 (one full and one 2–3 frame packet per tick) | about 43 |
+| 229 kbps (bitpool 35) | 83 B | 12 (996 B) | about 33 | about 29 |
+
+How it works:
+- `btc_get_num_aa_frame()` rounds each tick's frame count down to whole packets. The remainder stays in the PCM counter and goes out with the next tick, so no audio is lost.
+- A count cut below one packet by the TX-queue limit is still sent, so a congested link drains as before.
+- Extra latency is at most one packet: about 23 ms at 328 kbps.
+- Every sink accepts packets up to its own negotiated MTU.
+
+`btd pack on|off` switches it until reboot. The `stat: a2dlink` line shows `fpp`, the mean frames per packet over the last 10 s, and `pack`.
+
 ## Rate policy (`bt_rate_policy.h`, sampled once a second by `bt_diag.cpp`)
 
 - **Steps:** 328, 292, 257, 229, 200, 165 kbps.

@@ -77,7 +77,7 @@ static volatile int streamMedia=0;
 static volatile bool streamIdle=false,mediaPending=false;
 
 // BR/EDR transmit power (lever "bttx"): the controller's default maximum is
-// read once and restored when the lever is off; on, the maximum is +9 dBm.
+// read once and restored when the lever is off; on, the maximum is +6 dBm (owner: step up from +3 before trying +9).
 // Power control still lowers it when the peer asks. Applied at stack-up,
 // before the boot page, and again whenever the lever changes.
 static int8_t txApplied=-1;
@@ -88,9 +88,9 @@ static void applyTxPower(){
   const bool on=power_lever(PWR_BTTX);
   if(txApplied==int8_t(on))return;
   if(!txDefRead&&esp_bredr_tx_power_get(&txDefMin,&txDefMax)==ESP_OK)txDefRead=true;
-  const esp_err_t rc=esp_bredr_tx_power_set(txDefMin,on?ESP_PWR_LVL_P9:txDefMax);
+  const esp_err_t rc=esp_bredr_tx_power_set(txDefMin,on?ESP_PWR_LVL_P6:txDefMax);
   esp_power_level_t mn,mx;esp_bredr_tx_power_get(&mn,&mx);
-  Serial.printf("bt: tx power rc=%d level min=%d max=%d (default %d..%d, level 7 = +9 dBm)\n",
+  Serial.printf("bt: tx power rc=%d level min=%d max=%d (default %d..%d, level 6 = +6 dBm)\n",
                 int(rc),int(mn),int(mx),int(txDefMin),int(txDefMax));
   txApplied=int8_t(on);
 }

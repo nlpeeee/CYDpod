@@ -68,3 +68,11 @@ Package: `releases/candidates/bluedroid-trim`. Compare against the boot log of t
 - Lowest free stack: `BTC_TASK` 2,464 B and `BTU_TASK` 2,544 B of 4,096, including a fresh pairing.
 - Pairing (forget, pair), Sleep and wake (stack stopped, restarted, reconnected) pass.
 - Found: after a fresh pairing the Xiaomi answered CYDpod's 25% set with 62%, while its next button press reported 31%. The owner chose to adopt the speaker's own level on connect instead; that needs patch 0001 (see the spec) and is a new candidate to check.
+
+## Candidate 3: larger PCM ring (owner choice, 2026-11-08)
+
+- Owner logs showed a gap when one track ended and the next began with the screen off: `ringLow 0/4096`, `underruns 10`. The 4,096-frame ring (16 KiB) holds about 93 ms. Opening the next file, plus the 20 ms loop cadence while the screen is off, can take longer than that.
+- The owner chose a bigger buffer: 6,144 frames (24 KiB, about 139 ms), built with `tools/check.ps1 ... -LargePcmRing -PcmRingFrames 6144`. The ring indices now wrap without a power-of-two mask.
+- It costs 8 KiB of heap, allocated at boot. On candidate 1 the lowest free heap was 46.7 KB while streaming and 23.7 KB once while reconnecting after Sleep. Expect about 8 KB less on both.
+- Screen-wake dropouts are separate. CYDpod-side counters stayed clean through every wake (`missingFrames=0`, `underruns 0`, pull gap about 27 ms), so the cause is probably the radio link, and a bigger ring may not help them.
+- Compile-only PASS (log `.tools/logs/bluedroid-trim3-check.log`): Bluetooth 1,297,537 B / 79,652 B static, wired 1,297,681 B / 79,660 B. The ring's index arithmetic was checked on the host for 4,096, 6,144 and 6,000 frames. Not yet run on the board.

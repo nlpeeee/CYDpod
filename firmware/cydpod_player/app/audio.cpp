@@ -12,8 +12,12 @@
 // ---------------------------------------------------------------------------
 // Ring buffer: one producer (decode task), one consumer (audio_pull)
 // ---------------------------------------------------------------------------
-// The default 8 KiB holds ~46 ms. Compact FLAC can trial 16 KiB (~93 ms).
-#ifdef CYDPOD_PCM_RING_4096
+// The default 8 KiB holds ~46 ms. Compact FLAC can trial 16 KiB (~93 ms), or
+// any size with CYDPOD_PCM_RING_FRAMES (6144 frames = 24 KiB, ~139 ms, once the
+// trimmed Bluedroid freed the heap). Sizes need not be powers of two.
+#if defined(CYDPOD_PCM_RING_FRAMES)
+static constexpr uint32_t RB_FRAMES = CYDPOD_PCM_RING_FRAMES;
+#elif defined(CYDPOD_PCM_RING_4096)
 static constexpr uint32_t RB_FRAMES = 4096;
 #else
 static constexpr uint32_t RB_FRAMES = 2048;
@@ -56,7 +60,9 @@ AudioDiagnosticWindow audio_takeDiagnosticWindow() {
   return result;
 }
 
-static inline uint32_t rbUsed() { return (rbHead - rbTail) & (RB_FRAMES - 1); }
+static_assert(RB_FRAMES >= 2 * PCM_BATCH_FRAMES, "PCM ring too small");
+static inline uint32_t rbUsed() { const uint32_t h = rbHead, t = rbTail; return h >= t ? h - t : h + RB_FRAMES - t; }
+static inline uint32_t rbAdvance(uint32_t i, uint32_t n) { i += n; return i >= RB_FRAMES ? i - RB_FRAMES : i; } // n < RB_FRAMES
 static inline uint32_t rbFree() { return RB_FRAMES - 1 - rbUsed(); }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +149,7 @@ void audio_pull(int16_t* out, int32_t frames) {
     memcpy(out, rb + tail * 2, first * 2 * sizeof(int16_t));
     if (first < uint32_t(copied))
       memcpy(out + first * 2, rb, (copied - first) * 2 * sizeof(int16_t));
-    rbTail = (tail + copied) & (RB_FRAMES - 1);
+    rbTail = rbAdvance(tail, copied);
     framesPlayed += copied;
     pullFrames += copied;
     if (copied > 0) {
@@ -208,7 +214,7 @@ static bool pushFrames(const M4aStereo* pcm, uint32_t count) {
       const uint32_t first = min(n, RB_FRAMES - head);
       memcpy(rb + head * 2, pcm, first * sizeof(*pcm));
       if (first < n) memcpy(rb, pcm + first, (n - first) * sizeof(*pcm));
-      rbHead = (head + n) & (RB_FRAMES - 1);
+      rbHead = rbAdvance(head, n);
       producerWaiting = false;
       portEXIT_CRITICAL(&stateLock);
       pcm += n;

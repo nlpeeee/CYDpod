@@ -1,8 +1,8 @@
-# CYDpod 0.5.3: flashing and building
+# CYDpod 0.5.4: flashing and building
 
 ## Flash the release
 
-1. Download `CYDpod-0.5.3-firmware.zip` from the [0.5.3 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.3) and unzip it. It contains the Bluetooth and wired player builds, their manifests and esptool 5.3.0.
+1. Download `CYDpod-0.5.4-firmware.zip` from the [0.5.4 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.4) and unzip it. It contains the Bluetooth and wired player builds, their manifests and esptool 5.3.0.
 2. Close any serial monitor, and identify the board's COM port by unplugging it and plugging it back in.
 3. Hold **BOOT**, tap **RESET**, then release **BOOT**.
 4. From the unzipped folder, run the block below in PowerShell. It checks every file's hash, then writes and verifies the four flash regions (`0x1000`, `0x8000`, `0xe000`, `0x10000`). Saved settings and the Bluetooth bond survive.
@@ -31,19 +31,19 @@ foreach ($op in 'write-flash','verify-flash') {
 
 You'll need Windows x64, Git, Python 3.9 or later and Windows PowerShell 5.1.
 
-1. Download `CYDpod-0.5.3-build-kit.zip` from the release and unzip it outside the checkout. It contains the pinned toolchain and `Restore-Toolchain.ps1`, so no other downloads are needed.
+1. Download `CYDpod-0.5.4-build-kit.zip` from the release and unzip it outside the checkout. It contains the pinned toolchain and `Restore-Toolchain.ps1`, so no other downloads are needed.
 2. Restore it into a fresh clone, then build:
 
 ```powershell
-git clone --branch v0.5.3 https://github.com/nlpeeee/CYDpod.git E:\dev\CYDpod
+git clone --branch v0.5.4 https://github.com/nlpeeee/CYDpod.git E:\dev\CYDpod
 powershell -NoProfile -File E:\dev\CYDpod-build-kit\Restore-Toolchain.ps1 -Source E:\dev\CYDpod
 Set-Location E:\dev\CYDpod
-powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -PcmRingFrames 6144 -BuildLabel release-053
+powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -PcmRingFrames 6144 -BuildLabel release-054
 ```
 
 Images and manifests are written to `.tools/images`. Rebuilt application hashes can differ from the released binaries, so flash those when you need an exact match. Dependency pins and third-party inventories are in [dependencies.lock.json](../../dependencies.lock.json).
 
 ## Provenance and limits
 
-- **Provenance:** the source is tagged `v0.5.3`. The manifests and the [release notes](../releases/0.5.3.md) record the firmware's provenance, the checks, and what is not yet confirmed on hardware. GitHub Releases holds the binary assets.
+- **Provenance:** the source is tagged `v0.5.4`. The manifests and the [release notes](../releases/0.5.4.md) record the firmware's provenance, the checks, and what is not yet confirmed on hardware. GitHub Releases holds the binary assets.
 - **Legacy tooling:** the older Pages generator in `tools/make_site_release.ps1` describes the historical merged-image delivery. Use the four-region instructions above.

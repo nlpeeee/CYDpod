@@ -9,7 +9,7 @@
 A pocket music player you build yourself, from one cheap yellow board.</p>
 
 <p align="center">
-  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.3"><strong>Download CYDpod 0.5.3</strong></a>
+  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.4"><strong>Download CYDpod 0.5.4</strong></a>
 </p>
 
 <p align="center">
@@ -44,11 +44,11 @@ It starts with the Cheap Yellow Display, a tiny touchscreen computer that hobbyi
 
 You'll need a **JC2432W328C** Cheap Yellow Display (the capacitive-touch one), a **microSD card** with your music, a **Bluetooth speaker or headphones** (or the little DAC for wired listening), and a **Windows PC** for a few minutes.
 
-1. [Download the latest release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.3).
+1. [Download the latest release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.4).
 2. Follow the [flashing guide](docs/firmware/README.md).
 3. Press play.
 
-For the details, see the [firmware guide](docs/firmware/README.md) and the [release notes](docs/releases/0.5.3.md).
+For the details, see the [firmware guide](docs/firmware/README.md) and the [release notes](docs/releases/0.5.4.md).
 
 ## Thanks
 

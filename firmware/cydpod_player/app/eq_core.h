@@ -69,6 +69,31 @@ struct Coeffs {
 
 inline int clampGain(int db) { return db < MinDb ? MinDb : db > MaxDb ? MaxDb : db; }
 
+// Presets are only gain sets: the shown name is derived, nothing extra is stored.
+struct Preset { const char* name; int8_t gain[Bands]; };
+constexpr Preset Presets[] = {
+  {"Flat", {0, 0, 0, 0, 0}},
+  {"Bass", {8, 4, 0, 0, 0}},
+  {"Vocal", {-2, 0, 4, 4, 0}},
+  {"Treble", {0, 0, 0, 4, 8}},
+  {"Loudness", {6, 2, 0, 2, 6}},
+};
+constexpr int PresetCount = int(sizeof(Presets) / sizeof(Presets[0]));
+// Index of the preset equal to `g`, or -1 (Custom).
+inline int presetMatch(const int8_t g[Bands]) {
+  for (int p = 0; p < PresetCount; ++p) {
+    bool same = true;
+    for (int b = 0; b < Bands; ++b) same = same && Presets[p].gain[b] == g[b];
+    if (same) return p;
+  }
+  return -1;
+}
+// The preset after the current one; Custom goes to the first non-flat preset.
+inline int presetNext(const int8_t g[Bands]) {
+  const int p = presetMatch(g);
+  return p < 0 ? 1 : (p + 1) % PresetCount;
+}
+
 struct DesignBiquad { double b0, b1, b2, a1, a2; };
 
 // RBJ cookbook peaking EQ, normalised by a0.

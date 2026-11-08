@@ -222,13 +222,29 @@ static void testSeed() {
   CHECK(across < 3 * normal + 64, "step across band switch %d (typical %d)", across, normal);
 }
 
+// Presets: on the UI grid, designable, matched back, cycled; Custom detected.
+static void testPresets() {
+  CHECK(PresetCount == 5 && presetMatch(Presets[0].gain) == 0, "Flat is preset 0");
+  for (int p = 0; p < PresetCount; ++p) {
+    Coeffs c;
+    CHECK(design(Presets[p].gain, c), "preset %s rejected", Presets[p].name);
+    for (int b = 0; b < Bands; ++b)
+      CHECK(Presets[p].gain[b] % StepDb == 0 && clampGain(Presets[p].gain[b]) == Presets[p].gain[b], "preset %s off grid", Presets[p].name);
+    CHECK(presetMatch(Presets[p].gain) == p, "preset %s not matched", Presets[p].name);
+    CHECK(presetNext(Presets[p].gain) == (p + 1) % PresetCount, "preset %s next", Presets[p].name);
+  }
+  const int8_t custom[Bands] = {2, 0, 0, 0, 0};
+  CHECK(presetMatch(custom) == -1 && presetNext(custom) == 1, "Custom detected and cycles to Bass");
+}
+
 int main() {
   testDesign();
   testResponse();
   testHeadroom();
   testBypass();
   testSeed();
+  testPresets();
   if (failures) { std::printf("FAIL: eq core (%d failures)\n", failures); return 1; }
-  std::printf("PASS: eq core (response vs float, full-scale headroom, bit-exact bypass, band seeding)\n");
+  std::printf("PASS: eq core (response vs float, full-scale headroom, bit-exact bypass, band seeding, presets)\n");
   return 0;
 }

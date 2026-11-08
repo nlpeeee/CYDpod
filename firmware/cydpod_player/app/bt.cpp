@@ -11,6 +11,7 @@
 #include "bt_reconnect_policy.h"
 #include "bt_volume_sync.h"
 #include "power.h"
+#include "bt_diag.h"
 #include <esp_gap_bt_api.h>
 #include <esp_bt_main.h>
 #include <esp_bt.h>
@@ -500,6 +501,7 @@ static volatile uint32_t  passkey = 0;
 
 // Bluetooth task: pairing events the library only logs.
 void CydSource::app_gap_callback(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* param){
+  btdiag_gap(event,param);
   if(event==ESP_BT_GAP_DISC_STATE_CHANGED_EVT){
     if(!bt_app_work_dispatch(dispatch,param->disc_st_chg.state==ESP_BT_GAP_DISCOVERY_STARTED?InquiryStarted:InquiryStopped,nullptr,0,nullptr))failure=BT_FAIL_TIMEOUT;
     return;
@@ -734,6 +736,7 @@ void bt_tick() {
   static uint32_t linkedAt=0;static uint8_t capsAsks=0;
   bool askCaps=false,startedNow=false,reportedNow=false;
   const bool a2dpUp=bt_connected();
+  btdiag_tick(a2dpUp,connectedAddr);
   portENTER_CRITICAL(&volumeMux);
   const bool want=avrcUp&&a2dpUp&&memcmp(avrcPeer,a2dp.peer(),6)==0;
   if(want!=volumeSync.linked){

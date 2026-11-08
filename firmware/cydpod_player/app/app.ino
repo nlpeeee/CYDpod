@@ -31,6 +31,9 @@
 #include "storage.h"
 #include "audio.h"
 #include "bt.h"
+#ifndef CYD_UPLOADER
+#include "bt_diag.h"
+#endif
 #include "boot_plan.h"
 #include <esp32-hal-bt.h>
 #include "speaker.h"
@@ -292,7 +295,11 @@ static void serialCommands() {
   static bool over = false;
   while (Serial.available()) {
     const int c = Serial.read();
-    if (c == '\n' || c == '\r') { if (n && !over) { line[n] = 0; if (!power_command(line)) classic_command(line); } n = 0; over = false; }
+    if (c == '\n' || c == '\r') { if (n && !over) { line[n] = 0; if (!power_command(line)
+#ifndef CYD_UPLOADER
+          && !btdiag_command(line)
+#endif
+          ) classic_command(line); } n = 0; over = false; }
     else if (n < sizeof(line) - 1) line[n++] = (char)c;
     else over = true;
   }

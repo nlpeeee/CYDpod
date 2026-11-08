@@ -15,3 +15,4 @@ fixtures/*.m4a -text
 patches/**/*.patch -text
 *.sh text eol=lf
 tools/bluedroid/patches/*.patch -text
+tools/bluedroid/diag/*.patch -text

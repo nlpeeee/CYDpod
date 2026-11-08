@@ -1,7 +1,7 @@
 # Fast path: powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia
 # Compile-only. There is deliberately no upload, monitor, port or erase option.
 [CmdletBinding()]
-param([switch]$FlacLegacy, [switch]$LargePcmRing, [int]$PcmRingFrames = 0, [switch]$LightAudioDiagnostics, [switch]$StockBluetoothLibs, [switch]$SkipProbe, [switch]$SkipHostMedia,
+param([switch]$FlacLegacy, [switch]$LargePcmRing, [int]$PcmRingFrames = 0, [switch]$LightAudioDiagnostics, [switch]$StockBluetoothLibs, [switch]$DiagBluetoothLibs, [switch]$SkipProbe, [switch]$SkipHostMedia,
     [switch]$IncludeStock, [switch]$IncludeDiagnostics, [switch]$ListJobs,
     [ValidatePattern('^[a-z0-9]+(-[a-z0-9]+)*$')][string]$BuildLabel,
     [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
@@ -90,7 +90,8 @@ try {
     # Firmware builds on the trimmed Bluedroid (dependencies.lock.json bluedroidOverlay, tools/bluedroid).
     $btLib = Join-Path $env:ARDUINO_DIRECTORIES_DATA 'packages/esp32/tools/esp32-libs/3.3.10/lib/libbt.a'
     $btTrimmed = (Get-FileHash $btLib).Hash.ToLowerInvariant() -eq $lock.bluedroidOverlay.files.'lib/libbt.a'.cydpod
-    if (!$btTrimmed -and !$StockBluetoothLibs) { throw 'esp32-libs 3.3.10 is not the trimmed Bluedroid: run tools/bluedroid/use-libs.ps1 trim, or pass -StockBluetoothLibs.' }
+    # -DiagBluetoothLibs: a diagnostic libbt from tools/bluedroid/diag, never for release.
+    if (!$btTrimmed -and !$StockBluetoothLibs -and !$DiagBluetoothLibs) { throw 'esp32-libs 3.3.10 is not the trimmed Bluedroid: run tools/bluedroid/use-libs.ps1 trim, or pass -StockBluetoothLibs.' }
     if ($btTrimmed -and $StockBluetoothLibs) { throw '-StockBluetoothLibs needs tools/bluedroid/use-libs.ps1 stock first.' }
     & python -I tools/stage_miniaac.py
     if ($LASTEXITCODE -ne 0) { throw 'MiniAAC staging failed.' }
@@ -117,6 +118,7 @@ try {
     if ($FlacLegacy) { $playbackImage += '-legacy' }
     if ($LightAudioDiagnostics) { $playbackImage += '-light' }
     if ($StockBluetoothLibs) { $playbackImage += '-stockbt' }
+    if ($DiagBluetoothLibs) { if ($btTrimmed) { throw '-DiagBluetoothLibs needs the diagnostic libbt installed.' }; $playbackImage += '-diagbt' }
     if ($LargePcmRing -and !$PcmRingFrames) { $playbackImage += '-ring4096' }
     if ($PcmRingFrames) { $playbackImage += "-ring$PcmRingFrames" }
     if ($BuildLabel) { $playbackImage += "-$BuildLabel" }

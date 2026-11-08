@@ -3,7 +3,7 @@
 // ===========================================================================
 // Bit-exact with cydeq::stageRef(p, n, 2, *c, *h) in eq_core.h: same five
 // MULSH products, wrapping 32-bit adds, +2 accumulator bias, symmetric clamp
-// to +-(2^28 - 1), then y = (acc << 2) + 2. Include in exactly one translation
+// to +-(2^27 - 1), then y = (acc << 3) + 4 (Q3.29 coefficients). Include in exactly one translation
 // unit. Uses MUL32_HIGH (mulsh), MINMAX (min/max) and the zero-overhead LOOP,
 // all present on the ESP32. Placed in IRAM (.iram1.*) so a flash-cache miss
 // during an SD read cannot stall the decoder in the middle of a chunk.
@@ -42,7 +42,7 @@ __asm__(
     "  l32i  a13, a5, 8\n"
     "  l32i  a14, a5, 12\n"
     "  movi  a15, -1\n"
-    "  srli  a15, a15, 4\n"          // 0x0fffffff = 2^28 - 1
+    "  srli  a15, a15, 5\n"          // 0x07ffffff = 2^27 - 1
     "  loop  a3, 1f\n"
     "  l32i  a5, a2, 0\n"            // x0
     "  mulsh a3, a7, a11\n"          // b1 * x1
@@ -61,8 +61,8 @@ __asm__(
     "  mov   a14, a13\n"             // y2 = y1
     "  min   a3, a3, a15\n"
     "  max   a3, a3, a4\n"           // per-stage saturation
-    "  slli  a13, a3, 2\n"
-    "  addi  a13, a13, 2\n"          // y1 = y = (acc << 2) + 2
+    "  slli  a13, a3, 3\n"
+    "  addi  a13, a13, 4\n"          // y1 = y = (acc << 3) + 4
     "  s32i  a13, a2, 0\n"
     "  addi  a2, a2, 8\n"
     "1:\n"

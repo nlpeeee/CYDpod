@@ -26,6 +26,7 @@ const int16_t* eq_process(const int16_t* in, uint32_t n);
 struct EqStats {
   bool on = false; uint8_t bands = 0; int16_t preGainCentiDb = 0;
   uint32_t frames = 0, cycles = 0;      // monotonic, wrap; difference two samples
+  uint32_t limited = 0;                 // monotonic: frames the output limiter reduced
   bool xtensa = false; uint32_t selftestAsmCycles = 0, selftestRefCycles = 0; // per frame, 5 bands
 };
 EqStats eq_stats();

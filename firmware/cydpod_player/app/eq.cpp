@@ -31,6 +31,7 @@ static void adopt() {
   const cydeq::Coeffs next = published;
   const uint32_t serial = publishedSerial;
   portEXIT_CRITICAL(&eqLock);
+  state.retarget(active, next);  // level continues from where it was, then glides
   state.seed(next);
   active = next;
   appliedSerial = serial;
@@ -42,8 +43,11 @@ bool eq_bypass() {
 }
 
 void eq_flush() {
+  const uint32_t limited = state.limited;
   state.reset();
-  state.seed(active);  // every running band restarts from silence
+  state.seed(active);           // every running band restarts from silence
+  state.gain = active.outGain;  // after a flush there is no level to glide from
+  state.limited = limited;
 }
 
 const int16_t* eq_process(const int16_t* in, uint32_t n) {
@@ -103,9 +107,11 @@ void eq_apply(bool on, const int8_t gains[cydeq::Bands]) {
   publishedOn = on;
   publishedSerial = publishedSerial + 1;
   portEXIT_CRITICAL(&eqLock);
-  Serial.printf("eq: %s gains %d %d %d %d %d  bands %u peak %+d.%02d dB pregain %+d.%02d dB  design %lu us%s\n",
+  // peak: the slider curve's maximum; level: net overall gain (half-loudness match, <= 0).
+  const int peak = c.peakCentiDb, level = c.preGainCentiDb;
+  Serial.printf("eq: %s gains %d %d %d %d %d  stages %u peak %c%d.%02d dB level %c%d.%02d dB  design %lu us%s\n",
                 on ? "on" : "off", g[0], g[1], g[2], g[3], g[4], unsigned(c.count),
-                c.peakCentiDb / 100, abs(c.peakCentiDb % 100), c.preGainCentiDb / 100, abs(c.preGainCentiDb % 100),
+                peak < 0 ? '-' : '+', abs(peak) / 100, abs(peak) % 100, level < 0 ? '-' : '+', abs(level) / 100, abs(level) % 100,
                 (unsigned long)us, ok ? "" : "  REJECTED (bypass)");
 }
 
@@ -114,7 +120,7 @@ EqStats eq_stats() {
   portENTER_CRITICAL(&eqLock);
   s.on = publishedOn; s.bands = published.count; s.preGainCentiDb = published.preGainCentiDb;
   portEXIT_CRITICAL(&eqLock);
-  s.frames = statFrames; s.cycles = statCycles;
+  s.frames = statFrames; s.cycles = statCycles; s.limited = state.limited;  // single-word reads
   s.xtensa = kernelIsXtensa; s.selftestAsmCycles = testAsmCycles; s.selftestRefCycles = testRefCycles;
   return s;
 }

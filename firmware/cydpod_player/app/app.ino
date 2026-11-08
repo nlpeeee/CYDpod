@@ -381,9 +381,10 @@ void loop() {
       const uint32_t frames = e.frames - eqPrev.frames, cycles = e.cycles - eqPrev.cycles;
       const uint32_t perFrame = frames ? cycles / frames : 0;
       const uint32_t tenths = uint32_t(uint64_t(perFrame) * 441 / (getCpuFrequencyMhz() * 100));
-      Serial.printf("stat: eq on %d bands %u pregainCdB %d kernel %s frames %lu cycPerFrame %lu cpu %lu.%lu%%\n",
+      Serial.printf("stat: eq on %d bands %u levelCdB %d kernel %s frames %lu cycPerFrame %lu cpu %lu.%lu%% limited %lu\n",
                     int(e.on), unsigned(e.bands), int(e.preGainCentiDb), e.xtensa ? "xtensa" : "c++",
-                    (unsigned long)frames, (unsigned long)perFrame, (unsigned long)(tenths / 10), (unsigned long)(tenths % 10));
+                    (unsigned long)frames, (unsigned long)perFrame, (unsigned long)(tenths / 10), (unsigned long)(tenths % 10),
+                    (unsigned long)(e.limited - eqPrev.limited));
       eqPrev = e;
     }
     // CY-119: stutter evidence. nextMax = SD read + whole-frame decode; the ring holds audio_ringFrames() frames.

@@ -29,7 +29,9 @@ Only the Bluetooth options change, through `tools/bluedroid/defconfig.cydpod-bt`
 | `BT_BTC_TASK_STACK_SIZE`, `BT_BTU_TASK_STACK_SIZE` | 8192 | 4096 |
 | `BT_SPP_ENABLED` | y | y (ESP32-A2DP's unused sink calls `esp_spp_init`) |
 
-Unchanged: CYDpod's code, ESP32-A2DP, codecs, PCM ring, core assignments, and every non-Bluetooth option.
+One source patch, `tools/bluedroid/patches/0001-avrc-ct-forward-volume-interim.patch`, applied to the trim build only: AVRCP's INTERIM reply to a volume-change registration carries the speaker's current absolute volume, the only way a source can read it, and stock Bluedroid ignores it. The patch forwards it as `ESP_AVRC_CT_CHANGE_NOTIFY_EVT` with bit 7 of the volume set (volumes are 0–127), so CYDpod can adopt it without re-registering (see [bt-volume-feedback.md](bt-volume-feedback.md)). No public header changes; firmware built on stock libraries just never sees it.
+
+Unchanged: ESP32-A2DP, codecs, PCM ring, core assignments, and every non-Bluetooth option.
 
 ## Method
 
@@ -37,7 +39,7 @@ Unchanged: CYDpod's code, ESP32-A2DP, codecs, PCM ring, core assignments, and ev
 - **stock:** Espressif's shipped `sdkconfig` exactly;
 - **trim:** the same file with the overlay applied.
 
-The libraries, generated linker scripts and `sdkconfig.h` files that differ between the two builds are the complete set of artefacts the Bluetooth options affect. `tools/bluedroid/make-libs.py` copies Espressif's 3.3.10 package and replaces only those artefacts with the trimmed builds. Everything else stays Espressif's original binary.
+Both builds pin their version strings (`version.txt` in the project and the ESP-IDF tree), so git state never shows up as a difference. The libraries, generated linker scripts and `sdkconfig.h` files that differ between the two builds are the complete set of artefacts the Bluetooth options affect. `tools/bluedroid/make-libs.py` copies Espressif's 3.3.10 package and replaces only those artefacts with the trimmed builds. Everything else stays Espressif's original binary.
 
 The patched package is kept beside the stock one (`esp32-libs/3.3.10.stock`). `dependencies.lock.json` still names stock 3.3.10, so other builds and the 0.5.2 build kit are unaffected until the board accepts this.
 

@@ -105,6 +105,9 @@ open(p, 'w', encoding='utf-8', newline='\n').write('\n'.join(lines).rstrip('\n')
 with open(os.path.join(out, 'versions.txt'), 'a', encoding='utf-8', newline='\n') as f:
     f.write('cydpod-bt: trimmed Bluedroid, tools/bluedroid/defconfig.cydpod-bt sha256 %s\n' %
             sha(os.path.join(root, 'tools', 'bluedroid', 'defconfig.cydpod-bt')))
+    pdir = os.path.join(root, 'tools', 'bluedroid', 'patches')
+    for name in sorted(n for n in os.listdir(pdir) if n.endswith('.patch')) if os.path.isdir(pdir) else []:
+        f.write('cydpod-bt-patch: %s sha256 %s\n' % (name, sha(os.path.join(pdir, name))))
 json.dump(report, open(os.path.join(root, '.tools', 'logs', 'bluedroid-make-libs.json'), 'w'), indent=1)
 print('replaced', len(report['replaced']), 'libs:', ', '.join(r['lib'] for r in report['replaced']))
 print('identical', report['identical'], 'changed-not-shipped', report['changed_not_shipped'], 'shipped-not-built', report['shipped_not_built'])

@@ -33,6 +33,10 @@ foreach ($variant in $Variants) {
     Set-Content -Encoding ascii (Join-Path $p 'CMakeLists.txt') "cmake_minimum_required(VERSION 3.16)`ninclude(`$ENV{IDF_PATH}/tools/cmake/project.cmake)`nproject(cydbt)`n"
     Set-Content -Encoding ascii (Join-Path $p 'main\CMakeLists.txt') "idf_component_register(SRCS `"main.c`")`n"
     Set-Content -Encoding ascii (Join-Path $p 'main\main.c') "void app_main(void) {}`n"
+    # Fixed version strings: otherwise git describe of this repository and of a
+    # patched (dirty) ESP-IDF tree make version-only differences between builds.
+    Set-Content -Encoding ascii (Join-Path $p 'version.txt') 'cydbt'
+    Set-Content -Encoding ascii (Join-Path $idf 'version.txt') 'v5.5.4'
     $cfg = Get-Content (Join-Path $libs 'sdkconfig')
     if ($variant -eq 'trim') {
         $overlay = Get-Content (Join-Path $PSScriptRoot 'defconfig.cydpod-bt') | Where-Object { $_ -match '^CONFIG_' }
@@ -40,6 +44,11 @@ foreach ($variant in $Variants) {
         $cfg = ($cfg | Where-Object { $line = $_; -not ($keys | Where-Object { $line -match "^(# )?$_(=| is not set)" }) }) + $overlay
     }
     Set-Content -Encoding ascii (Join-Path $p 'sdkconfig') $cfg
+    # The trim build also carries CYDpod's Bluedroid source patches; the stock
+    # build stays pristine so make-libs.py sees exactly what they change.
+    $patches = @()
+    if ($variant -eq 'trim') { $patches = @(Get-ChildItem (Join-Path $PSScriptRoot 'patches\*.patch') | Sort-Object Name) }
+    foreach ($patch in $patches) { git -C $idf apply $patch.FullName; if ($LASTEXITCODE -ne 0) { throw "patch failed: $($patch.Name)" } }
     Push-Location $p
     try {
         # ESP-IDF's CMake build directly: idf.py would demand the installer's constraints file.
@@ -47,7 +56,12 @@ foreach ($variant in $Variants) {
         if ($LASTEXITCODE -ne 0) { throw "$variant configure failed" }
         cmd /c "ninja -C build > `"$work\$variant-build.log`" 2>&1"
         if ($LASTEXITCODE -ne 0) { throw "$variant build failed" }
-    } finally { Pop-Location }
+    } finally {
+        Pop-Location
+        [array]::Reverse($patches)
+        foreach ($patch in $patches) { git -C $idf apply -R $patch.FullName }
+        Remove-Item -Force (Join-Path $idf 'version.txt')
+    }
     $out = Join-Path $work "out\$variant"
     if (Test-Path $out) { Remove-Item -Recurse -Force $out }
     New-Item -ItemType Directory -Force (Join-Path $out 'lib'), (Join-Path $out 'ld'), (Join-Path $out 'config') | Out-Null

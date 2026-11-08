@@ -32,52 +32,76 @@ int main(){
   assert(s.take(remote,pct)&&remote&&pct==16);
   s.local(25);assert(s.command(0xfffffff0u,raw,tl));s.response(32);
   s.local(30);assert(!s.command(20,raw,tl)&&s.command(100,raw,tl));
-  // No initial notification: connection capabilities must trigger a bounded
-  // handshake, including mute, without requiring a physical speaker press.
+  // No report from the speaker (stock Bluedroid, or it never answers): after
+  // kReportWaitMs a bounded handshake sets CYDpod's level, including mute,
+  // without requiring a physical speaker press.
   for(uint8_t initial:{uint8_t(0),uint8_t(40),uint8_t(100)}){
     BtVolumeSync start;start.connection(true);
     assert(start.capabilities(true,initial));
     assert(!start.capabilities(true,90));
     assert(start.take(remote,pct)&&!remote);
-    assert(start.command(0,raw,tl)&&raw==BtVolumeSync::raw(initial));
+    assert(!start.command(0,raw,tl)&&!start.command(999,raw,tl)); // Waiting for the speaker's report.
+    assert(start.command(1000,raw,tl)&&raw==BtVolumeSync::raw(initial)&&start.reportWaits==1);
     start.notification(127);assert(!start.absolute); // Old registration state cannot undo the requested initial level.
     start.response(raw);assert(start.take(remote,pct)&&remote&&pct==initial);
     start.connection(true);assert(start.absolute); // Duplicate connected event is harmless.
-    assert(!start.command(100,raw,tl));
+    assert(!start.command(1100,raw,tl));
     start.connection(false);start.connection(true);
-    assert(start.capabilities(true,25)&&start.command(200,raw,tl));
+    assert(start.capabilities(true,25)&&!start.command(1200,raw,tl)&&start.command(2200,raw,tl));
     start.local(60);start.response(32);
     assert(start.take(remote,pct)&&remote&&pct==60);
-    assert(start.command(300,raw,tl)&&raw==76);
+    assert(start.command(2300,raw,tl)&&raw==76);
     start.response(76);assert(start.take(remote,pct)&&pct==60);
   }
+  // The speaker's own level on connect is adopted and nothing is sent.
+  BtVolumeSync rep;rep.connection(true);
+  assert(rep.capabilities(true,25)&&!rep.command(0,raw,tl));
+  assert(rep.report(BtVolumeSync::raw(62))&&rep.take(remote,pct)&&remote&&pct==62);
+  assert(!rep.command(2000,raw,tl)&&rep.sends==0&&rep.reportWaits==0);
+  assert(!rep.report(BtVolumeSync::raw(62))&&rep.reports==2); // Re-arm replies are plain reports.
+  rep.notification(BtVolumeSync::raw(31));assert(rep.take(remote,pct)&&pct==31);
+  rep.local(40);assert(rep.command(2100,raw,tl));rep.report(BtVolumeSync::raw(31));
+  assert(rep.take(remote,pct)&&pct==40); // A report cannot undo a slider move in flight.
+  // A report before the volume link is ignored here (bt.cpp replays it on link).
+  BtVolumeSync early;assert(!early.report(64)&&early.reports==0);
+  // The owner moves the slider while CYDpod waits: the owner's level is sent.
+  BtVolumeSync moved;moved.connection(true);
+  assert(moved.capabilities(true,25)&&!moved.command(0,raw,tl));
+  moved.local(70);assert(moved.command(10,raw,tl)&&raw==BtVolumeSync::raw(70));
+  assert(!moved.report(BtVolumeSync::raw(62))); // That command's reply completes the handshake.
+  moved.response(BtVolumeSync::raw(70));assert(moved.take(remote,pct)&&remote&&pct==70);
+  // A speaker button before any report: its level is adopted.
+  BtVolumeSync button;button.connection(true);
+  assert(button.capabilities(true,25)&&!button.command(0,raw,tl));
+  button.notification(BtVolumeSync::raw(44));
+  assert(button.absolute&&button.take(remote,pct)&&pct==44&&!button.command(2000,raw,tl));
   BtVolumeSync fallback;fallback.connection(true);
   assert(!fallback.capabilities(false,40)&&!fallback.command(0,raw,tl));
   fallback.connection(false);fallback.connection(true);
   // A speaker that advertises volume support but never answers: the handshake
   // is retried twice, then CYDpod hands volume to the speaker anyway instead of
   // stacking its own gain on top.
-  assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl)&&raw==BtVolumeSync::raw(40));
-  assert(fallback.command(1000,raw,tl)&&raw==BtVolumeSync::raw(40)&&fallback.retries==1);
-  assert(fallback.command(2000,raw,tl)&&fallback.retries==2&&fallback.initializing);
-  assert(!fallback.command(3000,raw,tl)&&!fallback.initializing&&fallback.absolute);
+  assert(fallback.capabilities(true,40)&&!fallback.command(0,raw,tl)&&fallback.command(1000,raw,tl)&&raw==BtVolumeSync::raw(40));
+  assert(fallback.command(2000,raw,tl)&&raw==BtVolumeSync::raw(40)&&fallback.retries==1);
+  assert(fallback.command(3000,raw,tl)&&fallback.retries==2&&fallback.initializing);
+  assert(!fallback.command(4000,raw,tl)&&!fallback.initializing&&fallback.absolute);
   assert(fallback.take(remote,pct)&&remote&&pct==40);
-  assert(!fallback.capabilities(true,50)&&!fallback.command(4000,raw,tl));
+  assert(!fallback.capabilities(true,50)&&!fallback.command(5000,raw,tl));
   fallback.notification(64);assert(fallback.take(remote,pct)&&remote&&pct==50);
   // A slow first reply (after a retry) still completes the handshake.
   fallback.connection(false);fallback.connection(true);
-  assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl)&&fallback.command(1000,raw,tl));
+  assert(fallback.capabilities(true,40)&&!fallback.command(0,raw,tl)&&fallback.command(1000,raw,tl)&&fallback.command(2000,raw,tl));
   fallback.response(BtVolumeSync::raw(35));
-  assert(fallback.take(remote,pct)&&remote&&pct==35&&!fallback.initializing&&!fallback.command(2000,raw,tl));
+  assert(fallback.take(remote,pct)&&remote&&pct==35&&!fallback.initializing&&!fallback.command(3000,raw,tl));
   // A slider move during the retries is what gets sent next.
   fallback.connection(false);fallback.connection(true);
-  assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl));
-  fallback.local(70);assert(fallback.command(1000,raw,tl)&&raw==BtVolumeSync::raw(70));
+  assert(fallback.capabilities(true,40)&&!fallback.command(0,raw,tl)&&fallback.command(1000,raw,tl));
+  fallback.local(70);assert(fallback.command(2000,raw,tl)&&raw==BtVolumeSync::raw(70));
   fallback.connection(false);fallback.connection(true);
-  assert(fallback.capabilities(true,40)&&fallback.command(0,raw,tl));fallback.failed();
-  assert(fallback.take(remote,pct)&&!remote&&!fallback.command(2000,raw,tl));
+  assert(fallback.capabilities(true,40)&&!fallback.command(0,raw,tl)&&fallback.command(1000,raw,tl));fallback.failed();
+  assert(fallback.take(remote,pct)&&!remote&&!fallback.command(3000,raw,tl));
   // Replies to nothing, or on a dropped link, are ignored.
   BtVolumeSync quiet;quiet.connection(true);quiet.response(64);assert(!quiet.absolute&&quiet.responses==0);
-  puts("PASS initial Bluetooth volume: no initial report, confirmed handshake, mute, reconnect, duplicate events, pending slider, unsupported, retried handshake, unanswered handover, slow reply and failure fallback");
+  puts("PASS initial Bluetooth volume: speaker report adopted, report vs slider, early report, button before report, no report fallback, confirmed handshake, mute, reconnect, duplicate events, pending slider, unsupported, retried handshake, unanswered handover, slow reply and failure fallback");
   puts("PASS Bluetooth volume: reports, mute, endpoints, quantization, coalescing, no echoes, timeout, disconnect, reconnect, clock wrap");
 }

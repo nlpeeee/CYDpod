@@ -45,6 +45,9 @@ static cyd::BtVolumeSync volumeSync;
 static uint32_t volumeRequestSeen=0;
 // AVRCP controller link and the peer's capability reply, under volumeMux.
 static bool avrcUp=false,capsSeen=false,capsSupported=false;
+// The speaker's level from the registration reply (patched Bluedroid only),
+// kept until bt_tick links the volume, like the capability reply.
+static bool reportSeen=false;static uint8_t reportRaw=0;
 static uint8_t avrcPeer[6]{};
 
 // When the player may page its saved speaker unprompted (bt_reconnect_policy.h).
@@ -178,6 +181,14 @@ class CydSource : public BluetoothA2DPSource {
   }
   void bt_av_notify_evt_handler(uint8_t event,esp_avrc_rn_param_t* param) override {
     if(event==ESP_AVRC_RN_VOLUME_CHANGE){
+      // Bit 7: the INTERIM reply to our registration (tools/bluedroid/patches),
+      // the speaker's current level. The registration is still armed.
+      if(param->volume&0x80){
+        const uint8_t level=param->volume&0x7f;
+        portENTER_CRITICAL(&volumeMux);reportSeen=true;reportRaw=level;const bool adopted=volumeSync.report(level);portEXIT_CRITICAL(&volumeMux);
+        if(adopted)Serial.printf("bt: speaker reports volume %u%%, adopted\n",unsigned(cyd::BtVolumeSync::percent(level)));
+        return;
+      }
       portENTER_CRITICAL(&volumeMux);volumeSync.notification(param->volume);portEXIT_CRITICAL(&volumeMux);
       bt_av_volume_changed(); // Re-arm the notification without echoing a command.
       return;
@@ -194,7 +205,7 @@ class CydSource : public BluetoothA2DPSource {
     // same peer), whatever order these events arrive in.
     if(event==ESP_AVRC_CT_CONNECTION_STATE_EVT){
       portENTER_CRITICAL(&volumeMux);
-      avrcUp=rc->conn_stat.connected;memcpy(avrcPeer,rc->conn_stat.remote_bda,6);capsSeen=false;
+      avrcUp=rc->conn_stat.connected;memcpy(avrcPeer,rc->conn_stat.remote_bda,6);capsSeen=reportSeen=false;
       portEXIT_CRITICAL(&volumeMux);
       Serial.printf("bt: remote control %s\n",rc->conn_stat.connected?"up":"down");
     }
@@ -208,7 +219,7 @@ class CydSource : public BluetoothA2DPSource {
       const bool started=volumeSync.capabilities(supported,initial);
       portEXIT_CRITICAL(&volumeMux);
       Serial.printf("bt: speaker volume control %s\n",supported?"supported":"not supported");
-      if(started)Serial.printf("bt: initial volume sync target=%u%%\n",unsigned(initial));
+      if(started)Serial.printf("bt: waiting for the speaker's volume (fallback %u%%)\n",unsigned(initial));
     }
   }
   void bt_app_av_sm_hdlr(uint16_t event,void* param) override {
@@ -707,13 +718,14 @@ void bt_tick() {
   // pass, so neither event order nor an early capability reply can leave a
   // connection without sync. No capability reply within 1.5 s: ask again.
   static uint32_t linkedAt=0;static uint8_t capsAsks=0;
-  bool askCaps=false,startedNow=false;
+  bool askCaps=false,startedNow=false,reportedNow=false;
   const bool a2dpUp=bt_connected();
   portENTER_CRITICAL(&volumeMux);
   const bool want=avrcUp&&a2dpUp&&memcmp(avrcPeer,a2dp.peer(),6)==0;
   if(want!=volumeSync.linked){
     volumeSync.connection(want);linkedAt=millis();capsAsks=0;
     if(want&&capsSeen)startedNow=volumeSync.capabilities(capsSupported,current);
+    if(want&&reportSeen&&volumeSync.report(reportRaw))reportedNow=true;
   }else if(want&&!capsSeen&&capsAsks<3&&millis()-linkedAt>=1500u*(capsAsks+1u)){++capsAsks;askCaps=true;}
   if(request!=volumeRequestSeen){volumeRequestSeen=request;volumeSync.local(current);}
   send=volumeSync.command(millis(),raw,label);
@@ -728,7 +740,8 @@ void bt_tick() {
     if(result!=ESP_OK){portENTER_CRITICAL(&volumeMux);volumeSync.failed();portEXIT_CRITICAL(&volumeMux);}
     Serial.printf("bt: set speaker volume raw=%u rc=%d\n",unsigned(raw),int(result));
   }
-  if(startedNow)Serial.printf("bt: initial volume sync target=%u%%\n",unsigned(current));
+  if(startedNow)Serial.printf("bt: waiting for the speaker's volume (fallback %u%%)\n",unsigned(current));
+  if(reportedNow)Serial.println("bt: speaker's reported volume adopted");
   if(askCaps){
     const esp_err_t rc=esp_avrc_ct_send_get_rn_capabilities_cmd(0);
     Serial.printf("bt: asking speaker for volume support again rc=%d\n",int(rc));
@@ -739,11 +752,11 @@ void bt_tick() {
     volStatAt=millis();
     portENTER_CRITICAL(&volumeMux);const cyd::BtVolumeSync v=volumeSync;const bool up=avrcUp,seen=capsSeen,sup=capsSupported;portEXIT_CRITICAL(&volumeMux);
     Serial.printf("stat: vol link=%d avrc=%d caps=%s abs=%d init=%d/%u inflight=%d pending=%d speaker=%u%% shown=%u%% remote=%d "
-                  "notes=%lu replies=%lu late=%lu timeouts=%lu retries=%lu sends=%lu\n",
+                  "notes=%lu replies=%lu late=%lu timeouts=%lu retries=%lu sends=%lu reports=%lu reportWaits=%lu\n",
       int(v.linked),int(up),seen?(sup?"yes":"no"):"?",int(v.absolute),int(v.initializing),unsigned(v.initTries),int(v.inFlight),int(v.pending),
       unsigned(cyd::BtVolumeSync::percent(v.reported)),unsigned(audio_volume()),int(audio_remoteVolume()),
       (unsigned long)v.notifications,(unsigned long)v.responses,(unsigned long)v.lateResponses,(unsigned long)v.timeouts,
-      (unsigned long)v.retries,(unsigned long)v.sends);
+      (unsigned long)v.retries,(unsigned long)v.sends,(unsigned long)v.reports,(unsigned long)v.reportWaits);
   }
   if(failure!=BT_FAIL_NONE){haveTarget=false;connectDeadline=0;POLICY(connectFailed());}
   POLICY(expire(millis()));
@@ -936,7 +949,7 @@ bool bt_suspendStack(){
   // The stack went down without a guaranteed AVRCP/A2DP disconnect event. Drop
   // the volume link here, or the reconnect after wake finds it still "linked",
   // skips the capability handshake and leaves the speaker's volume unsynced.
-  portENTER_CRITICAL(&volumeMux);volumeSync.connection(false);avrcUp=capsSeen=false;portEXIT_CRITICAL(&volumeMux);
+  portENTER_CRITICAL(&volumeMux);volumeSync.connection(false);avrcUp=capsSeen=reportSeen=false;portEXIT_CRITICAL(&volumeMux);
   audio_setRemoteVolume(false,0);
   const bool ok=host==ESP_OK&&ctrl==ESP_OK&&esp_bt_controller_get_status()==ESP_BT_CONTROLLER_STATUS_INITED;
   Serial.printf("bt: stack stopped host=%d controller=%d status=%d heap %u largest %u\n",int(host),int(ctrl),

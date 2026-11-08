@@ -53,3 +53,18 @@ Package: `releases/candidates/bluedroid-trim`. Compare against the boot log of t
 4. **Pairing:** pair a speaker from scratch (Bluetooth menu, Pair). This exercises the 4 KB BTC/BTU stacks in discovery and pairing; check `stat: tasks BTC_TASK=… BTU_TASK=…` still shows free stack.
 5. **Sleep:** Sleep and wake (`pwr sleepnow`), and `pwr btcycle 5`.
 6. **Wired:** if a DAC is fitted, the wired build plays.
+
+## Board results (owner, 2026-11-08, candidate `cd6f5245`)
+
+| | Volume-sync build (stock libs) | Trimmed |
+|---|---|---|
+| `bt: started … heap` | 33,848 | 83,896 (+50 KB) |
+| Largest free block while streaming | 4–6 KB | 34–45 KB |
+| Minimum free heap | about 5 KB | 46,676 (23,712 once, reconnecting to the JBL after Sleep) |
+| `stat: vol link=1 avrc=1` | sometimes missing | every connection (JBL, Xiaomi, re-paired Xiaomi, after Sleep) |
+| JBL → Xiaomi → JBL without power-off | JBL refused | both connect |
+
+- Steady playback: `pullGapMaxUs` about 27 ms, `underruns 0`. Gaps above 100 ms only span a stream start, a speaker switch or a reconnect.
+- Lowest free stack: `BTC_TASK` 2,464 B and `BTU_TASK` 2,544 B of 4,096, including a fresh pairing.
+- Pairing (forget, pair), Sleep and wake (stack stopped, restarted, reconnected) pass.
+- Found: after a fresh pairing the Xiaomi answered CYDpod's 25% set with 62%, while its next button press reported 31%. The owner chose to adopt the speaker's own level on connect instead; that needs patch 0001 (see the spec) and is a new candidate to check.

@@ -45,7 +45,8 @@ How it works:
   - more than 10 L2CAP stalls;
   - the TX queue at 13 or more of its 27 packets;
   - or any drop.
-- **Up one step** after 60 s clean in total, never above one step better than the rate the device was remembered at.
+- **Start** every link at 328 kbps (owner's choice: full quality wherever it fits).
+- **Up one step** after 60 s clean in total, back to 328 at most.
 - **Memory:** `Settings::btLinks` (NVS key `btLinks`, up to 5 devices, matched by address) stores each device's rate when the link ends, and flags:
   - `EARBUDS`: the device has stepped below 328;
   - `DROPS_WHEN_IDLE`: it ended the link within 30 s of our idle suspend.
@@ -55,10 +56,11 @@ How it works:
 
 ## Quiet UI
 
-`btlink_quietUi()` is true in any of these cases:
-- the connected device has the `EARBUDS` flag;
-- the policy saw congestion in the last 10 s;
+`btlink_quietUi()` is true in either of these cases:
+- the policy saw congestion on the current link in the last 10 s;
 - `btd ui quiet` is set.
+
+The `EARBUDS` flag is still recorded, but it no longer silences the animations.
 
 `btd ui on` and `btd ui auto` override or restore it.
 

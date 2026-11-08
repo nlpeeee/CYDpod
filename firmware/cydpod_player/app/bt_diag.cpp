@@ -177,16 +177,16 @@ static void sampleLink(uint32_t now) {
 }
 
 static void linkStarted(uint32_t now) {
-  const BtLinkMemo* m = memoFind(peerAddr);
-  const uint16_t remembered = m ? m->rateKbps : 0;
-  rate.start(now, remembered);
+  // Every link starts at full quality (owner's choice); the policy steps down
+  // only while this link backs up. The remembered rate is kept for the logs.
+  rate.start(now, 0);
   // Fresh baselines: the link counters are cumulative across links.
   if (stackDiag()) {
     lastDrops = cydpod_a2d_src_txq_drops; lastLimited = cydpod_a2d_src_limited; lastStalls = cydpod_av_l2c_stalls;
     lastAvDrops = cydpod_av_drops; lastWrites = cydpod_av_writes;
     cydpod_a2d_src_txq_max = 0; cydpod_av_l2c_bufs_max = 0;
   }
-  applyRate(rate.pinned ? "pinned" : remembered ? "remembered for this device" : "stock");
+  applyRate(rate.pinned ? "pinned" : "stock");
 }
 
 static void linkEnded() {
@@ -221,11 +221,10 @@ void btdiag_tick(bool connected, const uint8_t* peer) {
   if (now - statAt >= 10000) { statAt = now; printStat(); }
 }
 
+// Animations stay on unless this link is backing up right now (or `btd ui`).
 bool btlink_quietUi() {
   if (uiMode) return uiMode == 1;
-  if (!peerValid) return false;
-  const BtLinkMemo* m = memoFind(peerAddr);
-  return (m && (m->flags & BT_LINK_EARBUDS)) || rate.congested(millis());
+  return peerValid && rate.congested(millis());
 }
 
 uint32_t btlink_idleSuspendMs() {
@@ -256,7 +255,7 @@ bool btdiag_command(const char* line) {
     const int kbps = strcmp(a, "auto") == 0 ? 0 : atoi(a);
     if (strcmp(a, "auto") != 0 && (kbps < 100 || kbps > 400)) { Serial.println("btd: rate auto | 100..400 kbps (pins until reboot)"); return true; }
     rate.pin(uint16_t(kbps));
-    if (!kbps && peerValid) { const BtLinkMemo* m = memoFind(peerAddr); rate.start(millis(), m ? m->rateKbps : 0); }
+    if (!kbps && peerValid) rate.start(millis(), 0);
     applyRate(kbps ? "pinned by btd" : "automatic");
     return true;
   }

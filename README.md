@@ -9,7 +9,7 @@
 A pocket music player you build yourself, from one cheap yellow board.</p>
 
 <p align="center">
-  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.4"><strong>Download CYDpod 0.5.4</strong></a>
+  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.5"><strong>Download CYDpod 0.5.5</strong></a>
 </p>
 
 <p align="center">
@@ -30,6 +30,7 @@ It starts with the Cheap Yellow Display, a tiny touchscreen computer that hobbyi
 
 - **You own it.** No account, no cloud and no subscription. Nobody can take your music away, change the rules or track what you listen to.
 - **It feels good to use.** Smooth, phone-like scrolling, a search that understands what you meant, and playlists that open the moment you tap them.
+- **Make it sound your way.** A five-band equalizer with presets for bass, vocals, treble and loudness, tuned to stay clean even with every band turned up.
 - **It respects your time.** Set it down and it quietly goes to sleep. Pick it up and it carries on exactly where you were.
 - **It's made for tinkering.** Choose a theme, print the case, or dig into the code. It's your player, so make it yours.
 - **Prefer wires?** Add a little DAC. The board has no headphone socket, but a thumbnail-sized audio board (a PCM5102A-style I2S DAC, a few dollars online) plugs into its spare connector and gives you a proper line-out for a hi-fi or powered speakers. Add a tiny headphone amp and it drives headphones too. The download includes a wired build, and the case has a version with room for the DAC inside.
@@ -44,11 +45,11 @@ It starts with the Cheap Yellow Display, a tiny touchscreen computer that hobbyi
 
 You'll need a **JC2432W328C** Cheap Yellow Display (the capacitive-touch one), a **microSD card** with your music, a **Bluetooth speaker or headphones** (or the little DAC for wired listening), and a **Windows PC** for a few minutes.
 
-1. [Download the latest release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.4).
+1. [Download the latest release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.5).
 2. Follow the [flashing guide](docs/firmware/README.md).
 3. Press play.
 
-For the details, see the [firmware guide](docs/firmware/README.md) and the [release notes](docs/releases/0.5.4.md).
+For the details, see the [firmware guide](docs/firmware/README.md) and the [release notes](docs/releases/0.5.5.md).
 
 ## Thanks
 

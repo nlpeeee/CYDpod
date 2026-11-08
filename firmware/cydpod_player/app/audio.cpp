@@ -6,6 +6,7 @@
 #include "storage.h"
 #include "settings.h"     // RepeatMode
 #include "codec_track.h"
+#include "eq.h"
 #include "small_file.h"
 #include <esp_timer.h>
 
@@ -200,7 +201,7 @@ void audio_pull(int16_t* out, int32_t frames) {
 // ---------------------------------------------------------------------------
 // Called by the decoder with at most PCM_BATCH_FRAMES frames. Commands and
 // publication share a lock, so a seek or track change can invalidate a batch.
-static bool pushFrames(const M4aStereo* pcm, uint32_t count) {
+static bool publishFrames(const M4aStereo* pcm, uint32_t count) {
   while (count) {
     portENTER_CRITICAL(&stateLock);
     if (requestPending()) {
@@ -230,6 +231,20 @@ static bool pushFrames(const M4aStereo* pcm, uint32_t count) {
   return true;
 }
 
+// EQ (eq.h) on the decoder task, outside the lock, before PCM enters the ring.
+// Bypass (off or flat) publishes the decoder's PCM untouched.
+static bool pushFrames(const M4aStereo* pcm, uint32_t count) {
+  if (eq_bypass()) return publishFrames(pcm, count);
+  while (count) {
+    const uint32_t n = min(count, EqChunkFrames);
+    const int16_t* out = eq_process(reinterpret_cast<const int16_t*>(pcm), n);
+    if (!publishFrames(reinterpret_cast<const M4aStereo*>(out), n)) return false;
+    pcm += n;
+    count -= n;
+  }
+  return true;
+}
+
 struct PcmBatch {
   M4aStereo frames[PCM_BATCH_FRAMES];
   uint32_t used = 0;
@@ -247,10 +262,11 @@ struct PcmBatch {
 static CodecTrack m4a;                        // stateless facade over the single 40 KiB pool
 static File     file;
 
-static void requestFlush() {
+static void requestFlush() { // decoder task only
   portENTER_CRITICAL(&stateLock);
   rbTail = rbHead; framesPlayed = 0;
   portEXIT_CRITICAL(&stateLock);
+  eq_flush();
 }
 struct SeekContext { uint32_t serial; };
 static int seekHook(void* user) {

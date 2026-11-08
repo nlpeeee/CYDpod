@@ -594,12 +594,14 @@
     "name": "esp32-libs-cydpod-bt",
     "base": "esp32-libs 3.3.10",
     "archive": "esp32-libs-3.3.10-cydpod-bt.zip",
-    "sha256": "01e45ae8d0cfc0599af8c0b7e0e993286e3ef9469dad7b8a57c62b6ef581f90b",
+    "sha256": "56121498423a5d599ef09f3d8fb1631cf112ade2f5043f524ad8f13d9f5fecdd",
     "espIdf": "v5.5.4 735507283d",
     "toolchain": "esp-14.2.0_20260121",
     "defconfigSha256": "e3e955e9d0e76ae4e95d57b055fa6d4e290be252d8834b396b04bb65099439b5",
     "patches": {
-      "0001-avrc-ct-forward-volume-interim.patch": "fa5ade4d70626c44ba773a11afd2219d64d88004820f3fbb5bf199c0bd653da6"
+      "0001-avrc-ct-forward-volume-interim.patch": "fa5ade4d70626c44ba773a11afd2219d64d88004820f3fbb5bf199c0bd653da6",
+      "0002-a2dp-src-rate-control.patch": "55d2febf6abce65f9d04ac7c6fa75a3aca99f2be4df22b3b021f0b85d475aade",
+      "0003-a2dp-src-full-packets.patch": "0c107a1415fdaaa40debf1630a3a49e67ffe4be537d29a36bafb09e3a1fdde65"
     },
     "files": {
       "dio_qspi/include/sdkconfig.h": {
@@ -608,7 +610,7 @@
       },
       "lib/libbt.a": {
         "stock": "d500529efd1d391492a4e5798f39f722e3bf0bbc359ff7c819bce56b1ca7141f",
-        "cydpod": "e5288350dfb0f9720d46459debc3f51a3c3dca185319378c5489620f4ce8b73d"
+        "cydpod": "5b3872d8be7d6d4f772f4af3e885b7b13bc8e61e748ce3a8bae80d80491e78f4"
       },
       "lib/libesp_hid.a": {
         "stock": "7607bb8dca65771d8e3cf31c64c25e8e4006cf391d635df9982a4ab4f2b20cb3",
@@ -628,7 +630,7 @@
       },
       "versions.txt": {
         "stock": "fc010fecb82fd91a41c000613d209244912a80dee09a0a78452af18b5f01ceaf",
-        "cydpod": "bb7499b490313c75f8c6fd6636c75b969c172e6c2679ee3b665baa3a8292b388"
+        "cydpod": "086f497bdb2331ad35c2b1698ec5f716d7335f5c15291eca7bf1942f8deb92cb"
       }
     },
     "howBuilt": "tools/bluedroid/README.md"

@@ -11,7 +11,10 @@ Inputs: ESP-IDF v5.5.4 (735507283d) in .tools/esp-idf-5.5.4, the pinned
 xtensa toolchain from .deps, cmake/ninja from Visual Studio Build Tools and the
 Python venv in .tools/idf-venv (ESP-IDF requirements.core.txt).
 #>
-param([string]$Root = (Resolve-Path "$PSScriptRoot\..\..").Path, [string[]]$Variants = @('stock', 'trim'))
+# -ExtraPatches adds patches (for example tools/bluedroid/diag/*.patch) to the trim
+# build only, and -OutSuffix keeps that build apart from out/<variant>.
+param([string]$Root = (Resolve-Path "$PSScriptRoot\..\..").Path, [string[]]$Variants = @('stock', 'trim'),
+      [string[]]$ExtraPatches = @(), [string]$OutSuffix = '')
 $ErrorActionPreference = 'Stop'
 $idf = Join-Path $Root '.tools\esp-idf-5.5.4'
 $venv = Join-Path $Root '.tools\idf-venv'
@@ -47,7 +50,7 @@ foreach ($variant in $Variants) {
     # The trim build also carries CYDpod's Bluedroid source patches; the stock
     # build stays pristine so make-libs.py sees exactly what they change.
     $patches = @()
-    if ($variant -eq 'trim') { $patches = @(Get-ChildItem (Join-Path $PSScriptRoot 'patches\*.patch') | Sort-Object Name) }
+    if ($variant -eq 'trim') { $patches = @(Get-ChildItem (Join-Path $PSScriptRoot 'patches\*.patch') | Sort-Object Name) + @($ExtraPatches | ForEach-Object { Get-Item $_ }) }
     foreach ($patch in $patches) { git -C $idf apply $patch.FullName; if ($LASTEXITCODE -ne 0) { throw "patch failed: $($patch.Name)" } }
     Push-Location $p
     try {
@@ -62,7 +65,7 @@ foreach ($variant in $Variants) {
         foreach ($patch in $patches) { git -C $idf apply -R $patch.FullName }
         Remove-Item -Force (Join-Path $idf 'version.txt')
     }
-    $out = Join-Path $work "out\$variant"
+    $out = Join-Path $work "out\$variant$OutSuffix"
     if (Test-Path $out) { Remove-Item -Recurse -Force $out }
     New-Item -ItemType Directory -Force (Join-Path $out 'lib'), (Join-Path $out 'ld'), (Join-Path $out 'config') | Out-Null
     Get-ChildItem (Join-Path $p 'build\esp-idf') -Recurse -Filter *.a | ForEach-Object { Copy-Item $_.FullName (Join-Path $out 'lib') }

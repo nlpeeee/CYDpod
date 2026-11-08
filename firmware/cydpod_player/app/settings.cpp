@@ -48,6 +48,7 @@ void settings_begin() {
     prefs.getBytes("known", s.btKnown, sizeof(s.btKnown));
     s.btKnownCount = min<uint8_t>(prefs.getUChar("knownN", 0), BT_KNOWN_MAX);
   }
+  if (prefs.getBytesLength("btLinks") == sizeof(s.btLinks)) prefs.getBytes("btLinks", s.btLinks, sizeof(s.btLinks));
   s.wifiSsid   = prefs.getString("ssid",   s.wifiSsid);
   s.wifiPass   = prefs.getString("pass",   s.wifiPass);
   s.webPin     = prefs.getString("webPin", s.webPin);
@@ -139,6 +140,7 @@ bool settings_save() {
   ok = (prefs.putBytes("btAddr",   s.btAddr, sizeof(s.btAddr)) == sizeof(s.btAddr)) && ok;
   ok = (prefs.putBytes("known",    s.btKnown, sizeof(s.btKnown)) == sizeof(s.btKnown)) && ok;
   ok = (prefs.putUChar("knownN",   s.btKnownCount) == 1) && ok;
+  ok = (prefs.putBytes("btLinks",  s.btLinks, sizeof(s.btLinks)) == sizeof(s.btLinks)) && ok;
   ok = saveString("ssid", s.wifiSsid) && ok;
   ok = saveString("pass", s.wifiPass) && ok;
   ok = saveString("webPin", s.webPin) && ok;

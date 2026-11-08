@@ -61,6 +61,7 @@ void audio_setRepeat(uint8_t mode){repeatMode=mode;}
 uint8_t audio_repeat(){return repeatMode;}
 static bool testBufferLow=false;
 bool audio_bufferLow(){return testBufferLow;}
+bool btlink_quietUi(){return false;}
 bool audio_canSeek(){return seekAllowed;}
 bool audio_isSeeking(){return false;}
 bool audio_seekTo(uint32_t ms){lastSeek=ms;++seekCalls;return seekAllowed;}

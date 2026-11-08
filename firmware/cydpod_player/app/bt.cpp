@@ -76,6 +76,11 @@ static volatile int streamMedia=0;
 // streams silence. We suspend the stream ourselves and keep the library's
 // media state STARTED meanwhile: its heartbeat restarts anything left IDLE.
 static volatile bool streamIdle=false,mediaPending=false;
+// Earbuds (docs/specs/bt-rate-and-earbuds.md): when we last suspended an idle
+// stream, a peer that suspended ours while we play, and a device that ended
+// the link soon after our suspend. Written on BtAppT, read by bt_tick.
+static volatile uint32_t ourSuspendAt=0,peerSuspendAt=0;
+static volatile bool idleDropSeen=false;static uint8_t idleDropAddr[6];
 
 // BR/EDR transmit power (lever "bttx"): the controller's default maximum is
 // read once and restored when the lever is off; on, the maximum is +6 dBm (owner: step up from +3 before trying +9).
@@ -115,7 +120,7 @@ static const char* avName(APP_AV_STATE s){
 
 class CydSource : public BluetoothA2DPSource {
  public:
-  enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page, UserDrop, MediaSuspend, MediaResume, MediaCheck };
+  enum Command:uint16_t { Pair=0xfe00, Cancel, Select, Drop, Scan, ChaseOff, Tick, InquiryStarted, InquiryStopped, Page, UserDrop, MediaSuspend, MediaResume, MediaCheck, MediaRestart };
   struct Request {uint32_t generation;uint8_t addr[6];char name[33];};
   CydSource(){owner=this;}
   bool post(Command cmd,const uint8_t* addr=nullptr,const char* name=""){
@@ -269,6 +274,8 @@ class CydSource : public BluetoothA2DPSource {
         const bool ours=ourDropUntil&&int32_t(millis()-ourDropUntil)<0;ourDropUntil=0;
         const bool abnormal=p->conn_stat.disc_rsn==ESP_A2D_DISC_RSN_ABNORMAL;
         POLICY(linkDown(millis(),ours,wasUp,abnormal));
+        if(wasUp&&!ours&&!abnormal&&ourSuspendAt&&millis()-ourSuspendAt<30000){memcpy(idleDropAddr,addr,6);idleDropSeen=true;}
+        ourSuspendAt=peerSuspendAt=0;
         Serial.printf("bt: link ended (%s, %s%s)\n",wasUp?"was up":"page",abnormal?"abnormal":"normal",ours?", ours":"");
       }
       if(next==ESP_A2D_CONNECTION_STATE_CONNECTED){
@@ -429,7 +436,7 @@ class CydSource : public BluetoothA2DPSource {
       // Only a running stream we started, outside pairing; never the STOPPING path.
       if(linkConnected()&&s_media_state==2&&streamAudio==ESP_A2D_AUDIO_STATE_STARTED&&!session.pairing){
         sendMedia(ESP_A2D_MEDIA_CTRL_SUSPEND);
-        streamIdle=true;
+        streamIdle=true;ourSuspendAt=millis()|1;
       }
     }else if(cmd==MediaCheck){
       mediaPending=false;
@@ -450,6 +457,16 @@ class CydSource : public BluetoothA2DPSource {
         s_media_state=1;
         if(!sendMedia(ESP_A2D_MEDIA_CTRL_START))s_media_state=0;
       }else streamIdle=false;
+    }
+    else if(cmd==MediaRestart){
+      mediaPending=false;
+      // The peer suspended a stream we still want (earbuds do this, then give up
+      // the link). Same START path as MediaResume, from the STARTED state.
+      if(linkConnected()&&!streamIdle&&streamAudio==ESP_A2D_AUDIO_STATE_SUSPEND&&s_media_state==2&&!session.pairing){
+        s_media_state=1;
+        if(!sendMedia(ESP_A2D_MEDIA_CTRL_START))s_media_state=2;
+        else Serial.println("bt: the speaker suspended the stream; starting it again");
+      }
     }
     else if(cmd==Scan){const uint8_t none[6]{};session.begin(none,millis());}
     else if(cmd==ChaseOff)is_autoreconnect_allowed=false;
@@ -538,7 +555,9 @@ void CydSource::fixedGap(esp_bt_gap_cb_event_t event,esp_bt_gap_cb_param_t* para
       break;
     case ESP_BT_GAP_AUTH_CMPL_EVT:
       if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
-        Serial.printf("bt: paired with \"%s\"\n", (const char*)param->auth_cmpl.device_name);
+        // A device already in the known list authenticated with its stored key.
+        Serial.printf(isKnownPeer(param->auth_cmpl.bda) ? "bt: authenticated \"%s\" (already paired)\n" : "bt: paired with \"%s\"\n",
+                      (const char*)param->auth_cmpl.device_name);
         memcpy(learnedAddr, param->auth_cmpl.bda, 6);
         strlcpy(learnedName, (const char*)param->auth_cmpl.device_name, sizeof(learnedName));
         learned = true;
@@ -671,7 +690,12 @@ static int32_t onData(Frame* frames, int32_t count) {
 
 // Registered callback also enables the library's audio_state cache update.
 // It runs on BtAppT; the event line is emitted after the library handles it.
-static void onAudioState(esp_a2d_audio_state_t s,void*){streamAudio=s;}
+static void onAudioState(esp_a2d_audio_state_t s,void*){
+  // A suspend we did not ask for: bt_tick may start the stream again.
+  if(s==ESP_A2D_AUDIO_STATE_SUSPEND&&streamAudio==ESP_A2D_AUDIO_STATE_STARTED&&!streamIdle)peerSuspendAt=millis()|1;
+  if(s==ESP_A2D_AUDIO_STATE_STARTED)peerSuspendAt=0;
+  streamAudio=s;
+}
 
 void bt_begin() {
   volumeRequestSeen=audio_volumeRequestSerial();
@@ -826,6 +850,14 @@ void bt_tick() {
       (unsigned long)intent,int(bt_connected()),audioName(streamAudio),mediaName(streamMedia),int(audio_isPlaying()),
       (unsigned long)(pulls-intentPulls),(unsigned long)(frames-intentFrames));
     intentSeen=intent;intentPulls=pulls;intentFrames=frames;
+    // Play with no link: earbuds end it themselves soon after an idle suspend.
+    // Page the saved device now; the stream starts as soon as it connects.
+    if(speaker_route()==OUT_BT&&audio_isPlaying()&&!bt_connected()&&!pairingActive&&!haveTarget&&
+       cyd::PairingSession::any(g_settings.btAddr)){
+      bool armed=false;
+      portENTER_CRITICAL(&policyMux);armed=policy.ownerPlay(millis());portEXIT_CRITICAL(&policyMux);
+      if(armed)Serial.printf("bt: play with no link: reconnecting \"%s\"\n",g_settings.btName.c_str());
+    }
   }
 
   // Idle stream: suspend after 10 s carrying nothing (paused, or the route is
@@ -846,8 +878,18 @@ void bt_tick() {
   }else if(power_lever(PWR_A2DP)&&!wanted&&bt_connected()&&!pairingActive&&
            streamAudio==ESP_A2D_AUDIO_STATE_STARTED&&streamMedia==2){
     if(!quietSince)quietSince=millis()|1;
-    else if(millis()-quietSince>=10000){quietSince=0;postMedia(CydSource::MediaSuspend);}
+    else if(millis()-quietSince>=btlink_idleSuspendMs()){quietSince=0;postMedia(CydSource::MediaSuspend);}
   }else quietSince=0;
+  // The peer suspended a stream we are playing: start it again after 1 s, at
+  // most twice in 30 s, then leave it (the earbuds have their reasons).
+  static uint32_t restartWindow=0;static uint8_t restarts=0;
+  if(peerSuspendAt&&!mediaPending&&wanted&&bt_connected()&&millis()-peerSuspendAt>=1000){
+    if(millis()-restartWindow>=30000){restartWindow=millis();restarts=0;}
+    peerSuspendAt=0;
+    if(restarts<2){++restarts;postMedia(CydSource::MediaRestart);}
+    else Serial.println("bt: the speaker keeps suspending the stream; leaving it paused");
+  }else if(peerSuspendAt&&!wanted)peerSuspendAt=0;
+  if(idleDropSeen){idleDropSeen=false;btlink_droppedWhenIdle(idleDropAddr);}
   // Connected with media still IDLE: the connect-time CHECK was refused. Ask
   // every 300 ms (at most 20 times per link) instead of the library's 10 s beat.
   applyTxPower();
@@ -914,7 +956,7 @@ void bt_tick() {
     if (bt_connected() && memcmp(learnedAddr, connectedAddr, 6) == 0 && learnedName[0]) {
       if (g_settings.btName != learnedName) {
         g_settings.btName = learnedName;
-        Serial.printf("bt: connected device is \"%s\"\n", learnedName);
+        Serial.printf("bt: switched to \"%s\" (it connected)\n", learnedName);
       }
       remember(connectedAddr, learnedName);
       saveWanted = true;

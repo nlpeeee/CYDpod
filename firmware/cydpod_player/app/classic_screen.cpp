@@ -1,5 +1,6 @@
 #ifndef CYD_UPLOADER
 #include "classic_screen.h"
+bool btlink_quietUi();  // bt_diag.h (declared here: the host UI tests have no Bluetooth headers)
 #include "classic_navigation.h"
 #include "scroll_core.h"
 #include "scroll_cmd.h"
@@ -347,7 +348,9 @@ void marqueeTick(uint32_t now){
   if(int32_t(marquee.at-now)>L::MarqueeHoldMs)marquee.at=now+L::MarqueeHoldMs;
   if(int32_t(now-marquee.at)<0)return;
   // Background paint backs off: a low ring, a seek preview or a finger on the glass all come first.
-  if(audio_bufferLow()||seekPreview||touch_isDown()){marquee.at=now+L::MarqueeStepMs;return;}
+  // Also still while the Bluetooth link needs the headroom (earbuds, a
+  // congested link, `btd ui quiet`; bt_diag.h btlink_quietUi).
+  if(audio_bufferLow()||seekPreview||touch_isDown()||btlink_quietUi()){marquee.at=now+L::MarqueeStepMs;return;}
   const int label=marquee.label;const char* text=marqueeText(label);
   if(marquee.phase==MarqueeLead){
     marquee.strip=!cydtext::ascii(text);
@@ -1243,7 +1246,9 @@ bool press(PressPhase phase,int x,int y){
           s.stillMs=uint16_t(restNow-diag.restMs);s.coastRows=s.remRows=0;s.aborted=false;
           if(listTracker.up(releasedAt,listCoast,float(offset),0,float(limit),-scrollGain,restNow)){
             // The estimator judged the release at the last sample time; the content animates forward from now (no backdating).
-            listCoast.start(float(offset),-scrollGain*listTracker.releaseVelocity(),0,float(limit),now);
+            // A quiet UI (bt_diag.h) lets the list stop where the finger lifts:
+            // a fling repaints the whole list for seconds.
+            listCoast.start(float(offset),btlink_quietUi()?0.f:-scrollGain*listTracker.releaseVelocity(),0,float(limit),now);
             flingActive=true;++s.flings;flingUnderruns=audio_underruns();
             coastStartPx=coastLastPx=offset;coastPlannedRows=fabsf(listCoast.finalY()-float(offset))/float(L::RowH);
             s.coastRows=coastPlannedRows;s.reject="none";

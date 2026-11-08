@@ -1,6 +1,6 @@
 # AirPods Pro 3: diagnostic build
 
-Branch `cydpod/airpods-diag`, from `main` (v0.5.4). No board was flashed for this note.
+Branch `cydpod/airpods-diag`, from `main` (v0.5.4). No board was flashed for this note. Superseded by `docs/research/tws-earbuds.md`: the diagnostic patch became release patch 0002 (`docs/specs/bt-rate-and-earbuds.md`).
 
 ## What the owner logs showed (8 November 2026)
 

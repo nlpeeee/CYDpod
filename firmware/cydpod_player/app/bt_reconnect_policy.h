@@ -43,6 +43,13 @@ struct ReconnectPolicy {
   void userAction(uint32_t now) {
     mode = Armed; failed = 0; inFlight = false; nextAt = now + FIRST_PAGE_DELAY_MS;
   }
+  // Play pressed with no link (true-wireless earbuds end the link themselves a
+  // few seconds after an idle suspend): page now, with a fresh budget. Not
+  // after the owner deliberately disconnected. Returns whether it re-armed.
+  bool ownerPlay(uint32_t now) {
+    if (mode == HeldUser || inFlight) return false;
+    mode = Armed; failed = 0; nextAt = now; return true;
+  }
   // Deliberate disconnect, forget, switch to wired: stay down until userAction().
   void userStop() { mode = HeldUser; inFlight = false; }
   bool acceptsPeer() const { return mode != HeldUser; }

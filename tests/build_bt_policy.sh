@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 OUT=tests/out/bt
 mkdir -p "$OUT"
-for t in bt_policy pairing_session; do
+for t in bt_policy pairing_session bt_rate_policy; do
   g++ -O2 -std=c++17 -Wall -Wextra -Werror tests/${t}_test.cpp -o "$OUT/${t}_test"
   "$OUT/${t}_test"
 done

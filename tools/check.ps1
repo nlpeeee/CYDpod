@@ -1,7 +1,7 @@
 # Fast path: powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia
 # Compile-only. There is deliberately no upload, monitor, port or erase option.
 [CmdletBinding()]
-param([switch]$FlacLegacy, [switch]$LargePcmRing, [switch]$LightAudioDiagnostics, [switch]$SkipProbe, [switch]$SkipHostMedia,
+param([switch]$FlacLegacy, [switch]$LargePcmRing, [int]$PcmRingFrames = 0, [switch]$LightAudioDiagnostics, [switch]$StockBluetoothLibs, [switch]$SkipProbe, [switch]$SkipHostMedia,
     [switch]$IncludeStock, [switch]$IncludeDiagnostics, [switch]$ListJobs,
     [ValidatePattern('^[a-z0-9]+(-[a-z0-9]+)*$')][string]$BuildLabel,
     [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
@@ -87,6 +87,11 @@ try {
     if ((Get-FileHash .deps/sketchbook/libraries/TFT_eSPI/User_Setup.h).Hash.ToLowerInvariant() -ne $lock.tft.sha256) {
         throw 'TFT configuration differs from lock; run setup.ps1.'
     }
+    # Firmware builds on the trimmed Bluedroid (dependencies.lock.json bluedroidOverlay, tools/bluedroid).
+    $btLib = Join-Path $env:ARDUINO_DIRECTORIES_DATA 'packages/esp32/tools/esp32-libs/3.3.10/lib/libbt.a'
+    $btTrimmed = (Get-FileHash $btLib).Hash.ToLowerInvariant() -eq $lock.bluedroidOverlay.files.'lib/libbt.a'.cydpod
+    if (!$btTrimmed -and !$StockBluetoothLibs) { throw 'esp32-libs 3.3.10 is not the trimmed Bluedroid: run tools/bluedroid/use-libs.ps1 trim, or pass -StockBluetoothLibs.' }
+    if ($btTrimmed -and $StockBluetoothLibs) { throw '-StockBluetoothLibs needs tools/bluedroid/use-libs.ps1 stock first.' }
     & python -I tools/stage_miniaac.py
     if ($LASTEXITCODE -ne 0) { throw 'MiniAAC staging failed.' }
     & python -I tools/stage_helix_mp3.py
@@ -107,10 +112,13 @@ try {
     if ($FlacLegacy) { $jobs[-1].Flags += ' -DCYDPOD_FLAC_LEGACY' }
     if ($LightAudioDiagnostics) { $jobs[-1].Flags += ' -DCYDPOD_LIGHT_AUDIO_DIAGNOSTICS' }
     if ($LargePcmRing) { $jobs[-1].Flags += ' -DCYDPOD_PCM_RING_4096' }
+    if ($PcmRingFrames) { $jobs[-1].Flags += " -DCYDPOD_PCM_RING_FRAMES=$PcmRingFrames" }
     $playbackImage = 'codec-pool-v36-headroom'
     if ($FlacLegacy) { $playbackImage += '-legacy' }
     if ($LightAudioDiagnostics) { $playbackImage += '-light' }
-    if ($LargePcmRing) { $playbackImage += '-ring4096' }
+    if ($StockBluetoothLibs) { $playbackImage += '-stockbt' }
+    if ($LargePcmRing -and !$PcmRingFrames) { $playbackImage += '-ring4096' }
+    if ($PcmRingFrames) { $playbackImage += "-ring$PcmRingFrames" }
     if ($BuildLabel) { $playbackImage += "-$BuildLabel" }
     $jobs += @{ Name = 'cydpod-uploader'; Sketch = 'firmware/cydpod_player/app'; Flags = '-DCYD_UPLOADER' }
     if (!$SkipProbe) {

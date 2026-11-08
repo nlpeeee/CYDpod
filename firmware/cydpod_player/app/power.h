@@ -14,7 +14,7 @@
 //   backstop  while asleep, also wake every second to look for a held touch
 //   btfast    Bluetooth: 0.5 s stack-up wait (not 10 s) at boot and after Sleep, and prompt
 //             media-ready retries after any connection
-//   bttx      Bluetooth transmit power up to +9 dBm (controller default is lower)
+//   bttx      Bluetooth transmit power up to +6 dBm (controller default is lower)
 #include <Arduino.h>
 
 enum PowerLever : uint8_t {

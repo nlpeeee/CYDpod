@@ -1,3 +1,7 @@
+## 0.5.3 release checkpoint — 8 November 2026
+
+Version 0.5.3 makes a trimmed Bluedroid the default. It is rebuilt from ESP-IDF v5.5.4 without BLE, BLE Mesh, BluFi or HFP, runs the radio Classic only, and gives the BTC/BTU tasks 4 KB stacks; free heap after Bluetooth starts rises from about 34 KB to 84 KB. The release also adds robust speaker volume sync, adopts the speaker's own volume on connect (Bluedroid patch 0001), and enlarges the PCM ring to 6,144 frames. The exact board-tested candidate 4 firmware (6026ec7) is preserved. The +6 dBm transmit power still reads back +3 dBm and is under investigation. See [0.5.3 release notes](releases/0.5.3.md).
+
 ## 0.5.2 release checkpoint — 7 November 2026
 
 Version 0.5.2 promotes the power candidate: idle levers and in-place light Sleep, fast Bluetooth reconnect after wake, +9 dBm transmit power, volume sync restarted after Sleep, playlists built from per-track path keys (including lists inside `/music`), one more indexed folder level and a full-width portrait volume slider. The exact candidate firmware (8c2ed33) is preserved. See [0.5.2 release notes](releases/0.5.2.md) for provenance, checks and what is not yet confirmed on hardware.

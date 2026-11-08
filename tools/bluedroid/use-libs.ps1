@@ -4,9 +4,9 @@ and the trimmed-Bluedroid package built by make-libs.py.
   use-libs.ps1 trim    # .tools/esp32-libs-cydpod-bt becomes esp32-libs/3.3.10
   use-libs.ps1 stock   # Espressif's package (kept as 3.3.10.stock) comes back
 #>
-param([Parameter(Mandatory)][ValidateSet('stock', 'trim')][string]$Variant,
-      [string]$Root = (Resolve-Path "$PSScriptRoot\..\..").Path)
+param([Parameter(Mandatory)][ValidateSet('stock', 'trim')][string]$Variant, [string]$Root)
 $ErrorActionPreference = 'Stop'
+if (!$Root) { $Root = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..\..')).Path }
 $dir = Join-Path $Root '.deps\arduino\packages\esp32\tools\esp32-libs'
 $live = Join-Path $dir '3.3.10'; $stock = Join-Path $dir '3.3.10.stock'
 $trim = Join-Path $Root '.tools\esp32-libs-cydpod-bt'

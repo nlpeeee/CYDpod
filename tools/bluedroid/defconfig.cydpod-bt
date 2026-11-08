@@ -1,0 +1,17 @@
+# CYDpod Bluetooth overlay for esp32-arduino-lib-builder (target esp32).
+# Applied after configs/defconfig.common and configs/defconfig.esp32; see
+# docs/specs/trimmed-bluedroid.md. CYDpod is a Classic A2DP source with AVRCP:
+# it never uses BLE, BluFi or HFP.
+CONFIG_BTDM_CTRL_MODE_BTDM=n
+CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y
+CONFIG_BT_BLE_ENABLED=n
+CONFIG_BT_BLE_BLUFI_ENABLE=n
+CONFIG_BT_BLE_42_FEATURES_SUPPORTED=n
+CONFIG_BT_HFP_ENABLE=n
+# Espressif's package also ships BLE Mesh, which needs the BLE host.
+CONFIG_BLE_MESH=n
+# Measured use: BTC about 1.7 KB, BTU about 1.6 KB of 8 KB (stat: tasks).
+CONFIG_BT_BTC_TASK_STACK_SIZE=4096
+CONFIG_BT_BTU_TASK_STACK_SIZE=4096
+# SPP stays enabled: ESP32-A2DP's unused BluetoothA2DPSink.cpp calls esp_spp_init.
+CONFIG_BT_SPP_ENABLED=y

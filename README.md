@@ -33,7 +33,7 @@ It starts with the Cheap Yellow Display, a tiny touchscreen computer that hobbyi
 - **Make it sound your way.** A five-band equalizer with presets for bass, vocals, treble and loudness, tuned to stay clean even with every band turned up.
 - **It respects your time.** Set it down and it quietly goes to sleep. Pick it up and it carries on exactly where you were.
 - **It's made for tinkering.** Choose a theme, print the case, or dig into the code. It's your player, so make it yours.
-- **Prefer wires?** Add a little DAC. The board has no headphone socket, but a thumbnail-sized audio board (a PCM5102A-style I2S DAC, a few dollars online) plugs into its spare connector and gives you a proper line-out for a hi-fi or powered speakers. Add a tiny headphone amp and it drives headphones too. The download includes a wired build, and the case has a version with room for the DAC inside.
+- **Prefer wires?** Add a little DAC. The board has no headphone socket, but a thumbnail-sized audio board (a PCM5102A-style I2S DAC, a few dollars online) plugs into its spare connector and gives you a proper line-out for a hi-fi or powered speakers. Add a tiny headphone amp and it drives headphones too. Choose Headphones in Settings → Audio Output, and the case has a version with room for the DAC inside.
 - **It shouldn't be possible.** A board this small and this cheap was never meant to be a music player. Getting a full library, four audio formats and Bluetooth streaming onto it is the fun part.
 
 <p align="center">

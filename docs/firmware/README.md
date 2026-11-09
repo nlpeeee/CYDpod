@@ -2,7 +2,7 @@
 
 ## Flash the release
 
-1. Download `CYDpod-0.5.5-firmware.zip` from the [0.5.5 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.5) and unzip it. It contains the Bluetooth and wired player builds, their manifests and esptool 5.3.0.
+1. Download `CYDpod-0.5.5-firmware.zip` from the [0.5.5 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.5) and unzip it. It contains the player build, its manifest and esptool 5.3.0. The same build plays over Bluetooth or a wired I2S DAC (Settings → Audio Output).
 2. Close any serial monitor, and identify the board's COM port by unplugging it and plugging it back in.
 3. Hold **BOOT**, tap **RESET**, then release **BOOT**.
 4. From the unzipped folder, run the block below in PowerShell. It checks every file's hash, then writes and verifies the four flash regions (`0x1000`, `0x8000`, `0xe000`, `0x10000`). Saved settings and the Bluetooth bond survive.
@@ -25,7 +25,7 @@ foreach ($op in 'write-flash','verify-flash') {
 5. Tap **RESET**.
    - Start with the speaker turned down: Bluetooth volume follows the speaker's own scale.
    - The serial log runs at 115200 baud.
-   - For the wired build, use `firmware\wired` instead.
+   - For a wired DAC, choose Headphones in Settings → Audio Output.
 
 ## Build from source
 

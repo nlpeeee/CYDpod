@@ -152,10 +152,8 @@ try {
         $jobs = @($jobs | Where-Object { $_.Name -eq 'cydpod-player' })
         $setupHeader = (Join-Path $root 'tools/tft/User_Setup_JC2432W328C.h').Replace([char]92,[char]47)
         $jobs[0].Flags += (' -DCYD_BOARD_JC2432W328C -include"' + $setupHeader + '"')
-        # CY-71: the same player forced onto the wired I2S route at every boot (board.h CYD_DEFAULT_OUT_ROUTE, 2 = OUT_WIRED),
-        # for testing before the Settings row exists. The saved route in NVS is not overwritten.
-        $jobs += @{ Name = 'cydpod-player-wired'; Sketch = $jobs[0].Sketch; Flags = ($jobs[0].Flags + ' -DCYD_DEFAULT_OUT_ROUTE=2'); Library = $jobs[0].Library
-            ImageName = "$playbackImage-wired-jc2432w328c" }
+        # The wired-only image (CY-71, -DCYD_DEFAULT_OUT_ROUTE=2) is retired: the one player
+        # image drives the I2S DAC from Settings > Audio Output > Headphones (owner-verified).
         if ($IncludeDiagnostics) {
         # CY-70: standalone I2S test tone (no TFT, SD, touch or Bluetooth). The second image is the
         # 32-bit-slot fallback (BCK = 64 x fS) in case the PCM5100A PLL does not lock at 32 x fS.

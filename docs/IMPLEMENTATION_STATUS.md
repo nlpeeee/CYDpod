@@ -1,3 +1,7 @@
+## Wired-only image retired — 9 November 2026
+
+The owner confirmed a wired I2S DAC on the 0.5.5 Bluetooth build through Settings → Audio Output → Headphones. The `cydpod-player-wired` job (CY-71, `-DCYD_DEFAULT_OUT_ROUTE=2`) is removed from `tools/check.ps1`; from the next release the player image is the only firmware for the JC2432W328C.
+
 ## 0.5.5 release checkpoint — 8 November 2026
 
 Version 0.5.5 adds the 5-band fixed-point EQ (Equalizer page, presets, 0.6–0.7% of a core on the board) and the earbud work: Bluedroid patches 0002 (link counters, runtime SBC rate) and 0003 (full A2DP packets), an adaptive SBC rate that starts every link at 328 kbps, Play reconnecting earbuds that dropped the link, peer-suspend restarts and a congestion-only quiet UI. Firmware compiled from 010c6f6; compile and host suites PASS, owner runs on development builds. See [0.5.5 release notes](releases/0.5.5.md).

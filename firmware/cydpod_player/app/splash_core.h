@@ -19,13 +19,15 @@
 
 namespace splash {
 
-constexpr uint8_t YELLOW_R = 0xFF, YELLOW_G = 0xD2, YELLOW_B = 0x1F;   // #FFD21F
+// More saturated than the brand's #FFD21F: on the CYD's TFT that blue component reads as a pale,
+// washed-out screen. Ink, the progress track and the text are separate constants and do not change.
+constexpr uint8_t YELLOW_R = 0xFF, YELLOW_G = 0xC8, YELLOW_B = 0x00;   // #FFC800
 constexpr uint8_t INK_R = 0x1D, INK_G = 0x1D, INK_B = 0x1F;            // #1D1D1F
 
 constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
   return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
-constexpr uint16_t BACKGROUND = rgb565(YELLOW_R, YELLOW_G, YELLOW_B);  // 0xFE83
+constexpr uint16_t BACKGROUND = rgb565(YELLOW_R, YELLOW_G, YELLOW_B);  // 0xFE40
 constexpr uint16_t INK = rgb565(INK_R, INK_G, INK_B);                  // 0x18E3
 
 struct Layout {

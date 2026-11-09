@@ -13,7 +13,7 @@ A pocket music player you build yourself, from one cheap yellow display.</p>
 </p>
 
 <p align="center">
-  img src="docs/assets/beauty_01_hero.png" width="320" alt="Render of the device in a case.">
+  <img src="docs/assets/beauty_01_hero.png" width="320" alt="Render of the device in a case.">
   <img src="docs/assets/home-tiles.png" width="320" alt="Simulated CYDpod Home screen with Songs, Artists, Albums, Playlists, Search and Settings tiles.">
   <img src="docs/research/cy90-quiet-outline-icons/player-r1-s0-x4.png" width="320" alt="Simulated Now Playing screen with seek bar, transport buttons and volume.">
   <br><sub>Rendered by the test harness, not photos of a device.</sub>

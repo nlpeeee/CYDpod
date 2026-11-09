@@ -6,6 +6,7 @@ The maintained checkout is `E:\dev\CYDpod`, backed by the private `nlpeeee/CYDpo
 
 - Prefer `main` for ordinary single-agent work. Use a temporary branch when a PR, parallel work or isolation is useful; do not accumulate branches after integration.
 - A user request to release a version authorizes preparing the release, merging its PR into `main`, pushing the release tag and publishing its matching GitHub assets. Finish checks and review the actual diff before promotion. Report any remaining hardware limitations accurately.
+- Every release ships both player builds: JC2432W328C (`tools/check.ps1 -Board jc2432w328c`, package `CYDpod-<version>-firmware.zip`) and ESP32-2432S028R (`-Board esp32-2432s028r`, package `CYDpod-<version>-firmware-ESP32-2432S028R.zip`). Compile them one after the other, verify each `MANIFEST.json`, and say in the release notes which board images were actually run on hardware.
 - Merge temporary branches normally; never force-push or rewrite shared history. Delete a completed temporary branch locally and remotely after verifying its commits are on `main`.
 - When the user requests historical branch cleanup, save a verified Git bundle and an inventory of every branch tip before deleting unused local branches. Preserve branches checked out in another worktree and any active agent's branch. Archive contents are not active development branches.
 - Work inside the assigned checkout. Do not edit, reset, switch or remove another active worktree without explicit authorization. Read-only inspection is allowed.

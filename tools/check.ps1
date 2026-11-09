@@ -1,10 +1,12 @@
 # Fast path: powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia
+# Release boards: -Board jc2432w328c (capacitive) and -Board esp32-2432s028r (resistive); each builds the
+# player only and writes MANIFEST.json beside it. -Board default is the full developer set (stock, uploader, probe).
 # Compile-only. There is deliberately no upload, monitor, port or erase option.
 [CmdletBinding()]
 param([switch]$FlacLegacy, [switch]$LargePcmRing, [int]$PcmRingFrames = 0, [switch]$LightAudioDiagnostics, [switch]$StockBluetoothLibs, [switch]$DiagBluetoothLibs, [switch]$SkipProbe, [switch]$SkipHostMedia,
     [switch]$IncludeStock, [switch]$IncludeDiagnostics, [switch]$ListJobs,
     [ValidatePattern('^[a-z0-9]+(-[a-z0-9]+)*$')][string]$BuildLabel,
-    [ValidateSet("default", "jc2432w328c")][string]$Board = "default")
+    [ValidateSet("default", "jc2432w328c", "esp32-2432s028r")][string]$Board = "default")
 $ErrorActionPreference = 'Stop'
 if ($FlacLegacy -and $LargePcmRing) { throw 'The large PCM ring trial requires compact FLAC.' }
 $totalTimer = [Diagnostics.Stopwatch]::StartNew()
@@ -161,6 +163,10 @@ try {
         $jobs += @{ Name = 'i2s-tone-slot32'; Sketch = 'firmware/cydpod_i2s_tone'; Flags = '-DCYD_BOARD_JC2432W328C -DI2S_TEST_SLOT_BITS=32'; ImageName = 'i2s-tone-slot32-jc2432w328c' }
         $jobs += @{ Name = 'i2s-diag'; Sketch = 'firmware/cydpod_i2s_diag'; Flags = '-DCYD_BOARD_JC2432W328C'; ImageName = 'i2s-diag-jc2432w328c' }
         }
+    } elseif ($Board -eq 'esp32-2432s028r') {
+        # The generic resistive CYD: board.h's default profile (2.8", XPT2046) and the locked
+        # tools/tft/User_Setup.h. One image drives both ILI9341 and ST7789 glass (Settings::panel).
+        $jobs = @($jobs | Where-Object { $_.Name -eq 'cydpod-player' })
     }
     if ($ListJobs) {
         Write-Host ('Selected jobs ({0}): {1}' -f $Board, (($jobs | ForEach-Object { $_.Name }) -join ', '))
@@ -171,7 +177,7 @@ try {
         $stageName = 'compile ' + $job.Name
         $stageTimer.Restart()
         $imageName = $job.Name
-        if ($Board -eq 'jc2432w328c') { $imageName = "$playbackImage-jc2432w328c" }
+        if ($Board -ne 'default') { $imageName = "$playbackImage-$Board" }
         if ($job.ImageName) { $imageName = $job.ImageName }
         # ESP32 3.3.10 savehex hooks also export beside the sketch. Compile a
         # local staging copy so those hooks cannot write into source folders.
@@ -265,18 +271,21 @@ try {
             $poolSymbols | Set-Content (Join-Path $root ".tools/logs/$imageName-codec-pool-map.txt")
             Write-Host ('PASS single pool: ' + $poolSymbols[0])
         }
-        if ($Board -eq 'jc2432w328c') {
+        if ($Board -ne 'default') {
             $imageDir = Join-Path $root ".tools/images/$imageName"
             Copy-Item -LiteralPath (Join-Path $root ".tools/build/$imageName/boot_app0.bin") -Destination $imageDir
-            $files = @(Get-ChildItem -LiteralPath $imageDir -File | Where-Object { $_.Name -ne 'MANIFEST.json' } | Sort-Object Name | Select-Object -ExpandProperty Name)
+            # Flashable files only: the four regions, plus merged.bin (all of them, written at 0x0).
+            $files = @(Get-ChildItem -LiteralPath $imageDir -File | Where-Object { $_.Name -ne 'MANIFEST.json' -and $_.Name -notmatch '\.(elf|map)$' } | Sort-Object Name | Select-Object -ExpandProperty Name)
             # The sketch is named app.ino for the player and cydpod_i2s_tone.ino for the tone sketch.
-            $offsets = @{ 'bootloader.bin'='0x1000'; 'partitions.bin'='0x8000'; 'boot_app0.bin'='0xe000'; 'bin'='0x10000' }
+            $offsets = @{ 'bootloader.bin'='0x1000'; 'partitions.bin'='0x8000'; 'boot_app0.bin'='0xe000'; 'bin'='0x10000'; 'merged.bin'='0x0' }
             $regions = for ($i = 0; $i -lt $files.Count; $i++) {
                 $file = Get-Item (Join-Path $imageDir $files[$i])
                 [pscustomobject]@{ file=$file.Name; offset=$offsets[($files[$i] -replace '^.*\.ino\.','' -replace '^boot_app0\.bin$','boot_app0.bin')]; bytes=$file.Length;
                     sha256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
             }
-            [pscustomobject]@{ board=$Board; chip='esp32'; flashSize='4MB'; flashMode='dio'; flashFreq='80m';
+            $boardName = @{ 'jc2432w328c'='JC2432W328C (2.8", ST7789, CST820 capacitive touch)';
+                'esp32-2432s028r'='ESP32-2432S028R (2.8", ILI9341 or ST7789, XPT2046 resistive touch)' }[$Board]
+            [pscustomobject]@{ board=$Board; boardName=$boardName; chip='esp32'; flashSize='4MB'; flashMode='dio'; flashFreq='80m';
                 fqbn=$lock.core.fqbn; files=@($regions) } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $imageDir 'MANIFEST.json')
         }
         $results += [pscustomobject]@{ name=$job.Name; bytes=$binary.Length;

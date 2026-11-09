@@ -43,7 +43,7 @@ It starts with the Cheap Yellow Display, a tiny touchscreen computer that hobbyi
 
 ## Make your own
 
-You'll need a **JC2432W328C** Cheap Yellow Display (the capacitive-touch one), a **microSD card** with your music, a **Bluetooth speaker or headphones** (or the little DAC for wired listening), and a **Windows PC** for a few minutes.
+You'll need a Cheap Yellow Display: the **JC2432W328C** (capacitive touch, and the only one with the wired-DAC option) or the generic **ESP32-2432S028R** (resistive touch). Each has its own download. You'll also need a **microSD card** with your music, a **Bluetooth speaker or headphones** (or the little DAC for wired listening), and a **Windows PC** for a few minutes.
 
 1. [Download the latest release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.5).
 2. Follow the [flashing guide](docs/firmware/README.md).

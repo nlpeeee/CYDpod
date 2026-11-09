@@ -26,7 +26,7 @@ bool btlink_quietUi();  // bt_diag.h (declared here: the host UI tests have no B
 
 namespace {
 namespace L=cydclassic::layout;
-enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Options,About,Refresh,Message,Search,Keyboard,System,Equalizer };
+enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Options,About,Refresh,Message,Search,Keyboard,System,Equalizer,UpNext };
 struct Page {
   Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;int32_t offsetPx=0;
   SourceKind sourceKind=SRC_M3U;char title[64]={};
@@ -255,7 +255,7 @@ Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
 bool rowReady(int absolute){const Row& r=cachedRow(absolute);return r.absolute==absolute&&r.valid;}
 bool musicList(){
   switch(page().mode){
-    case Mode::Catalog:case Mode::Playlists:case Mode::Sources:case Mode::SourceSongs:case Mode::Search:return true;
+    case Mode::Catalog:case Mode::Playlists:case Mode::Sources:case Mode::SourceSongs:case Mode::Search:case Mode::UpNext:return true;
     default:return false;
   }
 }
@@ -278,7 +278,7 @@ const char* pageTitle(const Page& value){
     case Mode::Settings:return "Settings";case Mode::Playback:return "Playback";case Mode::Display:return "Display";
     case Mode::Output:return "Audio Output";case Mode::Options:return "Options";
     case Mode::About:return "About";case Mode::Refresh:return "Refresh Library";case Mode::Message:return "CYDpod";case Mode::System:return "Library & System";
-    case Mode::Equalizer:return "Equalizer";
+    case Mode::Equalizer:return "Equalizer";case Mode::UpNext:return "Up Next";
     default:return "CYDpod";
   }
 }
@@ -674,7 +674,8 @@ int rowCount(){
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
     case Mode::Settings:return 6;case Mode::System:return 4;case Mode::Playback:return 5;case Mode::Display:return DisplayRows;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 2 : 0);
-    case Mode::Options:return 5;case Mode::Refresh:return 2;
+    case Mode::Options:return 6;case Mode::Refresh:return 2;
+    case Mode::UpNext:return 1+audio_upNextLen();
     default:return 0;
   }
 }
@@ -711,7 +712,12 @@ void fetchRow(int at){
       if(at==OUT_SELECTABLE_COUNT){setRow(r,g_settings.headphoneLimit?"Headphone limit: On":"Headphone limit: Off",String("Digital output limit (wired only)"));break;}
 #endif
       if(at==OUT_SELECTABLE_COUNT+1){setRow(r,"Switch back to Bluetooth if there is no sound",String(),false,true);break;}const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
-    case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output","Equalizer"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):at==4?String(g_settings.eqOn?"On":"Off"):String(),at>=3);break;}
+    case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output","Equalizer","Up Next"};
+      setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):at==4?String(g_settings.eqOn?"On":"Off"):at==5?(audio_upNextLen()?String(audio_upNextLen())+" queued":String("Empty")):String(),at>=3);break;}
+    case Mode::UpNext:
+      if(at==0){setRow(r,"Clear Up Next",audio_upNextLen()?String(audio_upNextLen())+" queued. Hold a song to remove it":String("Hold any song to queue it"),false,!audio_upNextLen());break;}
+      {String title,artist;const int id=audio_upNextAt(at-1);if(id>=0&&storage_trackSummary(id,title,artist)){setRow(r,title.c_str(),artist);r.track=id;}else setRow(r,"Track unavailable",String(),false,true);}
+      break;
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
     default:break;
   }
@@ -994,11 +1000,83 @@ void feedListSample(){
   if(!listPress||!touch_rawPosition(rx,ry))return;
   touch_livePosition(lx,ly);listSample(touch_lastSeenMs(),ly,ry);
 }
+// ---------------------------------------------------------------------------
+// Hold a song, album or artist: Play next / Add to queue (Up Next, audio.h)
+// ---------------------------------------------------------------------------
+// The menu opens once the finger has rested 600 ms on a row it has not dragged
+// or strayed from. The press is then claimed, so its release does nothing.
+struct HoldTarget { int track=-1,upIndex=-1; CatalogView view{}; bool isView=false; };
+HoldTarget held;
+// A row's whole-list view to queue: album rows, artist rows (all their songs), All Songs.
+bool queueView(const Row& r,CatalogView& out){
+  if(!r.navigates)return false;
+  switch(r.child.kind){
+    case CatalogKind::ArtistAlbums:out={CatalogKind::ArtistSongs,r.child.group};return true;
+    case CatalogKind::AlbumSongs:case CatalogKind::ArtistSongs:case CatalogKind::ArtistAlbumSongs:out=r.child;return true;
+    default:return false;
+  }
+}
+bool holdTarget(int at,HoldTarget& out){
+  if(at<0||at>=count)return false;
+  const Row& r=cachedRow(at);
+  if(r.absolute!=at||!r.valid||r.disabled)return false;
+  out=HoldTarget{};
+  switch(page().mode){
+    case Mode::Catalog:
+      if(queueView(r,out.view)){out.isView=true;return true;}
+      if(!r.navigates&&r.track>=0){out.track=r.track;return true;}
+      return false;
+    case Mode::Search:if(at>=1&&r.track>=0){out.track=r.track;return true;}return false;
+    case Mode::SourceSongs:if(r.track>=0){out.track=r.track;return true;}return false;
+    case Mode::UpNext:if(at>=1&&r.track>=0){out.track=r.track;out.upIndex=at-1;return true;}return false;
+    default:return false;
+  }
+}
+bool holdDue(){
+  if(!touch_isDown()||highlight<0||gesture.claimed||gesture.strayed||listDragging||thumbDrag||gesture.target<0)return false;
+  if(touch_heldMs()<TOUCH_LONG_MS)return false;
+  HoldTarget probe;return holdTarget(gesture.target,probe);
+}
+// Up to the free Up Next slots, in list order.
+void queueHeld(bool front){
+  uint16_t ids[AUDIO_UP_NEXT_CAP];int n=0,total=1;
+  const int room=AUDIO_UP_NEXT_CAP-audio_upNextLen();
+  if(room<=0){ui_toast("Up Next is full (64 songs).");return;}
+  if(held.isView){
+    total=storage_browseCount(held.view);
+    n=total>0?storage_browseTrackIds(held.view,0,ids,min(room,total)):0;
+    if(n<=0){ui_toast("Unable to read these songs. Check SD card.");return;}
+  }else if(held.track>=0){ids[0]=uint16_t(held.track);n=1;}
+  const int added=audio_upNextAdd(ids,n,front);
+  char text[64];
+  if(added<=0)snprintf(text,sizeof(text),"Up Next is full (64 songs).");
+  else if(added<total)snprintf(text,sizeof(text),"Queued %d of %d songs (Up Next is full).",added,total);
+  else if(added==1)snprintf(text,sizeof(text),"%s",front?"Playing next.":"Added to queue.");
+  else snprintf(text,sizeof(text),front?"%d songs playing next.":"%d songs added to queue.",added);
+  if(page().mode==Mode::UpNext||page().mode==Mode::Options){count=rowCount();invalidate();}
+  ui_toast(text);
+}
+void holdPlayNext(){queueHeld(true);}
+void holdAddToQueue(){queueHeld(false);}
+void holdPlayNow(){if(audio_upNextPlay(held.upIndex))show(Mode::Player);else ui_toast("Unable to play this song.");}
+void holdRemove(){if(audio_upNextRemove(held.upIndex)){count=rowCount();invalidate();}}
+void clearUpNext(){audio_upNextClear();}
+void openHold(){
+  if(!holdTarget(gesture.target,held))return;
+  const Row& r=cachedRow(gesture.target);
+  gesture.claimed=true;ui_claimPress();
+  if(highlight>=0)paintRow(highlight,false);
+  highlight=dimmed=ready=-1;
+  Serial.printf("cmd: hold row %d screen %u\n",gesture.target,unsigned(page().mode));
+  if(held.upIndex>=0)ui_choice(String(r.label),T_PLAY_NOW,T_REMOVE,holdPlayNow,holdRemove);
+  else ui_choice(String(r.label),T_PLAY_NEXT,T_ADD_TO_QUEUE,holdPlayNext,holdAddToQueue);
+}
 void tick(uint32_t now){
   screenNow=now;
   if(previewKey.source>=0&&(previewKey.crc!=storage_libraryCrc()||previewKey.tracks!=storage_trackCount()))freePreview();
   feedListSample();
   advanceFling(now);
+  if(holdDue()){openHold();return;}
   if(musicList()&&((listPress&&listDragging)||thumbDrag||flingActive)){
     tickMotion(now);
     return;
@@ -1150,7 +1228,11 @@ void activate(int at){
         invalidate();header();}break;
     case Mode::Options:
       if(at==0)toggleFavourite();
-      else if(at==1)cycleShuffle();else if(at==2)cycleRepeat();else if(at==3)show(Mode::Output);else show(Mode::Equalizer);break;
+      else if(at==1)cycleShuffle();else if(at==2)cycleRepeat();else if(at==3)show(Mode::Output);else if(at==4)show(Mode::Equalizer);else show(Mode::UpNext);break;
+    case Mode::UpNext:
+      if(at==0)ui_confirm(T_UP_NEXT_CLEAR_Q,T_UP_NEXT_CLEAR_1,T_COUNT,T_CLEAR,clearUpNext);
+      else if(audio_upNextPlay(at-1))show(Mode::Player);else ui_toast("Unable to play this song.");
+      break;
     case Mode::Refresh:
       if(at==1)back();else if(storage_refreshNextBoot()){g_settings.lastTrack=audio_currentTrack();g_settings.lastPath=storage_trackPath(audio_currentTrack());g_settings.lastPosMs=audio_positionMs();settings_save();ESP.restart();}
       else message("Cannot write refresh request. Check SD card.");break;
@@ -1425,8 +1507,8 @@ const PlaylistQueue* classic_previewCursor(){return &preview;}
 unsigned classic_depth(){return navigation.depth;}
 unsigned classic_mode(){return unsigned(page().mode);}
 const char* classic_modeName(unsigned m){
-  static const char* const names[]={"Home","Playlists","Catalog","Sources","SourceSongs","Player","Settings","Playback","Display","Output","Options","About","Refresh","Message","Search","Keyboard","System","Equalizer"};
-  static_assert(sizeof(names)/sizeof(names[0])==unsigned(Mode::Equalizer)+1,"mode name table matches Mode");
+  static const char* const names[]={"Home","Playlists","Catalog","Sources","SourceSongs","Player","Settings","Playback","Display","Output","Options","About","Refresh","Message","Search","Keyboard","System","Equalizer","UpNext"};
+  static_assert(sizeof(names)/sizeof(names[0])==unsigned(Mode::UpNext)+1,"mode name table matches Mode");
   return m<sizeof(names)/sizeof(names[0])?names[m]:"?";
 }
 int classic_top(){return topRow();}

@@ -57,6 +57,13 @@ static const Entry TABLE[] = {
   { "Disconnect",            "中斷連接" },
   { "Disconnecting...",      "中斷連接中…" },
   { "Disconnected",          "未連接" },
+  { "Play next",             "下一首播放" },
+  { "Add to queue",          "加入待播清單" },
+  { "Play now",              "立即播放" },
+  { "Remove",                "移除" },
+  { "Clear",                 "清除" },
+  { "Clear Up Next?",        "清除待播清單？" },
+  { "The songs stay in your library.", "歌曲仍保留在音樂庫中。" },
 };
 static_assert(sizeof(TABLE) / sizeof(TABLE[0]) == T_COUNT, "i18n TABLE does not match enum Txt");
 

@@ -65,5 +65,48 @@ int main(){
   assert(!playing&&orderLen==0&&commandSerial==serial);
   char error[48];assert(audio_error(error,sizeof(error))&&!strcmp(error,"queue_unavailable"));
   fprintf(stderr,"PASS order unavailable queue: stopped without invalid request\n");
+
+  // Up Next: front/back order, the list resumes after the interrupted song, prev, repeat, cap.
+  tracks=10;unavailable=false;audio_setRepeat(REPEAT_ALL);
+  audio_setQueueSource({nullptr,nullptr,nullptr},tracks,2,false);audio_setShuffle(false);
+  audio_upNextClear();audio_playTrack(2);assert(orderPos==2&&reqTrack==2&&!reqContinuous&&seeking);
+  const uint16_t back2[]={7,8},front1[]={5};
+  assert(audio_upNextAdd(back2,2,false)==2&&audio_upNextAdd(front1,1,true)==1);
+  assert(audio_upNextLen()==3&&audio_upNextAt(0)==5&&audio_upNextAt(1)==7&&audio_upNextAt(2)==8);
+  step();assert(reqTrack==5&&audio_playingUpNext()&&orderPos==2&&audio_upNextLen()==2);
+  step(true);assert(reqTrack==2&&!audio_playingUpNext()&&orderPos==2);   // back to the song it interrupted
+  step();assert(reqTrack==7&&audio_playingUpNext());
+  advance(true,true);assert(reqTrack==8&&reqContinuous&&!seeking);         // natural end: gapless, tail stays audible
+  advance(true,true);assert(reqTrack==3&&orderPos==3&&!audio_playingUpNext()&&reqContinuous);
+  step();assert(reqTrack==4&&!reqContinuous&&seeking);                     // a skip still silences the old tail
+  audio_upNextAdd(front1,1,false);audio_setRepeat(REPEAT_ONE);curTrack=4;
+  advance(true,true);assert(reqTrack==4&&reqContinuous&&audio_upNextLen()==1); // Repeat One wins over Up Next
+  audio_setRepeat(REPEAT_OFF);playing=true;orderPos=tracks-1;
+  advance(true,true);assert(reqTrack==5&&playing&&audio_upNextLen()==0);   // queued songs play before the end
+  rbTail=0;rbHead=100;advance(true,true);assert(stopPending&&playing);       // the end waits for the last tail
+  audio_tick();assert(stopPending&&playing);
+  rbTail=100;audio_tick();assert(!stopPending&&!playing&&orderPos==0&&reqTrack==0);
+  uint16_t many[80];for(int i=0;i<80;++i)many[i]=uint16_t(i%tracks);
+  assert(audio_upNextAdd(many,80,false)==AUDIO_UP_NEXT_CAP&&audio_upNextAdd(front1,1,true)==0);
+  assert(audio_upNextRemove(0)&&audio_upNextLen()==AUDIO_UP_NEXT_CAP-1&&audio_upNextAt(0)==1);
+  const uint16_t mixed[]={uint16_t(tracks),3};assert(audio_upNextAdd(mixed,2,true)==1&&audio_upNextAt(0)==3); // unknown ids skipped
+  audio_upNextClear();assert(audio_upNextLen()==0&&audio_upNextAt(0)==-1);
+  audio_upNextAdd(back2,2,false);playing=false;
+  assert(audio_upNextPlay(1)&&reqTrack==8&&playing&&audio_playingUpNext()&&audio_upNextLen()==1&&audio_upNextAt(0)==7);
+  audio_upNextClear();
+  fprintf(stderr,"PASS up next: front/back order, list resumes, prev, Repeat One/Off, deferred end, cap %d, play now\n",AUDIO_UP_NEXT_CAP);
+
+  // Gapless position carry: the old tail never counts toward the new track's clock.
+  int16_t out[2*256];
+  seeking=false;playing=true;reqTrack=-1;reqSeekMs=-1;rbTail=0;rbHead=300;
+  carryFrames=200;framesPlayed=0;posBaseMs=0;starting=true;gapArmed=gapOpened=true;gapFrames=0;
+  audio_pull(out,150);assert(framesPlayed==0&&carryFrames==50&&starting&&gapArmed);
+  const uint32_t serialBefore=gapSerial,underrunsBefore=underruns;
+  audio_pull(out,100);assert(framesPlayed==50&&carryFrames==0&&!starting&&!gapArmed&&gapLast==0&&gapSerial==serialBefore+1);
+  // A real gap: the ring runs dry between the tail and the new track's first frame.
+  rbTail=rbHead=0;gapArmed=true;gapOpened=false;gapFrames=0;
+  audio_pull(out,128);assert(gapArmed&&gapFrames==128&&underruns==underrunsBefore);
+  gapOpened=true;rbHead=64;audio_pull(out,128);assert(!gapArmed&&gapLast==192&&underruns==underrunsBefore);
+  fprintf(stderr,"PASS gapless carry: tail frames excluded from the clock, boundary gap measured, not an underrun\n");
   decodeHandle=nullptr;rb=nullptr;
 }

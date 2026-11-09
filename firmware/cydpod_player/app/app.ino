@@ -291,6 +291,18 @@ static void persistResume(uint32_t now) {
                           (bt_connected() ? "bt" : "no-bt"))
 #endif
 
+#ifndef CYD_UPLOADER
+// `gapless on|off`: A/B the gapless hand-off (RAM only, until reboot).
+static bool gaplessCommand(const char* line) {
+  if (strncmp(line, "gapless", 7) != 0 || (line[7] != 0 && line[7] != ' ')) return false;
+  const char* a = line[7] ? line + 8 : "";
+  if (!strcmp(a, "on")) audio_setGapless(true);
+  else if (!strcmp(a, "off")) audio_setGapless(false);
+  else Serial.printf("cmd: gapless is %s (gapless on|off)\n", audio_gapless() ? "on" : "off");
+  return true;
+}
+#endif
+
 // Debug command line (CY-108): `scroll ...` knobs. One short line at a time, never blocks; an overlong line is dropped.
 static void serialCommands() {
   static char line[48];
@@ -300,7 +312,7 @@ static void serialCommands() {
     const int c = Serial.read();
     if (c == '\n' || c == '\r') { if (n && !over) { line[n] = 0; if (!power_command(line)
 #ifndef CYD_UPLOADER
-          && !btdiag_command(line)
+          && !btdiag_command(line) && !gaplessCommand(line)
 #endif
           ) classic_command(line); } n = 0; over = false; }
     else if (n < sizeof(line) - 1) line[n++] = (char)c;

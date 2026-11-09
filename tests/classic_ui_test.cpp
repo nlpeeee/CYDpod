@@ -154,11 +154,26 @@ void display_setBacklight(uint8_t p){backlight=p;}
 int audio_queueLen(){return queueLength;}
 int audio_queueTrack(int n){return n>=0&&n<queueLength?(queueData?queueData[n]:n):-1;}
 int audio_queuePos(int track){for(int i=0;i<queueLength;++i)if(audio_queueTrack(i)==track)return i;return -1;}
+// Up Next: a plain host model of the audio.h contract (order, cap, play-now removal).
+static std::vector<uint16_t> upNextQ;
+int audio_upNextAdd(const uint16_t* ids,int n,bool front){
+  std::vector<uint16_t> take;for(int i=0;i<n&&int(upNextQ.size()+take.size())<AUDIO_UP_NEXT_CAP;++i)take.push_back(ids[i]);
+  upNextQ.insert(front?upNextQ.begin():upNextQ.end(),take.begin(),take.end());return int(take.size());
+}
+int audio_upNextLen(){return int(upNextQ.size());}
+int audio_upNextAt(int i){return i>=0&&i<int(upNextQ.size())?int(upNextQ[size_t(i)]):-1;}
+bool audio_upNextRemove(int i){if(i<0||i>=int(upNextQ.size()))return false;upNextQ.erase(upNextQ.begin()+i);return true;}
+void audio_upNextClear(){upNextQ.clear();}
+bool audio_upNextPlay(int i){const int id=audio_upNextAt(i);if(id<0)return false;audio_upNextRemove(i);audio_playTrack(id);return true;}
+bool audio_playingUpNext(){return false;}
 void settings_saveResume(){}
 const char* display_panelName(uint16_t){return "ST7789";}
 bool firmware_uploaderPresent(){return false;}
 bool firmware_bootUploader(){return false;}
-bool touch_isDown(){return useTracker?tracker.down():down;}
+// The press start, seen on the poll that first reports the finger (every UI tick polls).
+static bool heldLast=false;static uint32_t heldSince=0;
+bool touch_isDown(){const bool d=useTracker?tracker.down():down;if(d&&!heldLast)heldSince=clockNow;heldLast=d;return d;}
+uint32_t touch_heldMs(){return useTracker?tracker.heldMs(tracker.lastSeenMs()):down?clockNow-heldSince:0;} // pressRun polls on its own clock
 uint32_t touch_lastSeenMs(){return useTracker?tracker.lastSeenMs():clockNow;}
 static uint32_t testFirstZero=0;
 bool touch_confirmedLift(uint32_t& at){at=testFirstZero;return at!=0;}
@@ -709,6 +724,44 @@ static void tapSettingsRow(int idx){
 static void tapBackButton(){tap(cydclassic::layout::HeaderBackX,cydclassic::layout::HeaderTextY);}
 // EQ-5BAND: the Equalizer page from Settings > Playback and from Now Playing > Options, in every
 // rotation: slider press, Preset cycling, Reset, On/Off, and no swipe-back from a slider drag.
+// Up Next: hold a song or album row for Play next / Add to queue; the Up Next page from Options.
+unsigned classic_mode();const char* classic_modeName(unsigned);
+static int choiceY(int i){return (tft.height()-(40+3*48+8))/2+60+48*i;} // ui_choice() button centres
+static void holdAt(int x,int y){tx=x;ty=y;down=true;for(int i=0;i<7;++i)ui_tick(clockNow+=130);}
+static void releaseHold(){down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();}
+static void dismissToast(){ui_touch(TOUCH_TAP,0,0);pump();} // a tap dismisses a toast; with none up it does nothing
+static void upNextRegression(){
+  namespace L=cydclassic::layout;
+  tft.setRotation(0);g_settings.rotation=0;ui_redraw();pump();upNextQ.clear();
+  const auto mode=[]{return std::string(classic_modeName(classic_mode()));};
+  toSongs();const Rect row=L::row<Rect>(tft.width(),1);
+  const int before=calls;holdAt(row.cx(),row.cy());
+  check(label("Play next")&&label("Add to queue")&&label("Cancel"),"holding a song opens the queue menu");
+  check(ui_pressClaimed(),"the hold claims the press (no recalibration, no release event)");
+  releaseHold();check(calls==before&&mode()=="Catalog","releasing the hold plays nothing");
+  tap(tft.width()/2,choiceY(0));check(upNextQ.size()==1&&label("Playing next."),"Play next queues the song");
+  dismissToast();
+  holdAt(row.cx(),row.cy());releaseHold();tap(tft.width()/2,choiceY(2));check(upNextQ.size()==1&&mode()=="Catalog","Cancel queues nothing");
+  holdAt(row.cx(),row.cy());releaseHold();tap(tft.width()/2,8);check(upNextQ.size()==1&&mode()=="Catalog"&&classic_depth()==2,"a tap outside the menu cancels and does not go Back");
+  tx=row.cx();ty=row.cy();down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,tx,ty);pump();
+  check(calls>before&&mode()=="Player","a short tap still plays the song");
+  // An album row queues every song on it, after what is already queued.
+  home();tapTile(2);const Rect album=L::row<Rect>(tft.width(),0);holdAt(album.cx(),album.cy());releaseHold();
+  check(label("Add to queue"),"holding an album opens the queue menu");
+  tap(tft.width()/2,choiceY(1));check(upNextQ.size()>2,"Add to queue appends the whole album");
+  const size_t queued=upNextQ.size();dismissToast();
+  toPlayer();const Rect o=L::options<Rect>(tft.width());tap(o.cx(),o.cy());
+  check(label("Up Next")&&label((std::to_string(queued)+" queued").c_str()),"Options shows Up Next with its count");
+  tapSettingsRow(5);check(shown("Up Next")&&label("Clear Up Next"),"the Up Next page opens from Options");
+  const Rect q=L::row<Rect>(tft.width(),1);holdAt(q.cx(),q.cy());releaseHold();
+  check(label("Play now")&&label("Remove"),"holding a queued song offers Play now and Remove");
+  tap(tft.width()/2,choiceY(1));pump();check(upNextQ.size()==queued-1,"Remove drops that entry");
+  tapRow(0);check(label("Clear Up Next?"),"Clear asks first");
+  const int w=min(tft.width()-24,296),bw=(w-24)/2,okX=(tft.width()-w)/2+16+bw+bw/2,okY=(tft.height()-150)/2+150-8-22;
+  tap(okX,okY);check(upNextQ.empty()&&label("Hold any song to queue it"),"Clear empties Up Next");
+  home();
+  std::cout<<"PASS Up Next: hold menu on songs and albums, Play next, Add to queue, Cancel, outside tap, short tap, Options count, page, Remove, Clear\n";
+}
 static void equalizerRegression(){
   namespace L=cydclassic::layout;
   auto same=[](const int8_t* a,std::initializer_list<int> b){int i=0;for(int v:b)if(a[i++]!=v)return false;return true;};
@@ -1312,7 +1365,7 @@ static void navigationGraph(){
   std::cout<<"NAV_GRAPH rotation "<<navRotation<<": "<<classes.size()<<" pages, "<<nodes.size()<<" page/scroll states\n";
   for(const auto& e:edges){std::cout<<"  "<<e.first<<" ->";for(const auto& to:e.second)std::cout<<' '<<to;std::cout<<'\n';}
   check(unknown.empty(),"a screen outside Classic and Bluetooth became current");
-  const std::set<std::string> expected{"Bluetooth","Classic.About","Classic.Catalog","Classic.Display","Classic.Home","Classic.Keyboard","Classic.Options","Classic.Output","Classic.Playback","Classic.Player","Classic.Playlists","Classic.Refresh","Classic.Search","Classic.Settings","Classic.SourceSongs","Classic.Sources","Classic.System","Classic.Equalizer"};
+  const std::set<std::string> expected{"Bluetooth","Classic.About","Classic.Catalog","Classic.Display","Classic.Home","Classic.Keyboard","Classic.Options","Classic.Output","Classic.Playback","Classic.Player","Classic.Playlists","Classic.Refresh","Classic.Search","Classic.Settings","Classic.SourceSongs","Classic.Sources","Classic.System","Classic.Equalizer","Classic.UpNext"};
   for(const auto& want:expected)check(classes.count(want)>0,("page not reachable from Home: "+want).c_str());
   for(const auto& got:classes)check(expected.count(got)>0,("unexpected page reachable from Home: "+got).c_str());
 }
@@ -1850,6 +1903,7 @@ int main(){try{
   homeTilesRegression();
   settingsRegression();
   equalizerRegression();
+  upNextRegression();
   themeRegression();
   themePreviews();
   bluetoothCandidateRegression();

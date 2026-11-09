@@ -70,6 +70,7 @@ static inline uint32_t rbFree() { return RB_FRAMES - 1 - rbUsed(); }
 // Shared state
 // ---------------------------------------------------------------------------
 static volatile int      reqTrack  = -1;      // UI -> decode task
+static volatile bool     reqContinuous = false; // reqTrack follows a natural end: keep the old tail playing
 static volatile int32_t  reqSeekMs = -1;
 static volatile uint32_t reqStartMs = 0, commandSerial = 0, seekGoalMs = 0;
 static volatile bool seeking = false, canSeek = false;
@@ -91,6 +92,14 @@ static volatile uint32_t underruns = 0;
 static volatile bool     starting = false;    // opening a track: no underrun counting; clears on the first PULLED frame
 static volatile bool     opening = false;     // decodeTask is inside openTrack/seek for a consumed request (CY-118)
 static volatile uint32_t lastPullMs = 0;
+// Gapless: a natural track end hands the next file to the decoder while the old
+// tail is still in the ring. carryFrames counts those old frames after the new
+// track opens, so the position clock only starts on the new track's own audio.
+static volatile bool     gaplessOn = true;
+static volatile uint32_t carryFrames = 0;
+static volatile bool     gapArmed = false;    // EOF handed off; waiting for the new track's first frame
+static volatile bool     gapOpened = false;   // ...and the next track has opened behind the old tail
+static volatile uint32_t gapFrames = 0, gapLast = 0, gapSerial = 0;
 
 static TaskHandle_t decodeHandle = nullptr;
 static bool decoderReleased = false; // control task only, keeps pre-start requests behind the startup barrier
@@ -151,16 +160,24 @@ void audio_pull(int16_t* out, int32_t frames) {
     if (first < uint32_t(copied))
       memcpy(out + first * 2, rb, (copied - first) * 2 * sizeof(int16_t));
     rbTail = rbAdvance(tail, copied);
-    framesPlayed += copied;
+    const uint32_t carry = carryFrames, carried = uint32_t(copied) < carry ? uint32_t(copied) : carry;
+    carryFrames = carry - carried;
+    framesPlayed += uint32_t(copied) - carried;
     pullFrames += copied;
     if (copied > 0) {
-      starting = false;
       wake = producerWaiting;
       producerWaiting = false;
     }
+    if (uint32_t(copied) > carried) starting = false;
+    const bool bridging = gapArmed; // a boundary's silence is reported as a gap, not an underrun
+    if (gapArmed) {
+      gapFrames += uint32_t(frames - copied);
+      // Once the next track is open, the first frame past the old tail is its own.
+      if (gapOpened && uint32_t(copied) > carried) { gapLast = gapFrames; gapArmed = gapOpened = false; ++gapSerial; }
+    }
     const uint32_t left = rbUsed();
     if (!starting && framesPlayed >= RB_FRAMES && left < ringLow) ringLow = left;
-    if (copied < frames && !starting && reqTrack < 0 && reqSeekMs < 0) underruns++;
+    if (copied < frames && !starting && !bridging && reqTrack < 0 && reqSeekMs < 0) underruns++;
     missing = uint32_t(frames - copied); // excludes intentional paused/seeking silence
   }
 #ifdef CYDPOD_LIGHT_AUDIO_DIAGNOSTICS
@@ -264,7 +281,7 @@ static File     file;
 
 static void requestFlush() { // decoder task only
   portENTER_CRITICAL(&stateLock);
-  rbTail = rbHead; framesPlayed = 0;
+  rbTail = rbHead; framesPlayed = 0; carryFrames = 0; gapArmed = gapOpened = false;
   portEXIT_CRITICAL(&stateLock);
   eq_flush();
 }
@@ -318,20 +335,27 @@ static void closeTrack() {
 }
 
 // Decode task is the sole owner of this File and decoder, including seeks.
-static bool openTrack(int index) {
+static bool openTrack(int index, bool continuous) {
   const int count = storage_trackCount();
   if (count == 0) return false;
   index = ((index % count) + count) % count;
 
   starting = true;
   closeTrack();
-  requestFlush();
+  if (continuous) {
+    // Gapless: the old tail plays on; the clock restarts after it.
+    portENTER_CRITICAL(&stateLock);
+    carryFrames = rbUsed(); framesPlayed = 0; posBaseMs = 0; gapOpened = gapArmed;
+    portEXIT_CRITICAL(&stateLock);
+  } else {
+    requestFlush();
+  }
 
   canSeek = false; decodeBlocked = false; pcmInputRate=0;
   curTrack = index;
   durationMs = 0;
   posBaseMs = 0;
-  framesPlayed = 0;
+  if (!continuous) framesPlayed = 0;
   const String path = storage_trackPath(index);
   file = openSmallFile(path);
   if (!file) {
@@ -367,6 +391,7 @@ static bool openTrack(int index) {
 // never decides what plays next. Play order (shuffle, repeat) is the UI task's
 // business in audio_tick(), so the order state needs no locking.
 static volatile uint32_t endedCommand=0, failedCommand=0;
+static volatile bool endedNatural=false;      // the end was handed off gaplessly: the ring still holds its tail
 static volatile uint32_t endedSerial = 0;     // bumped when a track finishes
 static volatile uint32_t failSerial  = 0;     // bumped when a track will not open
 static volatile uint32_t diagMaxReadMs = 0;   // diagnostics: slowest whole next()
@@ -382,12 +407,13 @@ static void decodeTask(void*) {
     const int t = reqTrack;
     const int32_t seek = reqSeekMs;
     const uint32_t startMs = reqStartMs, serial = commandSerial;
+    const bool continuous = reqContinuous && !startMs;
     if (t >= 0) opening = true;  // in the same critical section: no gap in which the request is neither queued nor opening
-    reqTrack = -1; reqSeekMs = -1;
+    reqTrack = -1; reqSeekMs = -1; reqContinuous = false;
     portEXIT_CRITICAL(&stateLock);
     if (t >= 0) {
       Serial.printf("cmd: track %d consumed serial %lu\n",t,(unsigned long)serial);
-      const bool opened = openTrack(t);
+      const bool opened = openTrack(t, continuous);
       if (serial == commandSerial) {
         if (!opened) { requireReopen(serial); failedCommand=serial; failSerial++; finishCommand(serial); }
         else if (startMs && canSeek) seekTrack(startMs, serial);
@@ -445,11 +471,25 @@ static void decodeTask(void*) {
       }
       if (pull == CodecTrack::Pull::eof) {
         if (!m4a.drain(PcmBatch::sink, &batch) || !batch.flush()) continue;
+        if (gaplessOn) {
+          // Gapless: every frame of this track is in the ring. Say so now, so the
+          // next file opens while the tail is still playing -- but not while
+          // paused: the song on screen stays the one that is still to be heard.
+          while (!playing && !requestPending()) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
+          if (requestPending()) continue;
+          closeTrack();
+          portENTER_CRITICAL(&stateLock);
+          const bool current = serial == commandSerial && !requestPending();
+          if (current) { gapArmed = true; gapOpened = false; gapFrames = 0; endedCommand = serial; endedNatural = true; }
+          portEXIT_CRITICAL(&stateLock);
+          if (current) endedSerial++;
+          continue;
+        }
         // End of track: let what is buffered play out, then say so.
         while ((rbUsed() > 0 || !playing) && !requestPending()) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
         if (!requestPending()) {
           closeTrack();
-          endedCommand=serial; endedSerial++;
+          endedCommand=serial; endedNatural=false; endedSerial++;
         }
         continue;
       }
@@ -509,8 +549,26 @@ static int queueFind(int track) {
 }
 static bool      shuffleOn = false;
 static uint8_t   repeatMode = REPEAT_ALL;
-static uint32_t  seenEnded = 0, seenFail = 0;
+static uint32_t  seenEnded = 0, seenFail = 0, seenGap = 0;
 static int       failStreak = 0;
+// Repeat Off reached the end while the last track's tail is still in the ring:
+// load the first track (paused) only once that tail has played out.
+static bool      stopPending = false;
+
+// Up Next: songs the owner queued with Play next / Add to queue, played before
+// the rest of the list. RAM only, loop task only (like the play order). While
+// one plays, orderPos stays on the list song that was playing when it started,
+// so the list carries on after it.
+static uint16_t  upNext[AUDIO_UP_NEXT_CAP];
+static int       upHead = 0, upLen = 0;
+static bool      playingUpNext = false;
+static inline int upSlot(int i) { return (upHead + i) % AUDIO_UP_NEXT_CAP; }
+static int upNextPop() {
+  if (upLen <= 0) return -1;
+  const int id = upNext[upHead];
+  upHead = upSlot(1); --upLen;
+  return id;
+}
 
 // The queue in list order, or shuffled with `firstTrack` first. A first track
 // outside the queue leaves orderPos at -1: next then starts the list.
@@ -520,31 +578,46 @@ static void buildOrder(bool shuffled, int firstTrack) {
   orderPos = order.position(first);
 }
 
-static void request(int track, uint32_t startMs = 0) {
+static void request(int track, uint32_t startMs = 0, bool continuous = false) {
   if (track < 0) return; // queueAt already published the unavailable-source error
+  stopPending = false;
   portENTER_CRITICAL(&stateLock);
   const int superseded=reqTrack;
   reqStartMs = startMs; seekGoalMs = startMs; reqSeekMs = -1; reqTrack = track;
-  ++commandSerial; seeking = true; canSeek = false;
+  // A gapless hand-off keeps the old tail audible; anything else silences it at once.
+  reqContinuous = continuous && !startMs;
+  ++commandSerial; seeking = !reqContinuous; canSeek = false;
   // A queued/in-flight open now owns recovery; an old failure must not redirect Play.
   decodeBlocked = false;
   const uint32_t serial=commandSerial;
   portEXIT_CRITICAL(&stateLock);
   wakeDecoder();
   if(superseded>=0)Serial.printf("cmd: track %d superseded by track %d (latest wins)\n",superseded,track);
-  Serial.printf("cmd: track %d queued serial %lu start %lu\n",track,(unsigned long)serial,(unsigned long)startMs);
+  Serial.printf("cmd: track %d queued serial %lu start %lu%s\n",track,(unsigned long)serial,(unsigned long)startMs,continuous?" (gapless)":"");
 }
 
-static void advance(bool trackFinished) {
+// `natural`: the track ended by itself and its tail is still in the ring
+// (gapless hand-off), so the next open must not cut it off.
+static void advance(bool trackFinished, bool natural = false) {
   if (orderLen == 0) return;
   if (trackFinished && repeatMode == REPEAT_ONE) {
-    request(curTrack);
+    request(curTrack, 0, natural);
     return;
   }
+  const int queued = upNextPop();
+  if (queued >= 0) {
+    if (!playingUpNext) Serial.println("cmd: up next starts");
+    playingUpNext = true;
+    request(queued, 0, natural);
+    return;
+  }
+  playingUpNext = false;
   int next = orderPos + 1;
   if (next >= orderLen) {
     if (trackFinished && repeatMode == REPEAT_OFF) {
-      // The end of the list: load the first track, paused, ready to go again.
+      // The end of the list: load the first track, paused, ready to go again --
+      // once the last track's tail has played out.
+      if (natural && rbUsed() > 0) { stopPending = true; return; }
       playing = false;
       next = 0;
     } else {
@@ -552,7 +625,7 @@ static void advance(bool trackFinished) {
     }
   }
   orderPos = next;
-  request(queueAt(order.at(orderPos)));
+  request(queueAt(order.at(orderPos)), 0, natural);
 }
 
 // ---------------------------------------------------------------------------
@@ -601,8 +674,15 @@ bool audio_startupComplete() { return !decodeHandle || startupComplete; }
 void audio_tick() {
   if (endedSerial != seenEnded) {
     seenEnded = endedSerial;
-    if(cyd::currentCompletion(endedCommand,commandSerial)){failStreak = 0;advance(true);}
+    if(cyd::currentCompletion(endedCommand,commandSerial)){failStreak = 0;advance(true, endedNatural);}
     else Serial.println("cmd: eof ignored (superseded)");
+  }
+  if (stopPending && rbUsed() == 0) { stopPending = false; advance(true); }
+  if (gapSerial != seenGap) {
+    seenGap = gapSerial;
+    const uint32_t frames = gapLast;
+    Serial.printf("stat: gap track %d missing %lu frames (%lu ms)\n", int(curTrack),
+                  (unsigned long)frames, (unsigned long)(uint64_t(frames) * 1000 / 44100));
   }
   if (failSerial != seenFail) {
     seenFail = failSerial;
@@ -621,6 +701,7 @@ void audio_playTrack(int index) {
   orderPos = order.position(queueFind(index));
   if (!orderLen) return; // a failed cursor read stopped playback
   playing = true;
+  playingUpNext = false;
   failStreak = 0;
   request(index);
 }
@@ -637,6 +718,13 @@ void audio_prev() {
   Serial.println("cmd: previous accepted");
   failStreak = 0;
   if (!requestPending() && !seeking && audio_positionMs() > 3000) { request(curTrack); return; }
+  if (playingUpNext && orderPos >= 0) {
+    // Back from a queued song: the list song it interrupted.
+    playingUpNext = false;
+    request(queueAt(order.at(orderPos)));
+    return;
+  }
+  playingUpNext = false;
   orderPos = orderPos <= 0 ? orderLen - 1 : orderPos - 1;
   request(queueAt(order.at(orderPos)));
 }
@@ -696,7 +784,9 @@ void audio_setShuffle(bool on) {
   Serial.printf("cmd: shuffle %s %s\n",on?"on":"off",orderLen?"executed":"ignored (empty queue)");
   if (on == shuffleOn || orderLen == 0) return;
   shuffleOn = on;
-  const int wanted=reqTrack>=0?int(reqTrack):int(curTrack);
+  // During a queued song, rebuild around the list song it interrupted.
+  const int base = playingUpNext && orderPos >= 0 ? queueAt(order.at(orderPos)) : -1;
+  const int wanted = base >= 0 ? base : reqTrack >= 0 ? int(reqTrack) : int(curTrack);
   buildOrder(on, wanted);
 }
 
@@ -709,6 +799,7 @@ void audio_setQueueSource(AudioQueueSource source, int n, int keepTrack, bool ju
   if (n <= 0 || !audio_ready()) return;
   queue = source;
   orderLen = min(n, storage_trackCount());
+  playingUpNext = false; // the new list owns the cursor; queued songs still play first
   buildOrder(shuffleOn, keepTrack);
   if (orderLen > 0 && orderPos < 0 && jump) {
     orderPos = 0;
@@ -716,6 +807,49 @@ void audio_setQueueSource(AudioQueueSource source, int n, int keepTrack, bool ju
     request(queueAt(order.at(0)));
   }
 }
+
+int audio_upNextAdd(const uint16_t* ids, int n, bool front) {
+  if (!ids || n <= 0) return 0;
+  const int count = storage_trackCount();
+  // The first ids that fit, in order; invalid ids are skipped.
+  uint16_t take[AUDIO_UP_NEXT_CAP];
+  int added = 0;
+  for (int i = 0; i < n && added < AUDIO_UP_NEXT_CAP - upLen; ++i)
+    if (ids[i] < count) take[added++] = ids[i];
+  if (front) {
+    // Walk the block backwards onto the front so it keeps its own order.
+    for (int i = added - 1; i >= 0; --i) {
+      upHead = (upHead + AUDIO_UP_NEXT_CAP - 1) % AUDIO_UP_NEXT_CAP;
+      upNext[upHead] = take[i];
+    }
+    upLen += added;
+  } else {
+    for (int i = 0; i < added; ++i) upNext[upSlot(upLen++)] = take[i];
+  }
+  Serial.printf("cmd: up next %s %d of %d (now %d)\n", front ? "front" : "back", added, n, upLen);
+  return added;
+}
+int  audio_upNextLen() { return upLen; }
+int  audio_upNextAt(int i) { return i >= 0 && i < upLen ? int(upNext[upSlot(i)]) : -1; }
+bool audio_upNextRemove(int i) {
+  if (i < 0 || i >= upLen) return false;
+  for (int k = i; k + 1 < upLen; ++k) upNext[upSlot(k)] = upNext[upSlot(k + 1)];
+  --upLen;
+  return true;
+}
+void audio_upNextClear() { upHead = upLen = 0; Serial.println("cmd: up next cleared"); }
+bool audio_playingUpNext() { return playingUpNext; }
+bool audio_upNextPlay(int i) {
+  const int id = audio_upNextAt(i);
+  if (id < 0 || !audio_ready() || !orderLen) return false;
+  audio_upNextRemove(i);
+  ++playIntentSerial;
+  playing = true; playingUpNext = true; failStreak = 0;
+  request(id);
+  return true;
+}
+void audio_setGapless(bool on) { gaplessOn = on; Serial.printf("cmd: gapless %s\n", on ? "on" : "off"); }
+bool audio_gapless() { return gaplessOn; }
 
 int audio_queueLen()             { return orderLen; }
 int audio_queueTrack(int pos)    { return (pos >= 0 && pos < orderLen) ? queueAt(pos) : -1; }

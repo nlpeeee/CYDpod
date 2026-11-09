@@ -222,7 +222,7 @@ static const Screen* SCREENS[SCR_COUNT] = { &SCREEN_BLUETOOTH, &SCREEN_CLASSIC }
 static ScreenId current = SCR_CLASSIC;
 static bool     entered = false;
 
-enum Overlay : uint8_t { OV_NONE, OV_TOAST, OV_CONFIRM };
+enum Overlay : uint8_t { OV_NONE, OV_TOAST, OV_CONFIRM, OV_CHOICE };
 static Overlay  overlay = OV_NONE;
 
 // The finger, as the press hooks see it (Screen::press).
@@ -290,6 +290,61 @@ static void closeOverlay() {
   ui_redraw();
 }
 
+// ---------------------------------------------------------------------------
+// Choice menu
+// ---------------------------------------------------------------------------
+static ConfirmFn choiceFn[2] = {};
+static Txt       choiceLabel[2] = { T_CANCEL, T_CANCEL };
+static Rect      choicePanel, choiceRect[3]; // first, second, Cancel
+
+static void drawChoiceButtons(int pressed) {
+  const uint16_t panel = theme().surfaceRaised;
+  for (int i = 0; i < 3; ++i)
+    ui_textButton(choiceRect[i], i < 2 ? choiceLabel[i] : T_CANCEL, i == 0, pressed == i, panel);
+}
+
+void ui_choice(const String& title, Txt first, Txt second, ConfirmFn onFirst, ConfirmFn onSecond) {
+  const Palette& p = theme();
+  overlay = OV_CHOICE;
+  choiceFn[0] = onFirst; choiceFn[1] = onSecond;
+  choiceLabel[0] = first; choiceLabel[1] = second;
+
+  const int W = tft.width(), H = tft.height();
+  const int bh = 40, w = min(W - SP_L * 2, 296), h = 40 + 3 * (bh + SP_M) + SP_M;
+  choicePanel = { (W - w) / 2, (H - h) / 2, w, h };
+  const Rect& r = choicePanel;
+  tft.fillRoundRect(r.x, r.y, r.w, r.h, STYLE_RADIUS, p.surfaceRaised);
+  for (int i = 0; i < STYLE_BORDER; i++)
+    tft.drawRoundRect(r.x + i, r.y + i, r.w - i * 2, r.h - i * 2, STYLE_RADIUS, p.outline);
+  ui_text(title, r.x + SP_L, r.y + 22, ML_DATUM, p.text, p.surfaceRaised, r.w - SP_L * 2);
+  for (int i = 0; i < 3; ++i) choiceRect[i] = { r.x + SP_M, r.y + 40 + i * (bh + SP_M), r.w - SP_M * 2, bh };
+  drawChoiceButtons(-1);
+}
+
+static void choiceTouch(TouchEvent ev, int x, int y) {
+  if (ev != TOUCH_TAP) return;
+  int hit = -1;
+  for (int i = 0; i < 3; ++i) if (choiceRect[i].contains(x, y)) hit = i;
+  if (hit < 0 && choicePanel.contains(x, y)) return; // the panel itself is not an answer; outside it cancels
+  const ConfirmFn fn = hit >= 0 && hit < 2 ? choiceFn[hit] : nullptr;
+  choiceFn[0] = choiceFn[1] = nullptr;
+  overlay = OV_NONE;
+  ui_redraw();                           // first: the action may toast over the screen or leave it
+  if (fn) fn();
+}
+
+static void choicePress(PressPhase phase, int x, int y) {
+  static int lit = -1;
+  if (phase == PRESS_DOWN) {
+    lit = -1;
+    for (int i = 0; i < 3; ++i) if (choiceRect[i].contains(x, y)) lit = i;
+    if (lit >= 0) drawChoiceButtons(lit);
+  } else if (phase == PRESS_UP && lit >= 0) {
+    lit = -1;
+    drawChoiceButtons(-1);
+  }
+}
+
 static void confirmTouch(TouchEvent ev, int x, int y) {
   if (ev != TOUCH_TAP) return;
   const bool ok = okRect.contains(x, y);
@@ -336,6 +391,7 @@ void ui_toast(const char* text, uint32_t ms) {
 static bool dispatchPress(PressPhase phase, int x, int y) {
   if (pressOrphaned || overlay == OV_TOAST) return false;
   if (overlay == OV_CONFIRM) { confirmPress(phase, x, y); return false; }
+  if (overlay == OV_CHOICE)  { choicePress(phase, x, y); return false; }
   const Screen* s = SCREENS[current];
   return s->press ? s->press(phase, x, y) : false;
 }
@@ -371,6 +427,7 @@ static bool syncPress() {
 }
 
 bool ui_pressClaimed() { return pressDown && pressClaimed; }
+void ui_claimPress() { if (pressDown) pressClaimed = true; }
 
 static uint32_t uiNow=0;
 void ui_tick(uint32_t now) {
@@ -393,6 +450,7 @@ void ui_touch(TouchEvent ev, int x, int y) {
   if (syncPress()) return;
   if (overlay == OV_TOAST)   { closeOverlay(); return; }   // a tap dismisses it
   if (overlay == OV_CONFIRM) { confirmTouch(ev, x, y); return; }
+  if (overlay == OV_CHOICE)  { choiceTouch(ev, x, y); return; }
   if (SCREENS[current]->touch) SCREENS[current]->touch(ev, x, y);
 }
 

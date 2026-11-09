@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 # build_miniaac_seek.sh prepares verified objects and generated fixtures first.
 g++ -Wl,--wrap=xmp3_UnpackFrameHeader -O1 -std=c++17 -Wall -pthread -Ivendor/miniflac -Itests/audio_shim -Itests/catalog_shim -I.tools/staging/miniaac-patched/src -I.deps/sketchbook/libraries/arduino-libhelix/src tests/audio_seek_test.cpp tests/helix_host_alloc.cpp firmware/cydpod_player/app/codec_track.cpp firmware/cydpod_player/app/resampler.cpp tests/out/miniaac_seek/obj/*.o tests/out/miniaac_seek/mp3/*.o tests/out/miniaac_seek/flac_core.o -o tests/out/miniaac_seek/audio_test
 tests/out/miniaac_seek/audio_test --output-resume
+tests/out/miniaac_seek/audio_test --gapless
 tests/out/miniaac_seek/audio_test
 
 tests/out/miniaac_seek/audio_test "$(pwd)/tests/out/miniaac_seek/fixtures/seek.mp3"

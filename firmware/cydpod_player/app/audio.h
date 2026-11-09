@@ -113,6 +113,23 @@ struct AudioQueueSource {
   int (*at)(void*, int) = nullptr; // -1: unavailable; context remains caller-owned
 };
 void audio_setQueueSource(AudioQueueSource source, int n, int keepTrack, bool jump);
+
+// Up Next: library indices queued with Play next (front) or Add to queue
+// (back). They play before the rest of the list, which then carries on after
+// the song that was playing. RAM only: kept through screen-off and Sleep,
+// cleared by a restart. Loop task only.
+static constexpr int AUDIO_UP_NEXT_CAP = 64;
+int  audio_upNextAdd(const uint16_t* ids, int n, bool front); // how many fit
+int  audio_upNextLen();
+int  audio_upNextAt(int i);           // library index, or -1
+bool audio_upNextRemove(int i);
+void audio_upNextClear();
+bool audio_upNextPlay(int i);         // play entry i now and drop it from Up Next
+bool audio_playingUpNext();           // the current song came from Up Next
+
+// Gapless hand-off at natural track ends (on by default; `gapless on|off`).
+void audio_setGapless(bool on);
+bool audio_gapless();
 void audio_setQueue(const uint16_t* tracks, int n, int keepTrack, bool jump);
 int  audio_queueLen();
 int  audio_queueTrack(int pos);       // list position -> library index, or -1

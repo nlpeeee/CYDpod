@@ -1,0 +1,40 @@
+diff --git a/components/bt/host/bluedroid/btc/profile/std/avrc/btc_avrc.c b/components/bt/host/bluedroid/btc/profile/std/avrc/btc_avrc.c
+index 95279b4e..e1614bbd 100644
+--- a/components/bt/host/bluedroid/btc/profile/std/avrc/btc_avrc.c
++++ b/components/bt/host/bluedroid/btc/profile/std/avrc/btc_avrc.c
+@@ -702,6 +702,26 @@ static void handle_rc_notification_rsp (tAVRC_MSG_VENDOR *vendor_msg)
+     }
+ }
+ 
++/* CYDpod: the INTERIM reply to a volume-change registration carries the
++ * receiver's current absolute volume, the only way an AVRCP controller can
++ * read it. Forward it as a change notification with bit 7 set (volumes are
++ * 0..127) so the application can adopt it without treating it as a change
++ * and without re-registering. Other interim replies are still ignored. */
++static void handle_rc_volume_interim_rsp (tAVRC_MSG_VENDOR *vendor_msg)
++{
++    if (!vendor_msg || !vendor_msg->p_vendor_data ||
++        vendor_msg->vendor_len < AVRC_REGISTER_NOTIFICATION_RSP_SIZE_MIN ||
++        vendor_msg->vendor_len < AVRC_RN_VOLUME_CHANGE_EVT_SIZE ||
++        vendor_msg->p_vendor_data[AVRC_RSP_PARAM_VALUE_OFFSET] != ESP_AVRC_RN_VOLUME_CHANGE) {
++        return;
++    }
++    esp_avrc_ct_cb_param_t param;
++    memset(&param, 0, sizeof(esp_avrc_ct_cb_param_t));
++    param.change_ntf.event_id = ESP_AVRC_RN_VOLUME_CHANGE;
++    param.change_ntf.event_parameter.volume = 0x80 | (vendor_msg->p_vendor_data[AVRC_RSP_PARAM_VALUE_OFFSET + 1] & 0x7f);
++    btc_avrc_ct_cb_to_app(ESP_AVRC_CT_CHANGE_NOTIFY_EVT, &param);
++}
++
+ static void handle_rc_get_caps_rsp (tAVRC_GET_CAPS_RSP *rsp)
+ {
+     if (rsp->capability_id == AVRC_CAP_EVENTS_SUPPORTED) {
+@@ -924,7 +944,7 @@ static void handle_rc_metamsg_rsp (tBTA_AV_META_MSG *p_meta_msg)
+         if (vendor_msg->hdr.ctype == AVRC_RSP_CHANGED) {
+             handle_rc_notification_rsp(vendor_msg);
+         } else if (vendor_msg->hdr.ctype == AVRC_RSP_INTERIM) {
+-            // ignore this response
++            handle_rc_volume_interim_rsp(vendor_msg);
+         }
+         break;
+     case AVRC_PDU_GET_ELEMENT_ATTR:

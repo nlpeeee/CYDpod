@@ -1,3 +1,32 @@
+## 0.6.0 release checkpoint — 9 November 2026
+
+Version 0.6.0 ships two boards, the JC2432W328C and the ESP32-2432S028R, and adds:
+- Up Next: hold a song, album or artist for Play next / Add to queue (64 songs, RAM only);
+- gapless playback: a natural track end opens the next file behind the playing tail, and MP3s skip the tag frame and trim the encoder delay and padding;
+- a vivid `#FFC800` splash background.
+
+`tools/release/Package-Release.ps1` now packages both boards. Host suites and both compiles PASS. The owner has tested 0.6.0 on both the JC2432W328C and the ESP32-2432S028R. After the release the splash and serial banner show the CYDpod version (`v0.6.0`) instead of the upstream `1.2.0`. See [0.6.0 release notes](releases/0.6.0.md).
+
+## Wired-only image retired — 9 November 2026
+
+The owner confirmed a wired I2S DAC on the 0.5.5 Bluetooth build through Settings → Audio Output → Headphones. The `cydpod-player-wired` job (CY-71, `-DCYD_DEFAULT_OUT_ROUTE=2`) is removed from `tools/check.ps1`; from the next release the player image is the only firmware for the JC2432W328C.
+
+## 0.5.5 release checkpoint — 8 November 2026
+
+Version 0.5.5 adds the 5-band fixed-point EQ (Equalizer page, presets, 0.6–0.7% of a core on the board) and the earbud work: Bluedroid patches 0002 (link counters, runtime SBC rate) and 0003 (full A2DP packets), an adaptive SBC rate that starts every link at 328 kbps, Play reconnecting earbuds that dropped the link, peer-suspend restarts and a congestion-only quiet UI. Firmware compiled from 010c6f6; compile and host suites PASS, owner runs on development builds. See [0.5.5 release notes](releases/0.5.5.md).
+
+## 0.5.4 release checkpoint — 8 November 2026
+
+Version 0.5.4 is 0.5.3 plus scrolling Now Playing labels (one overflowing title, artist or album at a time, +16 B static RAM) and a corrected transmit power readback: `esp_bredr_tx_power_set` is asynchronous, so CYDpod now waits up to ~20 ms before logging the level. Firmware compiled from 2a7b1a0 on the 0.5.3 trimmed Bluedroid; the release image itself is compile-checked, not yet board-run. See [0.5.4 release notes](releases/0.5.4.md).
+
+## 0.5.3 release checkpoint — 8 November 2026
+
+Version 0.5.3 makes a trimmed Bluedroid the default. It is rebuilt from ESP-IDF v5.5.4 without BLE, BLE Mesh, BluFi or HFP, runs the radio Classic only, and gives the BTC/BTU tasks 4 KB stacks; free heap after Bluetooth starts rises from about 34 KB to 84 KB. The release also adds robust speaker volume sync, adopts the speaker's own volume on connect (Bluedroid patch 0001), and enlarges the PCM ring to 6,144 frames. The exact board-tested candidate 4 firmware (6026ec7) is preserved. The +6 dBm transmit power still reads back +3 dBm and is under investigation. See [0.5.3 release notes](releases/0.5.3.md).
+
+## 0.5.2 release checkpoint — 7 November 2026
+
+Version 0.5.2 promotes the power candidate: idle levers and in-place light Sleep, fast Bluetooth reconnect after wake, +9 dBm transmit power, volume sync restarted after Sleep, playlists built from per-track path keys (including lists inside `/music`), one more indexed folder level and a full-width portrait volume slider. The exact candidate firmware (8c2ed33) is preserved. See [0.5.2 release notes](releases/0.5.2.md) for provenance, checks and what is not yet confirmed on hardware.
+
 ## 0.5.1 release checkpoint — 7 November 2026
 
 The maintained checkout and source of truth are `E:\dev\CYDpod` and private `nlpeeee/CYDpod`. Version 0.5.1 consolidates candidate A’s Bluetooth update/menu controls, the Now Playing redraw fix and absolute-volume feedback with initial connection synchronization. The exact final candidate firmware is preserved. See [0.5.1 release notes](releases/0.5.1.md) for provenance, checks and remaining hardware measurements. Older entries below are historical and do not describe the current feature set.

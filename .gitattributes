@@ -19,3 +19,5 @@ patches/**/*.patch -text
 hardware/case/stl/*.stl -text
 hardware/case/renders/*.png -text
 hardware/case/stl/SHA256SUMS.txt -text
+tools/bluedroid/patches/*.patch -text
+tools/bluedroid/defconfig.cydpod-bt -text

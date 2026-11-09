@@ -118,3 +118,12 @@ void ui_toast(const char* text, uint32_t ms = 2500);
 // confirms; either way the screen underneath is redrawn.
 typedef void (*ConfirmFn)();
 void ui_confirm(Txt title, Txt line1, Txt line2, Txt okLabel, ConfirmFn onOk);
+
+// A small action menu: `title` (a song or album name), two stacked actions
+// and Cancel. A tap outside the panel cancels. The chosen function runs, then
+// the screen underneath is redrawn.
+void ui_choice(const String& title, Txt first, Txt second, ConfirmFn onFirst, ConfirmFn onSecond);
+
+// Take the press under way for the screen (a hold that opened a menu): its
+// release makes no event, and it never counts as a recalibration hold.
+void ui_claimPress();

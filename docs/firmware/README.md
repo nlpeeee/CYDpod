@@ -1,7 +1,66 @@
-# CYDpod 0.5.1 firmware assets
+# CYDpod 0.6.0: flashing and building
 
-Download `CYDpod-0.5.1-firmware.zip` from the [0.5.1 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.1). It contains Bluetooth and wired player builds, manifests, instructions and esptool. Each build has four regions at `0x1000`, `0x8000`, `0xe000` and `0x10000`. Follow the archive README to flash and verify them.
+## Pick your board
 
-The source is tagged `v0.5.1`. Firmware provenance is recorded in the manifests and [release notes](../releases/0.5.1.md). GitHub Releases holds the binary assets. The local release copy is `E:\dev\CYDpod\releases\0.5.1`.
+Every release has one player build per board. Both have the same features and Bluetooth stack.
 
-The older Pages generator in `tools/make_site_release.ps1` describes the historical merged-image delivery. Use the four-region 0.5.1 release instructions for this release.
+| Board | Touch and screen | Download | Folder |
+| --- | --- | --- | --- |
+| JC2432W328C | capacitive (CST820), ST7789 | `CYDpod-0.6.0-firmware.zip` | `firmware\jc2432w328c` |
+| ESP32-2432S028R (the generic 2.8" CYD) | resistive (XPT2046), ILI9341 or ST7789 | `CYDpod-0.6.0-firmware-ESP32-2432S028R.zip` | `firmware\esp32-2432s028r` |
+
+- The JC2432W328C build plays over Bluetooth or a wired I2S DAC (Settings → Audio Output).
+- The ESP32-2432S028R build plays over Bluetooth or the board's speaker pad. That board has no wired DAC route.
+
+## Flash the release
+
+1. Download your board's zip from the [0.6.0 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.6.0) and unzip it. It contains the player build, its manifest and esptool 5.3.0.
+2. Close any serial monitor, and identify the board's COM port by unplugging it and plugging it back in.
+3. Hold **BOOT**, tap **RESET**, then release **BOOT**.
+4. From the unzipped folder, run the block below in PowerShell. It checks every file's hash, then writes and verifies the four flash regions (`0x1000`, `0x8000`, `0xe000`, `0x10000`). Saved settings and the Bluetooth bond survive.
+
+```powershell
+Set-Location .\firmware\jc2432w328c        # ESP32-2432S028R: .\firmware\esp32-2432s028r
+$manifest = Get-Content .\MANIFEST.json -Raw | ConvertFrom-Json
+foreach ($image in $manifest.files) {
+    if ((Get-FileHash -LiteralPath $image.file -Algorithm SHA256).Hash -ne $image.sha256) {
+        throw "Hash mismatch for $($image.file)"
+    }
+}
+$port = Read-Host 'COM port for the CYD'
+foreach ($op in 'write-flash','verify-flash') {
+    & ..\..\flash-tools\esptool.exe --chip esp32 --port $port --baud 460800 --before no-reset --after no-reset $op --flash-mode dio --flash-freq 80m --flash-size 4MB 0x1000 app.ino.bootloader.bin 0x8000 app.ino.partitions.bin 0xe000 boot_app0.bin 0x10000 app.ino.bin
+    if ($LASTEXITCODE -ne 0) { throw "esptool $op failed" }
+}
+```
+
+5. Tap **RESET**.
+   - Start with the speaker turned down: Bluetooth volume follows the speaker's own scale.
+   - The serial log runs at 115200 baud.
+   - For a wired DAC (JC2432W328C), choose Headphones in Settings → Audio Output.
+
+**First start on the ESP32-2432S028R:**
+- Touch calibration runs on first boot: tap the targets as they appear. Run it again from Settings → Display.
+- **Blank or garbled screen?** Your board has the other panel controller. Hold a finger on the screen from power-up for 8 s. The blue LED blinks from 4 s, then CYDpod switches controller and restarts.
+
+## Build from source
+
+You'll need Windows x64, Git, Python 3.9 or later and Windows PowerShell 5.1.
+
+1. Download `CYDpod-0.6.0-build-kit.zip` from the release and unzip it outside the checkout. It contains the pinned toolchain and `Restore-Toolchain.ps1`, so no other downloads are needed.
+2. Restore it into a fresh clone, then build:
+
+```powershell
+git clone --branch v0.6.0 https://github.com/nlpeeee/CYDpod.git E:\dev\CYDpod
+powershell -NoProfile -File E:\dev\CYDpod-build-kit\Restore-Toolchain.ps1 -Source E:\dev\CYDpod
+Set-Location E:\dev\CYDpod
+powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -PcmRingFrames 6144 -BuildLabel release-060
+powershell -NoProfile -File tools/check.ps1 -Board esp32-2432s028r -SkipProbe -SkipHostMedia -LargePcmRing -PcmRingFrames 6144 -BuildLabel release-060
+```
+
+Run the two builds one after the other, not in parallel: both restage MiniAAC. Images and manifests are written to `.tools/images`, one folder per board. Each `MANIFEST.json` names the board and lists every flashable file's offset and SHA-256. Rebuilt application hashes can differ from the released binaries, so flash those when you need an exact match. Dependency pins and third-party inventories are in [dependencies.lock.json](../../dependencies.lock.json).
+
+## Provenance and limits
+
+- **Provenance:** the source is tagged `v0.6.0`. The manifests and the [release notes](../releases/0.6.0.md) record the firmware's provenance, the checks, and what is not yet confirmed on hardware. GitHub Releases holds the binary assets.
+- **Legacy tooling:** the older Pages generator in `tools/make_site_release.ps1` describes the historical merged-image delivery. Use the four-region instructions above.

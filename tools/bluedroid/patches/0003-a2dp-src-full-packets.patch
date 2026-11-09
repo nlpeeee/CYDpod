@@ -1,0 +1,46 @@
+diff --git a/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c b/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c
+index 85262ae6..ecc0505a 100644
+--- a/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c
++++ b/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c
+@@ -131,6 +131,10 @@ volatile uint16_t cydpod_a2d_src_bitrate = 0;     /* bitrate chosen at the last
+ volatile uint8_t cydpod_a2d_src_peer_minbp = 0, cydpod_a2d_src_peer_maxbp = 0;
+ volatile uint16_t cydpod_a2d_src_mtu = 0;
+ volatile uint8_t cydpod_a2d_src_edr = 0;
++/* CYDpod patch 0003: send only full packets (docs/specs/bt-rate-and-earbuds.md). */
++volatile uint8_t cydpod_a2d_src_full_packets = 1;  /* the app's A/B switch (btd pack) */
++volatile uint32_t cydpod_a2d_src_pkts = 0;         /* packets queued for sending */
++volatile uint32_t cydpod_a2d_src_frames = 0;       /* SBC frames in those packets */
+ 
+ typedef struct {
+     uint32_t sig;
+@@ -1154,6 +1158,21 @@ static UINT8 btc_get_num_aa_frame(void)
+             APPL_TRACE_EVENT("Limit frms to send from %d to %d", result, frm_nb_threshold);
+             result = frm_nb_threshold;
+         }
++        /* CYDpod patch 0003: a 30 ms tick holds about 10 frames, but a packet
++           takes only floor((MTU-1)/frame) of them (8 at bitpool 53 and MTU 1008),
++           so every tick sent one full packet and one small one. Send whole
++           packets only; the remainder stays in the counter for the next tick.
++           A result cut below a packet by the queue limit is sent as before. */
++        if (cydpod_a2d_src_full_packets && a2dp_source_local_param.btc_aa_src_cb.encoder.u16PacketLength) {
++            UINT32 fpp = 0;
++            while (fpp < 15 && (fpp + 1) * a2dp_source_local_param.btc_aa_src_cb.encoder.u16PacketLength <
++                               a2dp_source_local_param.btc_aa_src_cb.TxAaMtuSize) {
++                fpp++;
++            }
++            if (fpp && result >= fpp) {
++                result -= result % fpp;
++            }
++        }
+         a2dp_source_local_param.btc_aa_src_cb.media_feeding_state.pcm.counter -= result * pcm_bytes_per_frame;
+ 
+         BTC_TRACE_VERBOSE("WRITE %d FRAMES", result);
+@@ -1411,6 +1430,8 @@ static void btc_media_aa_prep_sbc_2_send(UINT8 nb_frame)
+             }
+ 
+             /* Enqueue the encoded SBC frame in AA Tx Queue */
++            cydpod_a2d_src_pkts++;
++            cydpod_a2d_src_frames += p_buf->layer_specific;
+             fixed_queue_enqueue(a2dp_source_local_param.btc_aa_src_cb.TxAaQ, p_buf, FIXED_QUEUE_MAX_TIMEOUT);
+         } else {
+             osi_free(p_buf);

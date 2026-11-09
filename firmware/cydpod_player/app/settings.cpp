@@ -26,6 +26,10 @@ void settings_begin() {
   s.volume     = min<uint8_t>(prefs.getUChar("vol", s.volume), 100);
   // Read the raw boolean byte: absent, wrong type/size or values >1 default On.
   s.headphoneLimit = prefs.getUChar("hpLimit", 1) != 0;
+  s.eqOn = prefs.getUChar("eqOn", 0) == 1;
+  // A blob of another size is not ours: keep the flat default.
+  if (prefs.getBytesLength("eqGain") == sizeof(s.eqGain)) prefs.getBytes("eqGain", s.eqGain, sizeof(s.eqGain));
+  for (int8_t& g : s.eqGain) g = g < -12 ? -12 : g > 12 ? 12 : g;
   s.outRoute   = outRouteSanitize(prefs.getUChar("out", s.outRoute));
 #if CYD_DEFAULT_OUT_ROUTE >= 0
   storedOutRoute = s.outRoute;
@@ -48,6 +52,7 @@ void settings_begin() {
     prefs.getBytes("known", s.btKnown, sizeof(s.btKnown));
     s.btKnownCount = min<uint8_t>(prefs.getUChar("knownN", 0), BT_KNOWN_MAX);
   }
+  if (prefs.getBytesLength("btLinks") == sizeof(s.btLinks)) prefs.getBytes("btLinks", s.btLinks, sizeof(s.btLinks));
   s.wifiSsid   = prefs.getString("ssid",   s.wifiSsid);
   s.wifiPass   = prefs.getString("pass",   s.wifiPass);
   s.webPin     = prefs.getString("webPin", s.webPin);
@@ -120,6 +125,8 @@ bool settings_save() {
   ok = (prefs.putUChar("sleepTime",s.sleepTimer) == 1) && ok;
   ok = (prefs.putBool("hpLimit", s.headphoneLimit) == 1) && ok;
   ok = (prefs.putUChar("vol",      s.volume) == 1) && ok;
+  ok = (prefs.putUChar("eqOn",     s.eqOn ? 1 : 0) == 1) && ok;
+  ok = (prefs.putBytes("eqGain",   s.eqGain, sizeof(s.eqGain)) == sizeof(s.eqGain)) && ok;
 #if CYD_DEFAULT_OUT_ROUTE >= 0
   // Writing the forced route would clobber the saved choice; only a route the user
   // picked in the UI (anything other than the forced one) is persisted.
@@ -139,6 +146,7 @@ bool settings_save() {
   ok = (prefs.putBytes("btAddr",   s.btAddr, sizeof(s.btAddr)) == sizeof(s.btAddr)) && ok;
   ok = (prefs.putBytes("known",    s.btKnown, sizeof(s.btKnown)) == sizeof(s.btKnown)) && ok;
   ok = (prefs.putUChar("knownN",   s.btKnownCount) == 1) && ok;
+  ok = (prefs.putBytes("btLinks",  s.btLinks, sizeof(s.btLinks)) == sizeof(s.btLinks)) && ok;
   ok = saveString("ssid", s.wifiSsid) && ok;
   ok = saveString("pass", s.wifiPass) && ok;
   ok = saveString("webPin", s.webPin) && ok;

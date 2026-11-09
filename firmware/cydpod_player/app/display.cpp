@@ -131,6 +131,32 @@ void display_setBacklight(uint8_t percent) {
   ledcWrite(CYD_TFT_BL_PIN, (uint32_t)percent * 255 / 100);
 }
 
+// ST7789V and ILI9341 share these opcodes: DISPOFF 0x28, SLPIN 0x10, SLPOUT 0x11,
+// DISPON 0x29. Sleep-in keeps the MCU interface and frame memory, so the picture
+// is intact on wake. SLPIN needs 5 ms before the next command, and SLPIN/SLPOUT
+// must be at least 120 ms apart in either direction.
+static bool panelAsleep = false;
+static uint32_t panelChangedAt = 0;
+
+void display_panelSleep(bool asleep) {
+  if (asleep == panelAsleep) return;
+  const uint32_t since = millis() - panelChangedAt;
+  if (since < 120) delay(120 - since);
+  if (asleep) {
+    tft.writecommand(0x28);
+    tft.writecommand(0x10);
+    delay(5);
+  } else {
+    tft.writecommand(0x11);
+    delay(120);
+    tft.writecommand(0x29);
+  }
+  panelAsleep = asleep;
+  panelChangedAt = millis();
+}
+
+bool display_panelAsleep() { return panelAsleep; }
+
 void display_begin() {
   // Backlight dark first: tft.init() leaves the controller showing whatever it
   // powered up with for a moment.

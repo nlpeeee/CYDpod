@@ -59,5 +59,53 @@ int draw(Face face,const char* s,int x,int cy,int hAlign,uint16_t fg){
   tft.endWrite();
   return total;
 }
+void rowExtent(Face face,int& above,int& below){
+  const GFXfont& font=fontOf(face);const int cap=capHeight(face),baseline=cap-cap/2; // draw(): base=cy+baseline
+  int top=0,bottom=0;
+  for(int c=font.first;c<=font.last;++c){
+    const GFXglyph& g=font.glyph[c-font.first];
+    if(!g.height)continue;
+    if(g.yOffset<top)top=g.yOffset;
+    if(g.yOffset+g.height>bottom)bottom=g.yOffset+g.height;
+  }
+  above=-(baseline+top);below=baseline+bottom;
+}
+void drawWindow(Face face,const char* s,int scrollX,int gap,int x,int y,int w,int h,int cy,uint16_t fg,uint16_t bg){
+  if(w<=0||h<=0||w>MaxWindowW)return;
+  const GFXfont& font=fontOf(face);
+  const int period=width(face,s)+gap;
+  if(period<=0)return;
+  scrollX%=period;if(scrollX<0)scrollX+=period;
+  const int base=cy-capHeight(face)/2+capHeight(face);
+  uint16_t row[MaxWindowW]; // 640 B of loop-task stack, released on return
+#ifdef CYDPOD_CATALOG_HOST
+  tft.noteLabel(s);
+#endif
+  tft.startWrite();
+  tft.setAddrWindow(x+tft.getOriginX(),y+tft.getOriginY(),w,h);
+  for(int py=y;py<y+h;++py){
+    for(int i=0;i<w;++i)row[i]=bg;
+    // Copies of s start every period px; pen is window-relative.
+    for(int start=-scrollX;start<w;start+=period){
+      int pen=start;
+      for(const char* c=s;*c&&pen<w+8;++c){
+        const GFXglyph& g=glyphOf(font,(unsigned char)*c);
+        const int r=py-(base+g.yOffset),gx=pen+g.xOffset;
+        if(r>=0&&r<g.height&&gx<w&&gx+g.width>0){
+          // GFX glyph bitmaps are one continuous MSB-first bit stream, rows unpadded.
+          const uint8_t* bits=font.bitmap+g.bitmapOffset;
+          for(int col=0;col<g.width;++col){
+            const int px=gx+col;if(px<0||px>=w)continue;
+            const unsigned bit=unsigned(r*g.width+col);
+            if(bits[bit>>3]&(0x80>>(bit&7)))row[px]=fg;
+          }
+        }
+        pen+=g.xAdvance;
+      }
+    }
+    tft.pushColors(row,w,true);
+  }
+  tft.endWrite();
+}
 }
 #endif

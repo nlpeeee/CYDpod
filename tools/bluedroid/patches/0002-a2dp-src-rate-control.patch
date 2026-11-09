@@ -1,0 +1,131 @@
+diff --git a/components/bt/host/bluedroid/bta/av/bta_av_aact.c b/components/bt/host/bluedroid/bta/av/bta_av_aact.c
+index c0e73e67..7813834a 100644
+--- a/components/bt/host/bluedroid/bta/av/bta_av_aact.c
++++ b/components/bt/host/bluedroid/bta/av/bta_av_aact.c
+@@ -38,6 +38,12 @@
+ #include "bta/utl.h"
+ #include "stack/l2c_api.h"
+ #include "stack/l2cdefs.h"
++
++/* CYDpod rate control and link counters (tools/bluedroid/patches/0002): read by bt_diag.cpp. */
++volatile uint32_t cydpod_av_l2c_bufs_max = 0;   /* most packets seen queued in L2CAP */
++volatile uint32_t cydpod_av_l2c_stalls = 0;     /* data path found L2CAP not moving */
++volatile uint32_t cydpod_av_drops = 0;          /* packets dropped in the AV list */
++volatile uint32_t cydpod_av_writes = 0;         /* packets written to AVDTP */
+ #if( defined BTA_AR_INCLUDED ) && (BTA_AR_INCLUDED == TRUE)
+ #include "bta/bta_ar_api.h"
+ #endif
+@@ -2239,6 +2245,9 @@ void bta_av_data_path (tBTA_AV_SCB *p_scb, tBTA_AV_DATA *p_data)
+     */
+     //Always get the current number of bufs que'd up
+     p_scb->l2c_bufs = (UINT8)L2CA_FlushChannel (p_scb->l2c_cid, L2CAP_FLUSH_CHANS_GET);
++    if (p_scb->l2c_bufs > cydpod_av_l2c_bufs_max) {
++        cydpod_av_l2c_bufs_max = p_scb->l2c_bufs;
++    }
+ 
+     if (!list_is_empty(p_scb->a2d_list)) {
+         p_buf = (BT_HDR *)list_front(p_scb->a2d_list);
+@@ -2276,9 +2285,11 @@ void bta_av_data_path (tBTA_AV_SCB *p_scb, tBTA_AV_DATA *p_data)
+             }
+ 
+             AVDT_WriteReqOpt(p_scb->avdt_handle, p_buf, timestamp, m_pt, opt);
++            cydpod_av_writes++;
+             p_scb->cong = TRUE;
+         } else {
+             /* there's a buffer, but L2CAP does not seem to be moving data */
++            cydpod_av_l2c_stalls++;
+             if (new_buf) {
+                 /* just got this buffer from co_data,
+                  * put it in queue */
+@@ -2290,6 +2301,7 @@ void bta_av_data_path (tBTA_AV_SCB *p_scb, tBTA_AV_DATA *p_data)
+                     list_prepend(p_scb->a2d_list, p_buf);
+                 } else {
+                     /* too many buffers in a2d_list, drop it. */
++                    cydpod_av_drops++;
+                     bta_av_co_audio_drop(p_scb->hndl);
+                     osi_free(p_buf);
+                 }
+diff --git a/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c b/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c
+index 07dd7953..85262ae6 100644
+--- a/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c
++++ b/components/bt/host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c
+@@ -120,6 +120,18 @@ enum {
+ 
+ #define BTC_A2DP_SRC_DATA_QUEUE_IDX            (1)
+ 
++/* CYDpod rate control and link counters (tools/bluedroid/patches/0002): read by bt_diag.cpp. */
++volatile uint32_t cydpod_a2d_src_txq_drops = 0;   /* encoded packets dropped: TX queue full */
++volatile uint32_t cydpod_a2d_src_txq_max = 0;     /* longest TX queue seen */
++volatile uint32_t cydpod_a2d_src_limited = 0;     /* media ticks that read fewer PCM frames than due */
++volatile uint16_t cydpod_a2d_src_rate_kbps = 0;   /* SBC target bitrate; 0 = stock (328) */
++volatile uint8_t cydpod_a2d_src_apply = 0;        /* set by the app: re-run the encoder update on the next media tick */
++volatile int16_t cydpod_a2d_src_bitpool = -1;     /* bitpool chosen at the last encoder update */
++volatile uint16_t cydpod_a2d_src_bitrate = 0;     /* bitrate chosen at the last encoder update */
++volatile uint8_t cydpod_a2d_src_peer_minbp = 0, cydpod_a2d_src_peer_maxbp = 0;
++volatile uint16_t cydpod_a2d_src_mtu = 0;
++volatile uint8_t cydpod_a2d_src_edr = 0;
++
+ typedef struct {
+     uint32_t sig;
+     void *param;
+@@ -650,10 +662,14 @@ static UINT16 btc_a2dp_source_get_sbc_rate(void)
+     UINT16 rate = DEFAULT_SBC_BITRATE;
+ 
+     /* restrict bitrate if a2dp link is non-edr */
++    cydpod_a2d_src_edr = btc_av_is_peer_edr() ? 1 : 0;
+     if (!btc_av_is_peer_edr()) {
+         rate = BTC_A2DP_NON_EDR_MAX_RATE;
+         APPL_TRACE_DEBUG("non-edr a2dp sink detected, restrict rate to %d", rate);
+     }
++    if (cydpod_a2d_src_rate_kbps) {
++        rate = cydpod_a2d_src_rate_kbps;
++    }
+     return rate;
+ }
+ 
+@@ -920,6 +936,11 @@ static void btc_a2dp_source_enc_update(BT_HDR *p_msg)
+ 
+         /* Finally update the bitpool in the encoder structure */
+         pstrEncParams->s16BitPool = s16BitPool;
++        cydpod_a2d_src_bitpool = s16BitPool;
++        cydpod_a2d_src_bitrate = a2dp_source_local_param.btc_aa_src_cb.encoder.u16BitRate;
++        cydpod_a2d_src_peer_minbp = pUpdateAudio->MinBitPool;
++        cydpod_a2d_src_peer_maxbp = pUpdateAudio->MaxBitPool;
++        cydpod_a2d_src_mtu = a2dp_source_local_param.btc_aa_src_cb.TxAaMtuSize;
+ 
+         APPL_TRACE_DEBUG("%s final bit rate %d, final bit pool %d", __FUNCTION__,
+                          a2dp_source_local_param.btc_aa_src_cb.encoder.u16BitRate, a2dp_source_local_param.btc_aa_src_cb.encoder.s16BitPool);
+@@ -1129,6 +1150,7 @@ static UINT8 btc_get_num_aa_frame(void)
+         }
+ 
+         if (result > frm_nb_threshold) {
++            cydpod_a2d_src_limited++;
+             APPL_TRACE_EVENT("Limit frms to send from %d to %d", result, frm_nb_threshold);
+             result = frm_nb_threshold;
+         }
+@@ -1417,8 +1439,12 @@ static void btc_a2dp_source_prep_2_send(UINT8 nb_frame)
+                            fixed_queue_length(a2dp_source_local_param.btc_aa_src_cb.TxAaQ), MAX_OUTPUT_A2DP_SRC_FRAME_QUEUE_SZ - nb_frame);
+     }
+ 
++    if (fixed_queue_length(a2dp_source_local_param.btc_aa_src_cb.TxAaQ) > cydpod_a2d_src_txq_max) {
++        cydpod_a2d_src_txq_max = fixed_queue_length(a2dp_source_local_param.btc_aa_src_cb.TxAaQ);
++    }
+     while (fixed_queue_length(a2dp_source_local_param.btc_aa_src_cb.TxAaQ) > (MAX_OUTPUT_A2DP_SRC_FRAME_QUEUE_SZ - nb_frame)) {
+         osi_free(fixed_queue_dequeue(a2dp_source_local_param.btc_aa_src_cb.TxAaQ, 0));
++        cydpod_a2d_src_txq_drops++;
+     }
+ 
+     // Transcode frame
+@@ -1471,6 +1497,12 @@ static void btc_a2dp_source_handle_timer(UNUSED_ATTR void *context)
+     }
+ 
+     if (a2dp_source_local_param.btc_aa_src_cb.is_tx_timer == TRUE) {
++        /* CYDpod: a bitrate change from the app is applied here, in the media
++           task, between packets (the same update START runs). */
++        if (cydpod_a2d_src_apply) {
++            cydpod_a2d_src_apply = 0;
++            btc_a2dp_source_encoder_update();
++        }
+         btc_a2dp_source_send_aa_frame();
+     } else {
+         APPL_TRACE_WARNING("Media task Scheduled after Suspend");

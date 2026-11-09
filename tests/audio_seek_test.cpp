@@ -3,6 +3,10 @@
 #include "../firmware/cydpod_player/app/audio.cpp"
 #include <cassert>
 #include <vector>
+// EQ off (eq.cpp needs ESP CPU headers): audio.cpp publishes the decoder's PCM untouched.
+bool eq_bypass(){return true;}
+void eq_flush(){}
+const int16_t* eq_process(const int16_t* in,uint32_t){return in;}
 int storage_trackCount(){return 2;}
 static bool missingTrack=false;
 static const char* formatPath=nullptr;
@@ -65,6 +69,23 @@ int main(int argc,char** argv){
    assert(audio_positionMs()==pos&&!audio_isPlaying());
    decodeHandle->stop=true;xTaskNotifyGive(decodeHandle);decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);
    puts("OUTPUT_RESTART_RESUME_OK: same track 1, queue position and 8456 ms; paused pulls stay silent without advancing");return 0;
+ }
+ // Gapless: a natural end hands off to the next track while the old tail plays; no silence, no underrun,
+ // and the new track's clock starts only after the tail. Paused at the end, the song does not change.
+ if(argc==2&&!strcmp(argv[1],"--gapless")){
+   SD.root="tests/out/miniaac_seek/fixtures";
+   audio_begin(0,11800,100,false,REPEAT_ALL);audio_start();waitIdle();waitBuffered();
+   assert(audio_gapless()&&audio_currentTrack()==0);
+   for(int i=0;i<15;++i){audio_tick();std::this_thread::sleep_for(std::chrono::milliseconds(5));}
+   assert(audio_currentTrack()==0&&!audio_isPlaying()); // decoded to EOF while paused: still this song
+   const auto gaps=gapSerial;const auto under=audio_underruns();audio_setPlaying(true);
+   int16_t out[256];const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(10);
+   while(gapSerial==gaps){assert(std::chrono::steady_clock::now()<end);audio_pull(out,128);audio_tick();std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+   assert(audio_currentTrack()==1&&gapLast==0&&audio_underruns()==under);
+   for(int i=0;i<20;++i){audio_pull(out,128);audio_tick();std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+   const auto pos=audio_positionMs();assert(pos>=58&&pos<=61);
+   decodeHandle->stop=true;xTaskNotifyGive(decodeHandle);decodeHandle->thread.join();delete decodeHandle;decodeHandle=nullptr;closeTrack();free(rb);
+   printf("GAPLESS_OK: paused EOF keeps the song; natural end -> next track with 0 missing frames, 0 underruns, clock %u ms after 20 pulls\n",unsigned(pos));return 0;
  }
  if(argc>2)return resampleTask(argv[1],!strcmp(argv[2],"reject"));
  if(argc>1)return seekFormat(argv[1]);

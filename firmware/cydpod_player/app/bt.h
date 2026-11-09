@@ -20,6 +20,14 @@ struct BtDevice {
 
 void   bt_begin();
 void   bt_tick();                     // call from loop()
+// Light sleep (power.cpp): stop the whole stack without freeing its memory, and
+// restart it in place. Suspend only once settled (stack-up finished); a false
+// return from suspend still needs bt_resumeStack().
+bool   bt_suspendStack();
+bool   bt_resumeStack();
+bool   bt_stackSuspended();
+bool   bt_stackSettled();
+bool   bt_streamIdle();               // A2DP stream suspended because nothing is playing
 
 bool   bt_connected();
 bool   bt_connecting();

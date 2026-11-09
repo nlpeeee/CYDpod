@@ -3,141 +3,71 @@
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/cydpod-wordmark-reversed.svg">
     <img src="docs/assets/logo/cydpod-wordmark.svg" alt="CYDpod" width="460">
   </picture>
-</p>
+</p><p align="center">
+  <strong>Your music. Your player. No strings attached.</strong>
+</p><p align="center">
+  A little touchscreen music player you build yourself from a Cheap Yellow Display.<br>
+  Your music lives on a microSD card — not in an app, an account or a subscription.
+</p><p align="center">
+  <a href="https://github.com/nlpeeee/CYDpod/releases/latest"><strong>Download CYDpod</strong></a>
+  &nbsp;·&nbsp;
+  <a href="docs/firmware/README.md">Flashing guide</a>
+  &nbsp;·&nbsp;
+  <a href="docs/releases/0.6.0.md">What's new in 0.6.0</a>
+  &nbsp;·&nbsp;
+  <a href="https://www.youtube.com/watch?v=9bTcNbn6Pm0">Watch the demo</a>
+</p><p align="center">
+  <img src="docs/assets/beauty_01_hero.png" width="360" alt="Render of CYDpod in its case">
+</p><h2>Remember when music was simple?</h2><p>A pocketful of albums. A play button. Nothing between you and the next track.</p><p>CYDpod brings that feeling to a low-cost ESP32 touchscreen. Put your music on a microSD card, browse it by artist, album or song, and listen on Bluetooth headphones or a speaker. No cloud, no ads, and no internet connection required to play your collection.</p><p>It's a proper little music player — and one you can open up, customise and make your own.</p><h2>What it can do</h2><ul>
+  <li><strong>Play your own files.</strong> MP3, AAC, FLAC and WAV, straight from microSD.</li>
+  <li><strong>Find what you want.</strong> Browse artists, albums, songs, folders, playlists and Favourites, or use search.</li>
+  <li><strong>Keep the music flowing.</strong> Gapless playback for continuous albums, plus an <strong>Up Next</strong> queue. Hold a song, album or artist to play it next or add it to the queue.</li>
+  <li>
+  <strong>Listen your way.</strong>
+  Stream to Bluetooth headphones or speakers,
+  or enjoy wired audio through an external
+  I²S DAC/headphone amplifier. Tested with the
+  <a href="https://github.com/WeActStudio/WeActStudio.I2SEarphoneModuleV1">
+    WeActStudio I²S Earphone Module V1
+  </a>
+  (PCM5100A, 3.5 mm stereo output,
+  rated 160 mW into 32 Ω).
+</li>
 
-<p align="center"><strong>Up to ten thousand songs on a cheap yellow board.</strong><br>
-An iPod-style music player for the JC2432W328C &ldquo;Cheap Yellow Display&rdquo;.</p>
-
-<p align="center">
-  <a href="https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.1"><strong>Download CYDpod 0.5.1</strong></a><br>
-  <sub>JC2432W328C firmware, Windows build kit and enclosure files.</sub>
-</p>
-
-<p align="center">
-  <img src="docs/assets/home-tiles.png" width="320" alt="Simulated CYDpod Home screen with Songs, Artists, Albums, Playlists, Search and Settings tiles.">
-  <img src="docs/research/cy90-quiet-outline-icons/player-r1-s0-x4.png" width="320" alt="Simulated Now Playing screen with seek bar, transport buttons and volume.">
-  <br><sub>Simulator renders from the test harness, not photos of a device.</sub>
-</p>
-
-## What it is
-
-CYDpod is open firmware that turns a very cheap ESP32 touchscreen board into a pocket music player. It reads music from a microSD card and shows it the classic way: Artist, Album, Song. Sound goes to a Bluetooth speaker or headphones, or out of a wired I2S output you add. No cloud service, no account; Wi-Fi is used only by an optional upload page.
-
-## What you need
-
-**Required**
-
-- **A JC2432W328C board**: the 2.4&Prime; ESP32 &ldquo;Cheap Yellow Display&rdquo; with *capacitive* touch (ST7789 panel, CST820 touch), 4 MB flash, microSD slot. Other CYD variants (for example the resistive ESP32-2432S028R) are **not supported**.
-- **A microSD card**: FAT32, 32 GB or smaller (the tested setup). Music in `/music` (sub-folders fine), playlists in `/playlists`. The player keeps its catalogue cache in `/.sys`.
-- **A USB data cable and a Windows computer** for the supplied esptool flashing executable.
-- **An audio output.** *Bluetooth* speaker or headphones (pair in Settings &rsaquo; Bluetooth; **AirPods Pro 2 are not verified**). Or *wired*: an I2S DAC board on connector P6 (silkscreen: GND, IO16, IO4, IO17 = bit clock, data, word select), plus a headphone amplifier for headphones; a PCM5102A-class DAC is the documented example. Wired audio is **not yet verified on hardware**.
-
-**Optional**
-
-- A microSD card reader (the simplest way to copy music).
-- An I2S DAC and headphone amplifier for the wired output.
-- A phone or PC for the Wi-Fi upload page. It needs a separate uploader image that the single flash file does not include (see Known limits).
-
-## What it can do
-
-- **Formats:** MP3, FLAC (16-bit), M4A (AAC-LC), PCM WAV; other common sample rates are resampled to 44.1 kHz; HE-AAC is not supported.
-- **Library:** built for 10,000 tracks (host-tested), cached on the card and validated quickly at boot.
-- **Browse:** Artists, Albums, Songs, Folders, Favourites; Shuffle all on every list.
-- **Search** with an on-screen keyboard; accents and case folded (&ldquo;beyonce&rdquo; finds Beyonc&eacute;).
-- **M3U / M3U8 playlists** in `/playlists`, including playlists written for another folder layout (matched by path tail or file name).
-- **Now Playing:** seek bar, volume, shuffle, repeat, favourite star; restores your last track, paused, at boot.
-- **Themes:** Light, Black, High Contrast; portrait or landscape.
-- **Phone-like scrolling:** drag, flick and coast, touch to stop, scroll thumb.
-- **Bluetooth that behaves:** if your phone takes the speaker, the player does not page it back; discoverable only on the Pair screen.
-- **Wired headphone limit:** switchable &minus;30 dBFS ceiling (off allows &minus;6 dBFS, much louder).
-- **Wi-Fi upload page** (hotspot or your network, six-digit passcode, `000000` until changed): MP3s and playlists only; needs the uploader image.
-
-<p>
-  <img src="docs/research/cy91-theme-selector/player-black-r1.png" width="240" alt="Simulated Now Playing in the Black theme.">
-  <img src="docs/research/cy91-theme-selector/player-hc-r1.png" width="240" alt="Simulated Now Playing in the High Contrast theme.">
-  <img src="docs/research/cy92-headphone-limit.png" width="240" alt="Simulated Audio Output settings with the Headphone limit row.">
-</p>
-
-## Why it is worth building
-
-1. **Cheap hardware:** one small ESP32 board with a screen and card slot; no extra DAC for Bluetooth.
-2. **No cloud, no account:** files stay on your card.
-3. **Open firmware:** source, dependency pins and third-party notices are in this repo.
-4. **Bounded memory:** one fixed 30,824-byte codec pool shared by all four decoders, so playback does not depend on library size.
-5. **Host-tested:** catalogue, sorting, playlists, queue, scrolling, Bluetooth policy and output switching have automated tests; hardware results are labelled separately.
-6. **Flash the release:** the download includes the flashing tool and four matching flash regions.
-
-## Flash 0.5.1
-
-Download `CYDpod-0.5.1-firmware.zip` from the [0.5.1 release](https://github.com/nlpeeee/CYDpod/releases/tag/v0.5.1) and extract it. The Bluetooth firmware uses compact FLAC and a 4,096-frame PCM ring. The archive contains matching wired firmware, esptool 5.3.0, manifests and instructions.
-
-Close the serial monitor and identify the board's COM port. Hold BOOT, tap RESET, then release BOOT. From the extracted archive, run the following PowerShell block. The four regions preserve saved settings and the Bluetooth bond.
-
-```powershell
-Set-Location .\firmware\bluetooth
-$manifest = Get-Content .\MANIFEST.json -Raw | ConvertFrom-Json
-foreach ($image in $manifest.files) {
-    if ((Get-FileHash -LiteralPath $image.file -Algorithm SHA256).Hash -ne $image.sha256) {
-        throw "Hash mismatch for $($image.file)"
-    }
-}
-$port = Read-Host 'COM port for the JC2432W328C'
-foreach ($op in 'write-flash','verify-flash') {
-    & ..\..\flash-tools\esptool.exe --chip esp32 --port $port --baud 460800 --before no-reset --after no-reset $op --flash-mode dio --flash-freq 80m --flash-size 4MB 0x1000 app.ino.bootloader.bin 0x8000 app.ino.partitions.bin 0xe000 boot_app0.bin 0x10000 app.ino.bin
-    if ($LASTEXITCODE -ne 0) { throw "esptool $op failed" }
-}
-```
-
-Tap RESET to boot. Use 115200 baud for the serial monitor. Start at low speaker volume: 0.5.1 uses the speaker’s own volume scale and removes duplicate attenuation. Release checksums are in `SHA256SUMS.txt` on GitHub, and each firmware manifest records its source and file hashes.
-
-## Release evidence
-
-Version 0.5.1 adds ESP32-A2DP 1.8.12, quieter Bluetooth menus, Connect/Disconnect/Forget actions, the Now Playing right-edge fix and speaker volume synchronization including connection setup. It retains compact FLAC, the 4,096-frame ring and flick scrolling. The [release notes](docs/releases/0.5.1.md) distinguish owner reports and software checks from remaining hardware measurements. The 0.5.0 overnight shuffle report remains the long-run playback baseline.
-
-## Known limits
-
-- Wi-Fi upload requires a separate uploader image. The 0.5.1 player archive contains the Bluetooth and wired player builds.
-- AirPods Pro 2 and wired audio have compile or host coverage, with hardware acceptance still pending.
-- Timed flick latency, title coverage, and a zero-missing-frame scrolling comparison have not been recorded for 0.5. The [flick comparison](docs/research/flick-motion.md) gives the procedure.
-- The v4 enclosure includes editable Blender assemblies and print exports. Physical fit and latch tolerances need a print trial.
-
-## Build from source
-
-The source of truth is [nlpeeee/CYDpod](https://github.com/nlpeeee/CYDpod). `main` contains 0.5.1, and `v0.5.1` identifies the release source. Use a fresh checkout with Windows x64, Git, Python 3.9 or later and Windows PowerShell 5.1.
-
-Download `CYDpod-0.5.1-build-kit.zip` from the release and extract it to a separate folder. It contains the pinned Windows toolchain and `Restore-Toolchain.ps1`. Restore that kit into the checkout, then build the release configuration.
-
-```powershell
-git clone --branch v0.5.1 https://github.com/nlpeeee/CYDpod.git E:\dev\CYDpod
-powershell -NoProfile -File E:\dev\CYDpod-build-kit\Restore-Toolchain.ps1 -Source E:\dev\CYDpod
-Set-Location E:\dev\CYDpod
-powershell -NoProfile -File tools/check.ps1 -Board jc2432w328c -SkipProbe -SkipHostMedia -LargePcmRing -BuildLabel release-051
-```
-
-Images and manifests are written to `.tools/images`. The released flash binaries retain the exact final candidate bytes. Dependency pins and third-party inventories are in [dependencies.lock.json](dependencies.lock.json). The base kit was previously restored and compiled in a fresh checkout; the 0.5.1 kit overlays the pinned 1.8.12 library. Both release firmware variants compiled, and the overlay is checked against the compiled library inventory.
-
-Local release packages and historical archives live under `E:\dev\CYDpod\releases\0.5.1` and are ignored by Git. GitHub Releases holds the downloadable 0.5.1 assets.
-
-## Licences
-
-Full notices: [vendor/NOTICES.md](vendor/NOTICES.md) and [vendor/notices/](vendor/notices/). The combined firmware binary is **not** labelled Apache or MIT: GPLv3 components and the Helix RPSL/RCSL terms apply, and codec patent questions are separate.
-
-| Component | Licence |
-| --- | --- |
-| CYD-MP3-Player (application shell) | Apache-2.0 |
-| AnimatedGIF (BitBank) | Apache-2.0 |
-| ESP32-A2DP | Apache-2.0 |
-| arduino-libhelix / Helix MP3 | GPLv3 wrapper, RealNetworks RPSL/RCSL codec |
-| MiniAAC | MIT wrapper; Helix AAC core under GPLv3 / RPSL / RCSL |
-| miniflac | 0BSD |
-| TFT_eSPI | BSD two-clause (MIT ancestry, font notices kept) |
-| arduino-audio-tools | GPLv3 (vendored, not wired into the build) |
-| Arduino-ESP32 / ESP-IDF | LGPL-2.1 and Espressif/third-party notices |
-
-CYDpod's own licence has not been chosen yet.
-
-## Credits
-
-[CYD-MP3-Player](https://github.com/Garionhk/CYD-MP3-Player) by Garionhk (the starting point); MiniAAC; Helix MP3 (RealNetworks) via [arduino-libhelix](https://github.com/pschatzmann/arduino-libhelix); [miniflac](https://github.com/jprjr/miniflac) by John Regan; [ESP32-A2DP](https://github.com/pschatzmann/ESP32-A2DP) by Phil Schatzmann; [TFT_eSPI](https://github.com/Bodmer/TFT_eSPI) by Bodmer; [ESP Web Tools](https://esphome.github.io/esp-web-tools/) by ESPHome for the browser flasher; type: Source Sans 3 and IBM Plex Mono (SIL OFL).
-
-<sub>Independent hobby project, not affiliated with Apple. &ldquo;iPod&rdquo; is a trademark of Apple Inc.</sub>
+  <li><strong>Shape the sound.</strong> Five-band EQ with presets for bass, vocals, treble and loudness.</li>
+  <li><strong>Make it yours.</strong> Smooth touchscreen controls, themes and sleep/resume behaviour, with the source there to tinker with.</li>
+</ul><p>All of that runs on a Cheap Yellow Display — a small, inexpensive board that wasn't built to be a dedicated music player.</p><p align="center">
+  <img src="docs/assets/home-tiles.png" width="310" alt="Simulated CYDpod home screen showing the library and settings tiles">
+  <img src="docs/research/cy90-quiet-outline-icons/player-r1-s0-x4.png" width="310" alt="Simulated Now Playing screen with transport and volume controls">
+</p><h2>Pick your board</h2><p>CYDpod supports two ESP32 touchscreen boards. <strong>Download the firmware for the board you actually have.</strong></p><table>
+  <thead>
+    <tr>
+      <th>Board</th>
+      <th>Touch</th>
+      <th>Audio output</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>JC2432W328C</strong></td>
+      <td>Capacitive</td>
+      <td>Bluetooth, or optional wired output through a PCM5102A-style I²S DAC</td>
+    </tr>
+    <tr>
+      <td><strong>ESP32-2432S028R</strong><br>(generic 2.8-inch CYD)</td>
+      <td>Resistive</td>
+      <td>Bluetooth, or the board's speaker pad</td>
+    </tr>
+  </tbody>
+</table><p>The optional external DAC is supported on the <strong>JC2432W328C only</strong>. It lets you connect wired audio equipment; choose <strong>Headphones</strong> under <strong>Settings → Audio Output</strong> when using it. The generic resistive board does not have this wired-DAC route.</p><h2>Make your own</h2><p>You'll need a supported board, a microSD card containing your music, a USB data cable and a Windows PC for flashing. For listening, use a Bluetooth speaker or headphones, or the wired-audio option supported by your board. The board also needs USB power or a suitable power setup.</p><ol>
+  <li><a href="https://github.com/nlpeeee/CYDpod/releases/latest"><strong>Download the latest release</strong></a> and select the ZIP for your board.</li>
+  <li><a href="docs/firmware/README.md"><strong>Follow the flashing guide</strong></a> to install the firmware.</li>
+  <li><strong>Insert your music card</strong>, connect your audio output and press play.</li>
+</ol><p>Want to build from source instead? The <a href="docs/firmware/README.md#build-from-source">firmware guide</a> covers the pinned build kit, tools and commands. See the <a href="docs/releases/0.6.0.md">0.6.0 release notes</a> for changes and known hardware issues.</p><h2>A couple of things to know</h2><p>Gapless playback depends on the microSD card being fast enough to open the next track in time. Bluetooth compatibility varies by device; current limitations are recorded in the <a href="docs/releases/0.6.0.md">release notes</a>. This is a DIY project, not an assembled, battery-powered product.</p><h2>Thanks</h2><p>CYDpod builds on work by:</p><ul>
+  <li><a href="https://github.com/Garionhk/CYD-MP3-Player">CYD-MP3-Player</a> by Garionhk, where it began;</li>
+  <li>MiniAAC;</li>
+  <li>Helix MP3 (RealNetworks), via <a href="https://github.com/pschatzmann/arduino-libhelix">arduino-libhelix</a>;</li>
+  <li>miniflac by John Regan;</li>
+  <li><a href="https://github.com/pschatzmann/ESP32-A2DP">ESP32-A2DP</a> by Phil Schatzmann;</li>
+  <li><a href="https://github.com/Bodmer/TFT_eSPI">TFT_eSPI</a> by Bodmer.</li>
+</ul><p>The firmware includes third-party code under several licences, including GPLv3 and RealNetworks RPSL/RCSL terms; see <a href="vendor/NOTICES.md">third-party notices</a>. <strong>A licence for CYDpod's original code has not yet been declared.</strong> Existing third-party licence requirements continue to apply.</p><hr><p align="center"><sub>CYDpod is an independent hobby project, not affiliated with Apple. “iPod” is a trademark of Apple Inc.</sub></p>

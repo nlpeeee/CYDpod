@@ -26,6 +26,16 @@ struct BtKnown {
   uint8_t addr[6];
   char    name[33];
 };
+// What the link to one device has taught the player (bt_diag.cpp): its own
+// NVS blob, so the BtKnown layout and stored list are unchanged.
+static const uint8_t BT_LINK_EARBUDS        = 1;  // stepped below 328 kbps: keep the UI quiet
+static const uint8_t BT_LINK_DROPS_WHEN_IDLE = 2; // ended the link soon after an idle suspend
+struct BtLinkMemo {
+  uint8_t  addr[6];
+  uint16_t rateKbps;   // 0 = stock
+  uint8_t  flags;
+  uint8_t  spare;
+};
 
 struct Settings {
   // Panel -- defaults come from the board profile, the stored values win. These describe the
@@ -46,6 +56,9 @@ struct Settings {
   uint8_t  screenTimeout = 2;             // Off / 30 s / 1 min / 5 min; dim halfway
   uint8_t  sleepTimer = 0;                  // Off / 15 / 30 / 60 / 90 minutes
   bool     headphoneLimit = true;          // wired digital output limit; NVS hpLimit
+  // 5-band EQ (eq.h): off by default; gains in dB, -12..+12. NVS eqOn / eqGain.
+  bool     eqOn = false;
+  int8_t   eqGain[5] = {0, 0, 0, 0, 0};
   uint8_t  volume     = 40;                 // 0-100
   // Where the sound comes out: OUT_BT or OUT_WIRED (out_route.h). Bluetooth by default; a
   // stored speaker choice from an older build is read back as Bluetooth.
@@ -76,6 +89,7 @@ struct Settings {
   // rather than Strings: it is written from the Bluetooth task's small stack
   // and stored as one NVS blob.
   BtKnown  btKnown[BT_KNOWN_MAX];
+  BtLinkMemo btLinks[BT_KNOWN_MAX] = {};
   uint8_t  btKnownCount = 0;
 
   // WiFi, used only by upload mode. Entered on a

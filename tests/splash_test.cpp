@@ -112,7 +112,8 @@ static void progressTest(int rot, const char* outdir) {
 
 int main(int argc, char** argv) {
   const char* outdir = argc > 1 ? argv[1] : ".";
-  CHECK(splash::BACKGROUND == 0xFE83, "background constant 0x%04X", splash::BACKGROUND);
+  CHECK(splash::BACKGROUND == 0xFE40, "background constant 0x%04X", splash::BACKGROUND);
+  CHECK(splash::TRACK == 0xE5A0, "progress track unchanged 0x%04X", splash::TRACK);
   CHECK(splash::INK == 0x18E3, "ink constant 0x%04X", splash::INK);
   const int dims[4][2] = {{240, 320}, {320, 240}, {240, 320}, {320, 240}};   // rotations 0..3
   for (int rot = 0; rot < 4; rot++) {

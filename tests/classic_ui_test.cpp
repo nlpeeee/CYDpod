@@ -61,6 +61,7 @@ void audio_setRepeat(uint8_t mode){repeatMode=mode;}
 uint8_t audio_repeat(){return repeatMode;}
 static bool testBufferLow=false;
 bool audio_bufferLow(){return testBufferLow;}
+bool btlink_quietUi(){return false;}
 bool audio_canSeek(){return seekAllowed;}
 bool audio_isSeeking(){return false;}
 bool audio_seekTo(uint32_t ms){lastSeek=ms;++seekCalls;return seekAllowed;}
@@ -68,6 +69,12 @@ void audio_seekRelative(int s){relativeSeek=s;++seekCalls;}
 uint32_t audio_durationMs(){return seekAllowed?240000:0;}
 uint32_t audio_positionMs(){return positionMs;}
 uint32_t audio_trackSerial(){return serial;}
+// Power branch: sleep_mode.cpp sleeps the panel controller (power.h, lever "panel").
+// The host has no panel to sleep; levers report off, so the backlight path is unchanged.
+enum PowerLever : uint8_t;
+bool power_lever(PowerLever){return false;}
+void display_panelSleep(bool){}
+bool display_panelAsleep(){return false;}
 static int btCalls=0;static bool btConnected=true;
 bool bt_connected(){++btCalls;return btConnected;}
 bool bt_connecting(){++btCalls;return false;}
@@ -128,6 +135,9 @@ static int restartSaves=0,limitSaves=0,limitRequests=0;
 static bool limitSaveAllowed=true,appliedLimit=true;
 bool settings_setHeadphoneLimit(bool on){++limitSaves;if(!limitSaveAllowed)return false;g_settings.headphoneLimit=on;return true;}
 void wired_setHeadphoneLimit(bool on){++limitRequests;appliedLimit=on;}
+static int eqApplies=0;static bool eqLastOn=false;static int8_t eqLast[5]={};
+void eq_apply(bool on,const int8_t g[5]){  // array form: MSVC mangles it differently from a pointer
+  ++eqApplies;eqLastOn=on;for(int b=0;b<5;++b)eqLast[b]=g[b];}
 static uint8_t liveRoute=OUT_BT;
 static bool savedParked=false;
 bool settings_saveOutputResume(uint8_t){++restartSaves;savedParked=liveRoute==OUT_NONE&&!playing;return saveAllowed;}
@@ -144,11 +154,26 @@ void display_setBacklight(uint8_t p){backlight=p;}
 int audio_queueLen(){return queueLength;}
 int audio_queueTrack(int n){return n>=0&&n<queueLength?(queueData?queueData[n]:n):-1;}
 int audio_queuePos(int track){for(int i=0;i<queueLength;++i)if(audio_queueTrack(i)==track)return i;return -1;}
+// Up Next: a plain host model of the audio.h contract (order, cap, play-now removal).
+static std::vector<uint16_t> upNextQ;
+int audio_upNextAdd(const uint16_t* ids,int n,bool front){
+  std::vector<uint16_t> take;for(int i=0;i<n&&int(upNextQ.size()+take.size())<AUDIO_UP_NEXT_CAP;++i)take.push_back(ids[i]);
+  upNextQ.insert(front?upNextQ.begin():upNextQ.end(),take.begin(),take.end());return int(take.size());
+}
+int audio_upNextLen(){return int(upNextQ.size());}
+int audio_upNextAt(int i){return i>=0&&i<int(upNextQ.size())?int(upNextQ[size_t(i)]):-1;}
+bool audio_upNextRemove(int i){if(i<0||i>=int(upNextQ.size()))return false;upNextQ.erase(upNextQ.begin()+i);return true;}
+void audio_upNextClear(){upNextQ.clear();}
+bool audio_upNextPlay(int i){const int id=audio_upNextAt(i);if(id<0)return false;audio_upNextRemove(i);audio_playTrack(id);return true;}
+bool audio_playingUpNext(){return false;}
 void settings_saveResume(){}
 const char* display_panelName(uint16_t){return "ST7789";}
 bool firmware_uploaderPresent(){return false;}
 bool firmware_bootUploader(){return false;}
-bool touch_isDown(){return useTracker?tracker.down():down;}
+// The press start, seen on the poll that first reports the finger (every UI tick polls).
+static bool heldLast=false;static uint32_t heldSince=0;
+bool touch_isDown(){const bool d=useTracker?tracker.down():down;if(d&&!heldLast)heldSince=clockNow;heldLast=d;return d;}
+uint32_t touch_heldMs(){return useTracker?tracker.heldMs(tracker.lastSeenMs()):down?clockNow-heldSince:0;} // pressRun polls on its own clock
 uint32_t touch_lastSeenMs(){return useTracker?tracker.lastSeenMs():clockNow;}
 static uint32_t testFirstZero=0;
 bool touch_confirmedLift(uint32_t& at){at=testFirstZero;return at!=0;}
@@ -156,6 +181,8 @@ void touch_position(int& x,int& y){if(useTracker)tracker.landing(x,y);else{x=tx;
 void touch_livePosition(int& x,int& y){if(useTracker)tracker.live(x,y);else{x=tx;y=ty;}}
 bool touch_rawPosition(int& x,int& y){if(!useTracker||!tracker.down())return false;tracker.raw(x,y);return true;}
 bool titles_load(const String&){return false;}
+uint32_t titles_loadedKey(){return 0;}
+bool titles_loaded(){return false;}
 void titles_release(){}
 int titles_width(){return 0;}
 void titles_draw(const Rect&,int,int,uint16_t,uint16_t){}
@@ -345,6 +372,46 @@ static void playerRedrawRegression(){
   tft.setRotation(0);home();
   std::cout<<"PASS player right edge: cache invalidation, Shuffle and Repeat preserve pixels in four rotations and all repeat modes\n";
 }
+// Now Playing marquee: an overflowing ASCII title holds, then scrolls in its own band (artist and
+// album untouched), then returns to its ellipsis; short labels never scroll; a low ring pauses it.
+void classic_hostTrackInfo(const cydlib::Record*);
+static void marqueeRegression(){
+  namespace L=cydclassic::layout;
+  static cydlib::Record rec{};
+  const unsigned savedRotation=tft.getRotation();const uint8_t savedSetting=g_settings.rotation;
+  strcpy(rec.title,"An Extremely Long Song Title That Cannot Possibly Fit On One Player Line");
+  strcpy(rec.artist,"Short Artist");strcpy(rec.album,"Album");
+  classic_hostTrackInfo(&rec);
+  for(unsigned rotation:{1u,0u}){
+    tft.setRotation(rotation);g_settings.rotation=uint8_t(rotation);toPlayer();ui_redraw();
+    const int w=tft.width(),dy=L::playerTextOffset(tft.height());
+    auto band=[&](int y0,int y1){std::vector<uint16_t> v;for(int y=y0;y<y1;++y)for(int x=0;x<w;++x)v.push_back(tft.pixel(x,y));return v;};
+    const int titleTop=L::PlayerTextTop+dy,titleBottom=(L::PlayerTitleY+L::PlayerArtistY)/2+dy;
+    const auto rest=band(titleTop,titleBottom),below=band(titleBottom,L::PlayerTextTop+L::PlayerTextH+dy);
+    check(shown(rec.title)&&!label(rec.title),"overflowing title rests as whole glyphs plus ...");
+    tft.labels.clear();ui_tick(clockNow+=L::MarqueeHoldMs/2);
+    check(!label(rec.title)&&band(titleTop,titleBottom)==rest,"marquee holds before it scrolls");
+    for(int i=0;i<40;++i)ui_tick(clockNow+=L::MarqueeStepMs);
+    const auto moving=band(titleTop,titleBottom);
+    check(label(rec.title)&&moving!=rest,"after the hold the full title scrolls through the title band");
+    check(band(titleBottom,L::PlayerTextTop+L::PlayerTextH+dy)==below,"artist and album rows are never painted by the title marquee");
+    testBufferLow=true;for(int i=0;i<20;++i)ui_tick(clockNow+=L::MarqueeStepMs);
+    check(band(titleTop,titleBottom)==moving,"a low audio ring pauses the marquee");
+    testBufferLow=false;
+    auto ellipsis=[&](){const std::string full=rec.title;for(const auto& l:tft.labels)if(l.size()>3&&l.compare(l.size()-3,3,"...")==0&&full.compare(0,l.size()-3,l,0,l.size()-3)==0)return true;return false;};
+    tft.labels.clear();
+    for(int i=0;i<600&&!ellipsis();++i)ui_tick(clockNow+=L::MarqueeStepMs); // one lap is ~(text+gap)/2 steps
+    check(ellipsis(),"after one lap the title rests with its ellipsis again");
+    tft.labels.clear();for(int i=0;i<80;++i)ui_tick(clockNow+=L::MarqueeStepMs);
+    check(label(rec.title),"marquee keeps cycling the only overflowing label after its hold");
+  }
+  strcpy(rec.title,"Short Title");
+  tft.setRotation(1);g_settings.rotation=1;toPlayer();ui_redraw();
+  tft.labels.clear();for(int i=0;i<100;++i)ui_tick(clockNow+=L::MarqueeStepMs);
+  check(!label("Short Title")&&!label("Short Artist"),"labels that fit never scroll");
+  classic_hostTrackInfo(nullptr);tft.setRotation(savedRotation);g_settings.rotation=savedSetting;
+  std::cout<<"PASS Now Playing marquee: hold, scroll in band, ring-low pause, rest, short labels static\n";
+}
 static void nowPlayingRegression(){
   namespace L=cydclassic::layout;
   for(unsigned rotation:{0u,1u,3u}){
@@ -382,8 +449,9 @@ static void nowPlayingRegression(){
     const Rect f=L::favourite<Rect>(w);bool favourite=playlist_isFavourite(current);pressRun(200,10,0,[=](uint32_t t,int& x,int& y){x=t<60?f.x:f.x-7;y=18;});check(playlist_isFavourite(current)!=favourite,"favourite star toggles");tap(f.cx(),18);
     const Rect sh=L::playerToggle<Rect>(w,h,false),rep=L::playerToggle<Rect>(w,h,true);bool wasShuffle=shuffle;tap(sh.cx(),sh.cy());check(shuffle!=wasShuffle,"shuffle toggle");const int repeat=repeatMode;tap(rep.cx(),rep.cy());check(repeatMode==(repeat+1)%REPEAT_MODE_COUNT,"repeat toggle");
     const Rect play=L::transport<Rect>(w,h,1);const int toggles=toggleCalls,pressedFaces=tft.colorCount(theme().pressed);tx=play.cx();ty=play.cy();down=true;ui_tick(clockNow+=130);check(toggleCalls==toggles+1,"transport fires once on down");check(tft.colorCount(theme().pressed)>pressedFaces,"transport visibly pressed on touch-down");down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();check(toggleCalls==toggles+1,"transport release does nothing");
-    const Rect output=L::output<Rect>(w,h);pressRun(200,10,0,[=](uint32_t t,int& x,int& y){x=t<60?output.x:output.x-7;y=output.cy();});check(label("Audio Output"),"output chip opens Output page");
-    tap(20,20);const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
+    if(L::playerHasOutput(w)){const Rect output=L::output<Rect>(w,h);pressRun(200,10,0,[=](uint32_t t,int& x,int& y){x=t<60?output.x:output.x-7;y=output.cy();});check(label("Audio Output"),"output chip opens Output page");tap(20,20);}
+    else check(hit.w==w&&classic_target(w-1,hit.cy())==-25,"portrait: no output chip, the volume row is full width");
+    const Rect options=L::options<Rect>(w);tap(options.cx(),18);check(label("Options")&&label("Favourite"),"Options remains reachable from top bar");tap(20,20);
     ui_redraw();pump();snapshot(rotation==0?"cy61-player-portrait.svg":rotation==1?"cy61-player-landscape.svg":"cy61-player-landscape3.svg");
   }
   tft.setRotation(0);home();tapTile(5);tap(120,300); // Settings -> mini-player text
@@ -654,6 +722,77 @@ static void tapSettingsRow(int idx){
   tapRow(idx-classic_top());
 }
 static void tapBackButton(){tap(cydclassic::layout::HeaderBackX,cydclassic::layout::HeaderTextY);}
+// EQ-5BAND: the Equalizer page from Settings > Playback and from Now Playing > Options, in every
+// rotation: slider press, Preset cycling, Reset, On/Off, and no swipe-back from a slider drag.
+// Up Next: hold a song or album row for Play next / Add to queue; the Up Next page from Options.
+unsigned classic_mode();const char* classic_modeName(unsigned);
+static int choiceY(int i){return (tft.height()-(40+3*48+8))/2+60+48*i;} // ui_choice() button centres
+static void holdAt(int x,int y){tx=x;ty=y;down=true;for(int i=0;i<7;++i)ui_tick(clockNow+=130);}
+static void releaseHold(){down=false;ui_touch(TOUCH_LONG_PRESS,tx,ty);pump();}
+static void dismissToast(){ui_touch(TOUCH_TAP,0,0);pump();} // a tap dismisses a toast; with none up it does nothing
+static void upNextRegression(){
+  namespace L=cydclassic::layout;
+  tft.setRotation(0);g_settings.rotation=0;ui_redraw();pump();upNextQ.clear();
+  const auto mode=[]{return std::string(classic_modeName(classic_mode()));};
+  toSongs();const Rect row=L::row<Rect>(tft.width(),1);
+  const int before=calls;holdAt(row.cx(),row.cy());
+  check(label("Play next")&&label("Add to queue")&&label("Cancel"),"holding a song opens the queue menu");
+  check(ui_pressClaimed(),"the hold claims the press (no recalibration, no release event)");
+  releaseHold();check(calls==before&&mode()=="Catalog","releasing the hold plays nothing");
+  tap(tft.width()/2,choiceY(0));check(upNextQ.size()==1&&label("Playing next."),"Play next queues the song");
+  dismissToast();
+  holdAt(row.cx(),row.cy());releaseHold();tap(tft.width()/2,choiceY(2));check(upNextQ.size()==1&&mode()=="Catalog","Cancel queues nothing");
+  holdAt(row.cx(),row.cy());releaseHold();tap(tft.width()/2,8);check(upNextQ.size()==1&&mode()=="Catalog"&&classic_depth()==2,"a tap outside the menu cancels and does not go Back");
+  tx=row.cx();ty=row.cy();down=true;ui_tick(clockNow+=130);ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,tx,ty);pump();
+  check(calls>before&&mode()=="Player","a short tap still plays the song");
+  // An album row queues every song on it, after what is already queued.
+  home();tapTile(2);const Rect album=L::row<Rect>(tft.width(),0);holdAt(album.cx(),album.cy());releaseHold();
+  check(label("Add to queue"),"holding an album opens the queue menu");
+  tap(tft.width()/2,choiceY(1));check(upNextQ.size()>2,"Add to queue appends the whole album");
+  const size_t queued=upNextQ.size();dismissToast();
+  toPlayer();const Rect o=L::options<Rect>(tft.width());tap(o.cx(),o.cy());
+  check(label("Up Next")&&label((std::to_string(queued)+" queued").c_str()),"Options shows Up Next with its count");
+  tapSettingsRow(5);check(shown("Up Next")&&label("Clear Up Next"),"the Up Next page opens from Options");
+  const Rect q=L::row<Rect>(tft.width(),1);holdAt(q.cx(),q.cy());releaseHold();
+  check(label("Play now")&&label("Remove"),"holding a queued song offers Play now and Remove");
+  tap(tft.width()/2,choiceY(1));pump();check(upNextQ.size()==queued-1,"Remove drops that entry");
+  tapRow(0);check(label("Clear Up Next?"),"Clear asks first");
+  const int w=min(tft.width()-24,296),bw=(w-24)/2,okX=(tft.width()-w)/2+16+bw+bw/2,okY=(tft.height()-150)/2+150-8-22;
+  tap(okX,okY);check(upNextQ.empty()&&label("Hold any song to queue it"),"Clear empties Up Next");
+  home();
+  std::cout<<"PASS Up Next: hold menu on songs and albums, Play next, Add to queue, Cancel, outside tap, short tap, Options count, page, Remove, Clear\n";
+}
+static void equalizerRegression(){
+  namespace L=cydclassic::layout;
+  auto same=[](const int8_t* a,std::initializer_list<int> b){int i=0;for(int v:b)if(a[i++]!=v)return false;return true;};
+  for(unsigned rotation:{0u,1u,2u,3u}){
+    tft.setRotation(rotation);g_settings.rotation=uint8_t(rotation);
+    g_settings.eqOn=false;for(int8_t& g:g_settings.eqGain)g=0;
+    toPlayback();tapSettingsRow(4);
+    check(shown("Equalizer")&&label("EQ Off")&&label("Flat")&&label("Reset")&&label("60")&&label("14k"),"Equalizer page from Playback");
+    const int w=tft.width(),h=tft.height(),depth=int(classic_depth());
+    const Rect top=L::eqTrack<Rect>(w,h,0,5);
+    int applies=eqApplies,saves=settingsSaves;
+    tap(top.cx(),top.y);
+    check(g_settings.eqOn&&g_settings.eqGain[0]==12&&eqApplies>applies&&eqLastOn&&eqLast[0]==12,"top of the 60 Hz slider sets +12 dB and switches the EQ on");
+    check(settingsSaves>saves&&label("+12")&&label("EQ On")&&label("Custom"),"slider release saves and repaints");
+    const Rect mid=L::eqTrack<Rect>(w,h,2,5);
+    tap(mid.cx(),mid.y+mid.h);check(g_settings.eqGain[2]==-12,"bottom of the 1 kHz slider sets -12 dB");
+    const Rect preset=L::eqControl<Rect>(w,1),reset=L::eqControl<Rect>(w,2),toggle=L::eqControl<Rect>(w,0);
+    tap(preset.cx(),preset.cy());check(same(g_settings.eqGain,{6,6,2,0,0})&&label("Bass")&&eqLast[0]==6,"Preset from Custom selects Bass");
+    tap(preset.cx(),preset.cy());check(same(g_settings.eqGain,{-2,0,4,4,2})&&label("Vocal"),"Preset cycles to Vocal");
+    tap(reset.cx(),reset.cy());check(same(g_settings.eqGain,{0,0,0,0,0})&&g_settings.eqOn&&label("Flat"),"Reset sets every band flat");
+    tap(toggle.cx(),toggle.cy());check(!g_settings.eqOn&&!eqLastOn&&label("EQ Off"),"On/Off switches the EQ off");
+    const Rect c=L::eqColumn<Rect>(w,h,0,5);
+    dragRun(c.cx(),c.y+c.h/2,{{c.cx()+40,c.y+c.h/2},{c.cx()+120,c.y+c.h/2}});
+    check(int(classic_depth())==depth&&shown("Equalizer"),"a sideways drag across the sliders does not go back");
+    toPlayer();const Rect o=L::options<Rect>(w);tap(o.cx(),o.cy());
+    check(shown("Options")&&classic_depth()>=2,"Options opens from Now Playing");
+    tapSettingsRow(4);check(shown("Equalizer")&&label("EQ On"),"Equalizer opens from Options (the drag above switched it on)");
+  }
+  g_settings.eqOn=false;for(int8_t& g:g_settings.eqGain)g=0;tft.setRotation(0);g_settings.rotation=0;ui_redraw();pump();
+  std::cout<<"PASS EQ-5BAND Equalizer page: Playback and Options entry, sliders, presets, Reset, On/Off, no swipe-back from sliders, all rotations\n";
+}
 // Keys are found through the real hit map; 1000 is the key target base in classic_screen.cpp.
 static bool findKey(char c,int& x,int& y){
   for(int yy=cydclassic::layout::KeyY;yy<tft.height();yy+=4)for(int xx=0;xx<tft.width();xx+=4)if(classic_target(xx,yy)==1000+c){x=xx;y=yy;return true;}
@@ -1226,7 +1365,7 @@ static void navigationGraph(){
   std::cout<<"NAV_GRAPH rotation "<<navRotation<<": "<<classes.size()<<" pages, "<<nodes.size()<<" page/scroll states\n";
   for(const auto& e:edges){std::cout<<"  "<<e.first<<" ->";for(const auto& to:e.second)std::cout<<' '<<to;std::cout<<'\n';}
   check(unknown.empty(),"a screen outside Classic and Bluetooth became current");
-  const std::set<std::string> expected{"Bluetooth","Classic.About","Classic.Catalog","Classic.Display","Classic.Home","Classic.Keyboard","Classic.Options","Classic.Output","Classic.Playback","Classic.Player","Classic.Playlists","Classic.Refresh","Classic.Search","Classic.Settings","Classic.SourceSongs","Classic.Sources","Classic.System"};
+  const std::set<std::string> expected{"Bluetooth","Classic.About","Classic.Catalog","Classic.Display","Classic.Home","Classic.Keyboard","Classic.Options","Classic.Output","Classic.Playback","Classic.Player","Classic.Playlists","Classic.Refresh","Classic.Search","Classic.Settings","Classic.SourceSongs","Classic.Sources","Classic.System","Classic.Equalizer","Classic.UpNext"};
   for(const auto& want:expected)check(classes.count(want)>0,("page not reachable from Home: "+want).c_str());
   for(const auto& got:classes)check(expected.count(got)>0,("unexpected page reachable from Home: "+got).c_str());
 }
@@ -1649,7 +1788,7 @@ int main(){try{
   tft.setRotation(1);ui_redraw();pump();tap(160,110);check(lastSeek>119000&&lastSeek<121000,"landscape progress geometry");
   tap(12,110);check(lastSeek==0,"progress start clamp");tap(306,110);check(lastSeek==239999,"progress end clamp");tft.setRotation(0);ui_redraw();pump();
   std::cout<<"PASS seek UI: tap, drag release, cancellation, track identity, unknown duration, Next on touch-down and recalibration claim\n";
-  tap(45,300);check(volume>30&&volume<40,"Player volume slider action (portrait track is 48 px from x=28 after CY-85: x=45 is 35 %)");snapshot("ui-player-volume.svg");
+  tap(86,300);check(volume>30&&volume<40,"Player volume slider action (portrait track is 166 px from x=28 with no output chip: x=86 is 34 %)");snapshot("ui-player-volume.svg");
   tap(20,20);check(classic_top()==2&&label("Song 02"),"restore scrolled browse position");
   // Leaving the original target cancels even when the finger returns.
   before=calls;tx=80;ty=60;down=true;ui_tick(clockNow+=130);tx=220;ui_tick(clockNow+=130);tx=80;ui_tick(clockNow+=130);down=false;ui_touch(TOUCH_TAP,80,66);pump();check(calls==before,"cancelled press stays cancelled");
@@ -1756,12 +1895,15 @@ int main(){try{
   compactChromeRegression();
   playerRedrawRegression();
   nowPlayingRegression();
+  marqueeRegression();
   textq::run();
   iconq::run();
   touchRegression();
   miniPlayerRegression();
   homeTilesRegression();
   settingsRegression();
+  equalizerRegression();
+  upNextRegression();
   themeRegression();
   themePreviews();
   bluetoothCandidateRegression();

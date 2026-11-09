@@ -50,9 +50,29 @@ union alignas(8) DecoderPool {
 static_assert(sizeof(DecoderPool)==codecPoolBytes,"single inclusive pool size");
 static DecoderPool codecPool; // the ONLY decoder/PCM/input/FIR allocation (.bss)
 PoolLayout& pool() { return codecPool.layout; }
+// MP3 gapless trim from the LAME tag (encoder delay and padding), outside the
+// pinned pool layout. Valid output is [delay+529, total-padding+529) of the
+// decoded stream, the same window LAME and FFmpeg use.
+struct Mp3Trim { uint32_t lead = 0, skip = 0; uint64_t keep = 0, out = 0; };
+static Mp3Trim mp3Trim;
+void readLameTrim(const uint8_t* b, unsigned x, uint32_t frameBytes, uint64_t total) {
+  mp3Trim = Mp3Trim{};
+  const uint32_t flags = Mp3State::be32(b + x + 4);
+  unsigned off = x + 8 + ((flags & 1) ? 4 : 0) + ((flags & 2) ? 4 : 0) + ((flags & 4) ? 100 : 0) + ((flags & 8) ? 4 : 0);
+  if (off + 24 > frameBytes) return;
+  const uint8_t* lame = b + off;
+  if (memcmp(lame, "LAME", 4) && memcmp(lame, "Lavf", 4) && memcmp(lame, "Lavc", 4)) return;
+  const uint32_t delay = uint32_t(lame[21]) << 4 | lame[22] >> 4;
+  const uint32_t padding = uint32_t(lame[22] & 15) << 8 | lame[23];
+  if (!delay && !padding) return;
+  mp3Trim.lead = mp3Trim.skip = delay + 529;
+  // End trim only with an exact frame count (Xing frames flag).
+  if ((flags & 1) && total > uint64_t(delay) + padding) mp3Trim.keep = total - delay - padding;
+  if (mp3Trim.keep && mp3Trim.lead >= total) mp3Trim = Mp3Trim{};
+}
 }
 miniaac_status CodecTrack::begin(File& file) {
-  end(); pool().fir.reset(); pool().file=&file; pool().error="ok"; pool().rate=44100;
+  end(); pool().fir.reset(); mp3Trim = Mp3Trim{}; pool().file=&file; pool().error="ok"; pool().rate=44100;
   uint8_t magic[4]={};
 #if defined(ARDUINO) && !defined(CYDPOD_LIGHT_AUDIO_DIAGNOSTICS)
   const int64_t magicAt = esp_timer_get_time();
@@ -91,8 +111,10 @@ miniaac_status CodecTrack::begin(File& file) {
     if (pool().state.mp3.frameBytes<=pool().state.mp3.end-at && WavState::readAt(file,at,pool().input,pool().state.mp3.frameBytes)) {
       const uint8_t* b=pool().input;const bool v1=((b[1]>>3)&3)==3;
       const unsigned x=4+((b[1]&1)?0:2)+(v1?(pool().state.mp3.channels==1?17:32):(pool().state.mp3.channels==1?9:17));
-      if(x+12<=pool().state.mp3.frameBytes && (!memcmp(b+x,"Xing",4)||!memcmp(b+x,"Info",4)) && (Mp3State::be32(b+x+4)&1))
-        pool().state.mp3.total=uint64_t(Mp3State::be32(b+x+8))*pool().state.mp3.samples;
+      if(x+12<=pool().state.mp3.frameBytes && (!memcmp(b+x,"Xing",4)||!memcmp(b+x,"Info",4))) {
+        if(Mp3State::be32(b+x+4)&1) pool().state.mp3.total=uint64_t(Mp3State::be32(b+x+8))*pool().state.mp3.samples;
+        readLameTrim(b,x,pool().state.mp3.frameBytes,pool().state.mp3.total);
+      }
     }
     pool().rate=pool().state.mp3.rate;pool().total=pool().state.mp3.total;return MINIAAC_OK;
   }
@@ -116,7 +138,19 @@ CodecTrack::Pull CodecTrack::next() {
     pool().total=pool().state.mp3.total;
     if(n<0)return Pull::error;
     if(pool().rate!=pool().state.mp3.rate){pool().error="mp3_rate_change";return Pull::error;}
-    pool().frames=size_t(n);return n?Pull::frames:Pull::eof;
+    pool().frames=size_t(n);
+    if(n && (mp3Trim.skip || mp3Trim.keep)) {
+      size_t from=0,to=size_t(n);
+      if(mp3Trim.skip){const size_t drop=mp3Trim.skip<to?mp3Trim.skip:to;from=drop;mp3Trim.skip-=uint32_t(drop);}
+      if(mp3Trim.keep){
+        if(mp3Trim.out>=mp3Trim.keep)return Pull::eof; // encoder padding: the audio has ended
+        const uint64_t left=mp3Trim.keep-mp3Trim.out;
+        if(to-from>left)to=from+size_t(left);
+      }
+      mp3Trim.out+=to-from;
+      pool().used=from;pool().frames=to; // may be empty while the lead is skipped
+    }
+    return n?Pull::frames:Pull::eof;
   }
   if(pool().kind==4) {
     pool().used=pool().frames=0;
@@ -157,6 +191,8 @@ miniaac_status CodecTrack::seek(uint32_t ms, miniaac_seek_hook hook, void* user)
     if(error){pool().error=error;return MINIAAC_IO;}
     mp3.drops=mp3.run=0;
     pool().frames=pool().used=0;
+    // Positions are on the trimmed (gapless) timeline: decoded frame = position + lead.
+    const uint64_t lead=mp3Trim.lead,target=pool().seekFrame+lead;
     uint64_t decoded=0;size_t last=0;unsigned blocks=0;
     for(;;) {
       if((blocks++%32)==0 && hook && hook(user))return MINIAAC_CANCELLED;
@@ -164,15 +200,17 @@ miniaac_status CodecTrack::seek(uint32_t ms, miniaac_seek_hook hook, void* user)
       if(n<0)return MINIAAC_IO;
       if(!n) {
         if(!last){pool().error="mp3_seek_eof";return MINIAAC_IO;}
-        mp3.total=pool().total=decoded;pool().seekFrame=decoded-1;
+        mp3.total=pool().total=decoded;pool().seekFrame=decoded-1>lead?decoded-1-lead:0;
         pool().frames=last;pool().used=last-1;break;
       }
       last=size_t(n);
-      if(pool().seekFrame<decoded+last) {
-        pool().frames=last;pool().used=size_t(pool().seekFrame-decoded);break;
+      if(target<decoded+last) {
+        pool().frames=last;pool().used=size_t(target-decoded);break;
       }
       decoded+=last;
     }
+    // The block seek just loaded bypasses next()'s trim; output resumes counting from here.
+    mp3Trim.skip=0;mp3Trim.out=pool().seekFrame;
     pool().error="ok";return MINIAAC_OK;
   }
   if(pool().kind==4) {
@@ -191,7 +229,10 @@ const M4aStereo* CodecTrack::pcm() const {
   return pool().kind==1 ? pool().state.aac.track.pcm() : reinterpret_cast<const M4aStereo*>(pool().pcm)+pool().used;
 }
 void CodecTrack::consume(size_t frames) { if(pool().kind==1) pool().state.aac.track.consume(frames); else pool().used+=frames; }
-uint64_t CodecTrack::totalFrames() const { return pool().kind==1 ? pool().state.aac.track.totalFrames() : pool().total; }
+uint64_t CodecTrack::totalFrames() const {
+  if(pool().kind==3 && mp3Trim.keep) return mp3Trim.keep; // gapless length, without encoder delay and padding
+  return pool().kind==1 ? pool().state.aac.track.totalFrames() : pool().total;
+}
 uint32_t CodecTrack::sampleRate() const { return pool().rate; }
 bool CodecTrack::output(int16_t l,int16_t r,PcmSink sink,void* user) {
   if(pool().rate==44100)return sink(user,l,r);

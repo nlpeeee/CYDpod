@@ -1,5 +1,6 @@
 #ifndef CYD_UPLOADER
 #include "classic_screen.h"
+bool btlink_quietUi();  // bt_diag.h (declared here: the host UI tests have no Bluetooth headers)
 #include "classic_navigation.h"
 #include "scroll_core.h"
 #include "scroll_cmd.h"
@@ -20,11 +21,12 @@
 #include "titles.h"
 #include "firmware.h"
 #include "classic_text.h"
+#include "eq.h"
 #include <esp_system.h>
 
 namespace {
 namespace L=cydclassic::layout;
-enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Options,About,Refresh,Message,Search,Keyboard,System };
+enum class Mode:uint8_t { Home,Playlists,Catalog,Sources,SourceSongs,Player,Settings,Playback,Display,Output,Options,About,Refresh,Message,Search,Keyboard,System,Equalizer,UpNext };
 struct Page {
   Mode mode=Mode::Home;CatalogView view{};int16_t source=-1;int32_t offsetPx=0;
   SourceKind sourceKind=SRC_M3U;char title[64]={};
@@ -34,6 +36,8 @@ constexpr int DisplayRows=CYD_TOUCH_CAPACITIVE?4:5;
 // Landscape -> landscape flipped -> portrait -> portrait flipped, so every rotation can be reached
 // and left again (rotation 1 is the W328C's upright landscape, board.h).
 const char* const RotationName[4]={"Portrait","Landscape","Portrait flipped","Landscape flipped"};
+// EQ-5BAND: band labels under the Equalizer page's sliders (cydeq::CentreHz).
+const char* const EqBandName[cydeq::Bands]={"60","250","1k","4k","14k"};
 uint8_t nextRotation(uint8_t rotation){static const uint8_t next[4]={2,3,1,0};return next[rotation&3];}
 void resetPin(){g_settings.webPin="000000";settings_save();}
 struct Row {
@@ -235,6 +239,10 @@ void applySearch(uint32_t now){
 constexpr int KeyBase=1000,KeyBack=-40,KeyDigits=-41,KeySpace=-42,KeyClear=-43,KeyDone=-44;
 constexpr int TileBase=-50; // Home tile i is target TileBase-i
 constexpr int Back=-10,Home=-11,Thumb=-12,Now=-14,Prev=-20,Play=-21,Next=-22,Options=-24,Slider=-25,Seek=-28,Favourite=-29,Shuffle=-30,Repeat=-31,Output=-32;
+// Equalizer page: band columns are EqBandBase-band; the three buttons have their own targets.
+constexpr int EqBandBase=-60,EqToggle=-70,EqPreset=-71,EqReset=-72;
+int eqBandOf(int target){return target<=EqBandBase&&target>EqBandBase-cydeq::Bands?EqBandBase-target:-1;}
+int eqButtonOf(int target){return target==EqToggle?0:target==EqPreset?1:target==EqReset?2:-1;}
 Page miniReturn{};uint8_t miniReturnDepth=0;uint32_t miniPressUntil=0;bool miniQueued=false;
 Page& page(){return navigation.current();}
 bool browse(){return page().mode!=Mode::Player&&page().mode!=Mode::Keyboard;}
@@ -247,7 +255,7 @@ Row& cachedRow(int absolute){return cache[absolute%CacheSlots];}
 bool rowReady(int absolute){const Row& r=cachedRow(absolute);return r.absolute==absolute&&r.valid;}
 bool musicList(){
   switch(page().mode){
-    case Mode::Catalog:case Mode::Playlists:case Mode::Sources:case Mode::SourceSongs:case Mode::Search:return true;
+    case Mode::Catalog:case Mode::Playlists:case Mode::Sources:case Mode::SourceSongs:case Mode::Search:case Mode::UpNext:return true;
     default:return false;
   }
 }
@@ -270,6 +278,7 @@ const char* pageTitle(const Page& value){
     case Mode::Settings:return "Settings";case Mode::Playback:return "Playback";case Mode::Display:return "Display";
     case Mode::Output:return "Audio Output";case Mode::Options:return "Options";
     case Mode::About:return "About";case Mode::Refresh:return "Refresh Library";case Mode::Message:return "CYDpod";case Mode::System:return "Library & System";
+    case Mode::Equalizer:return "Equalizer";case Mode::UpNext:return "Up Next";
     default:return "CYDpod";
   }
 }
@@ -278,15 +287,96 @@ const char* title(){return pageTitle(page());}
 // (whole-glyph "..." when too wide). Non-ASCII keeps the existing UTF-8 strip path, with its
 // native strip height. `y` is the vertical centre of capitals for the sized faces.
 using cydtext::Face;
+bool marqueeHoldsStrip=false; // the Now Playing marquee is scrolling the loaded UTF-8 strip
 void playerText(const char* value,int x,int y,Face face,int width,uint16_t fg,uint16_t bg,int align=cydtext::HAlignCentre){
   if(!listPress&&!thumbDrag&&!flingActive&&!cydtext::ascii(value)){ui_text(String(value),x,y,uint8_t(3+align),fg,bg,width);return;}
-  titles_release(); // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip.
+  // Match ui_text: an ASCII draw must not retain a prior UTF-8 strip -- unless the marquee is
+  // scrolling it, so the once-a-second time labels do not force an SD reload every second.
+  if(!marqueeHoldsStrip)titles_release();
   char label[128],fitted[128];cydlib::copyText(label,value);
   for(char* c=label;*c;++c)if((unsigned char)*c<32)*c=' ';
   // A title too wide for the large bold face steps down to the compact bold face before any ellipsis.
   if(face==Face::Title&&cydtext::width(face,label)>width)face=Face::TitleCompact;
   cydtext::fit(face,label,fitted,sizeof(fitted),width);
   cydtext::draw(face,fitted,x,y,align,fg);
+}
+// Now Playing marquee. A title, artist or album too wide for the screen scrolls through one lap,
+// ONE label at a time, then rests with its usual ellipsis while the next overflowing label takes a
+// turn. Each step repaints one band opaquely: no heap and no sprite; ASCII glyphs come from flash,
+// UTF-8 labels from the single strip titles.cpp already holds. Steps yield to a low audio ring.
+enum : uint8_t {MarqueeIdle,MarqueeArm,MarqueeLead,MarqueeScroll}; // Arm: the hold starts on the first tick's clock
+struct Marquee{uint8_t overflow=0,label=0,phase=MarqueeIdle;bool strip=false;int16_t offset=0,period=0;uint32_t key=0,at=0;};
+Marquee marquee;
+const char* marqueeText(int label){return label==0?playingInfo.title:label==1?playingInfo.artist:playingInfo.album;}
+int marqueeY(int label){return (label==0?L::PlayerTitleY:label==1?L::PlayerArtistY:L::PlayerAlbumY)+L::playerTextOffset(tft.height());}
+uint16_t marqueeInk(int label){return label?theme().dim:theme().text;}
+// A title only overflows once even the compact bold face does not fit, so that is the face it scrolls in.
+Face marqueeFace(int label){return label?Face::Label:Face::TitleCompact;}
+int marqueeWidth(){return tft.width()-2*L::PlayerTextInset;}
+// The rows a label owns: its face's ink (or the strip), cut at the midpoints to its neighbours.
+Rect marqueeBand(int label,bool strip){
+  const int cy=marqueeY(label),dy=L::playerTextOffset(tft.height());
+  int above=TITLE_STRIP_H/2,below=TITLE_STRIP_H-TITLE_STRIP_H/2;
+  if(!strip)cydtext::rowExtent(marqueeFace(label),above,below);
+  const int top=max(cy-above,label?(marqueeY(label-1)+cy)/2:L::PlayerTextTop+dy);
+  const int bottom=min(cy+below,label<2?(cy+marqueeY(label+1))/2:L::PlayerTextTop+L::PlayerTextH+dy);
+  return {L::PlayerTextInset,top,marqueeWidth(),bottom-top};
+}
+void marqueeReset(){marquee=Marquee{};marqueeHoldsStrip=false;}
+// After playerTrack drew the three labels: which overflow. A UTF-8 label's width is its strip's,
+// read while that label's strip is still the loaded one.
+void marqueeMeasure(int label){
+  const char* text=marqueeText(label);int full=0;
+  if(cydtext::ascii(text))full=cydtext::width(marqueeFace(label),text);
+  else if(titles_loaded())full=titles_width();
+  if(full>marqueeWidth())marquee.overflow|=uint8_t(1u<<label);
+}
+void marqueeNext(uint32_t now){
+  const int from=marquee.label;int next=from;
+  for(int i=1;i<=3;++i){const int at=(from+i)%3;if(marquee.overflow&(1u<<at)){next=at;break;}}
+  // Only one overflowing UTF-8 label: keep its strip through the hold instead of re-reading it.
+  marqueeHoldsStrip=marquee.strip&&next==from;
+  marquee.label=uint8_t(next);marquee.phase=MarqueeLead;marquee.offset=0;marquee.at=now+L::MarqueeHoldMs;
+}
+void marqueeStart(){
+  if(!marquee.overflow)return;
+  marquee.label=marquee.overflow&1?0:marquee.overflow&2?1:2;
+  marquee.phase=MarqueeArm;
+}
+// Back to the resting draw: clear the band, then exactly what playerTrack shows.
+void marqueeRest(int label){
+  const Rect b=marqueeBand(label,marquee.strip);
+  tft.fillRect(b.x,b.y,b.w,b.h,theme().bg);
+  playerText(marqueeText(label),tft.width()/2,marqueeY(label),label?Face::Label:Face::Title,marqueeWidth(),marqueeInk(label),theme().bg);
+}
+void marqueeTick(uint32_t now){
+  if(marquee.phase==MarqueeIdle)return;
+  if(marquee.phase==MarqueeArm){marquee.phase=MarqueeLead;marquee.at=now+L::MarqueeHoldMs;return;}
+  // Never wait longer than one hold, whichever clock armed it (enter() ticks with millis()).
+  if(int32_t(marquee.at-now)>L::MarqueeHoldMs)marquee.at=now+L::MarqueeHoldMs;
+  if(int32_t(now-marquee.at)<0)return;
+  // Background paint backs off: a low ring, a seek preview or a finger on the glass all come first.
+  // Also still while the Bluetooth link needs the headroom (earbuds, a
+  // congested link, `btd ui quiet`; bt_diag.h btlink_quietUi).
+  if(audio_bufferLow()||seekPreview||touch_isDown()||btlink_quietUi()){marquee.at=now+L::MarqueeStepMs;return;}
+  const int label=marquee.label;const char* text=marqueeText(label);
+  if(marquee.phase==MarqueeLead){
+    marquee.strip=!cydtext::ascii(text);
+    if(marquee.strip){
+      if(!titles_load(String(text))){marquee.strip=false;marqueeNext(now);return;}
+      marquee.key=titles_loadedKey();marquee.period=int16_t(titles_width()+L::MarqueeGap);marqueeHoldsStrip=true;
+    }else marquee.period=int16_t(cydtext::width(marqueeFace(label),text)+L::MarqueeGap);
+    marquee.offset=0;marquee.phase=MarqueeScroll;
+  }else if(marquee.strip&&titles_loadedKey()!=marquee.key){
+    // Another UTF-8 label replaced the strip (a header or output-chip redraw): rest and move on.
+    marqueeRest(label);marqueeNext(now);return;
+  }
+  marquee.offset=int16_t(marquee.offset+L::MarqueeStepPx);
+  if(marquee.offset>=marquee.period){marqueeRest(label);marqueeNext(now);return;}
+  const Rect b=marqueeBand(label,marquee.strip);
+  if(marquee.strip)titles_draw(b,marquee.offset,L::MarqueeGap,marqueeInk(label),theme().bg);
+  else cydtext::drawWindow(marqueeFace(label),text,marquee.offset,L::MarqueeGap,b.x,b.y,b.w,b.h,marqueeY(label),marqueeInk(label),theme().bg);
+  marquee.at=now+L::MarqueeStepMs;
 }
 // "24 / 85", degrading to "24/85" and then "24" rather than ever cutting a number in half.
 void queuePosition(int pos,int length,int x,int y,int width,uint16_t fg,uint16_t bg){
@@ -389,6 +479,56 @@ void paintTile(int i,bool pressed){
   ui_text(String(names[i]),r.cx(),r.y+r.h-L::TileLabelBottom,MC_DATUM,ink,face,r.w-2*L::TileTextInset);
 }
 void paintTiles(){for(int i=0;i<L::TileCount;++i)paintTile(i,false);}
+// EQ-5BAND Equalizer page: On/Off, Preset and Reset buttons over five vertical sliders.
+// Paint and input share classic_layout.h's eqControl/eqColumn/eqTrack rectangles.
+constexpr int EqSteps=(cydeq::MaxDb-cydeq::MinDb)/cydeq::StepDb;
+int eqPressed=-1;bool eqDragged=false;
+void eqButton(int i,bool pressed){
+  const Palette& p=theme();const Rect r=L::eqControl<Rect>(tft.width(),i);
+  const bool primary=i==0&&g_settings.eqOn;
+  const uint16_t face=pressed?p.pressed:primary?p.btnActive:p.band,ink=pressed?p.onPressed:primary?p.onControlActive:p.text;
+  tft.fillRoundRect(r.x,r.y,r.w,r.h,L::EqControlRadius,face);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::EqControlRadius,p.outline);
+  const int preset=cydeq::presetMatch(g_settings.eqGain);
+  const char* label=i==0?(g_settings.eqOn?"EQ On":"EQ Off"):i==1?(preset<0?"Custom":cydeq::Presets[preset].name):"Reset";
+  ui_text(String(label),r.cx(),r.cy(),MC_DATUM,ink,face,r.w-2*L::TileTextInset);
+}
+void eqColumn(int band){
+  const Palette& p=theme();const int w=tft.width(),h=tft.height();
+  const Rect c=L::eqColumn<Rect>(w,h,band,cydeq::Bands),t=L::eqTrack<Rect>(w,h,band,cydeq::Bands);
+  const int gain=cydeq::clampGain(g_settings.eqGain[band]);const bool on=g_settings.eqOn;
+  const uint16_t fill=on?p.bar:p.disabled;
+  tft.fillRect(c.x,c.y,c.w,c.h,p.bg);
+  ui_text(gain>0?String("+")+String(gain):String(gain),t.cx(),c.y+L::EqLabelH/2,MC_DATUM,on?p.text:p.dim,p.bg,c.w);
+  tft.fillRoundRect(t.x,t.y,t.w,t.h,t.w/2,p.barBg);
+  const int zero=L::eqStepY(EqSteps/2,t.y,t.h,EqSteps),knob=L::eqStepY((gain-cydeq::MinDb)/cydeq::StepDb,t.y,t.h,EqSteps);
+  if(knob!=zero)tft.fillRect(t.x,min(knob,zero),t.w,abs(knob-zero),fill);
+  tft.drawFastHLine(t.cx()-L::EqZeroHalf,zero,2*L::EqZeroHalf+1,p.outline);
+  tft.fillCircle(t.cx(),knob,L::KnobR,p.bg);tft.fillCircle(t.cx(),knob,L::KnobR-L::KnobBorder,fill);
+  ui_text(String(EqBandName[band]),t.cx(),c.y+c.h-L::EqLabelH/2,MC_DATUM,p.dim,p.bg,c.w);
+}
+void eqPaint(){for(int i=0;i<L::EqControls;++i)eqButton(i,false);for(int b=0;b<cydeq::Bands;++b)eqColumn(b);}
+// Press or drag in a column: snap to the 2 dB grid. Editing a band switches the EQ on, so the
+// change is heard. Coefficients are redesigned only when the value changes; NVS is written on release.
+void eqBandAt(int band,int y){
+  const Rect t=L::eqTrack<Rect>(tft.width(),tft.height(),band,cydeq::Bands);
+  const int gain=cydeq::MinDb+L::eqStepAt(y,t.y,t.h,EqSteps)*cydeq::StepDb;
+  const bool wasOn=g_settings.eqOn;
+  if(gain==g_settings.eqGain[band]&&wasOn)return;
+  g_settings.eqGain[band]=int8_t(gain);g_settings.eqOn=true;eqDragged=true;
+  eq_apply(g_settings.eqOn,g_settings.eqGain);
+  if(wasOn){eqColumn(band);eqButton(1,false);}else eqPaint();
+}
+void eqRelease(){if(eqDragged){settings_save();eqDragged=false;}}
+// Buttons act on release. A preset other than Flat switches the EQ on; Flat keeps the switch.
+void eqActivate(int button){
+  if(button==0)g_settings.eqOn=!g_settings.eqOn;
+  else if(button==1){const int next=cydeq::presetNext(g_settings.eqGain);
+    for(int b=0;b<cydeq::Bands;++b)g_settings.eqGain[b]=cydeq::Presets[next].gain[b];
+    if(next)g_settings.eqOn=true;}
+  else for(int8_t& gain:g_settings.eqGain)gain=0;
+  Serial.printf("cmd: eq %s\n",button==0?"toggle":button==1?"preset":"reset");
+  settings_save();eq_apply(g_settings.eqOn,g_settings.eqGain);eqPaint();
+}
 // Fixed text scratch keeps ASCII painting allocation-free; UTF-8 retains the legacy strip loader.
 void rowText(const char* value,int y,int width,uint16_t fg,uint16_t bg){
   if(!listPress&&!thumbDrag&&!flingActive&&!cydtext::ascii(value)){
@@ -533,8 +673,9 @@ int rowCount(){
     case Mode::Catalog:return storage_browseCount(page().view);
     case Mode::Sources:return playlist_sourceCount(page().sourceKind);
     case Mode::SourceSongs:return previewCount;
-    case Mode::Settings:return 6;case Mode::System:return 4;case Mode::Playback:return 4;case Mode::Display:return DisplayRows;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 2 : 0);
-    case Mode::Options:return 4;case Mode::Refresh:return 2;
+    case Mode::Settings:return 6;case Mode::System:return 4;case Mode::Playback:return 5;case Mode::Display:return DisplayRows;case Mode::Output:return OUT_SELECTABLE_COUNT + (CYD_WIRED_OUTPUT ? 2 : 0);
+    case Mode::Options:return 6;case Mode::Refresh:return 2;
+    case Mode::UpNext:return 1+audio_upNextLen();
     default:return 0;
   }
 }
@@ -562,6 +703,7 @@ void fetchRow(int at){
       setRow(r,names[at],at==2?g_settings.webPin:at==3?String(tr(T_LANG_NAME)):String(),at<2);break;}
     case Mode::Playback:
       if(at<2)setRow(r,at==0?"Shuffle":"Repeat",at==0?String(audio_shuffle()?"On":"Off"):String(audio_repeat()==REPEAT_ONE?"One":audio_repeat()==REPEAT_ALL?"All":"Off"));
+      else if(at==4)setRow(r,"Equalizer",String(g_settings.eqOn?"On":"Off"),true);
       else setRow(r,at==2?"Screen timeout":"Sleep timer",at==2?String(sleep_timeoutLabel(g_settings.screenTimeout)):String(sleep_timerLabel(g_settings.sleepTimer)));break;
     case Mode::Display:{const char* names[]={"Brightness -","Brightness +","Orientation","Theme","Calibrate touch"};
       setRow(r,names[at],at<2?String(g_settings.brightness)+"%":at==2?String(RotationName[g_settings.rotation&3]):at==3?String(themeName(g_settings.colorTheme)):String(),at==4);break;}
@@ -570,7 +712,12 @@ void fetchRow(int at){
       if(at==OUT_SELECTABLE_COUNT){setRow(r,g_settings.headphoneLimit?"Headphone limit: On":"Headphone limit: Off",String("Digital output limit (wired only)"));break;}
 #endif
       if(at==OUT_SELECTABLE_COUNT+1){setRow(r,"Switch back to Bluetooth if there is no sound",String(),false,true);break;}const uint8_t route=outRouteSelectable(at);setRow(r,route==OUT_WIRED?"Headphones":"Bluetooth",g_settings.outRoute==route?String("Selected"):String());break;}
-    case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output"};setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):String(),at==3);break;}
+    case Mode::Options:{const char* names[]={"Favourite","Shuffle","Repeat","Audio Output","Equalizer","Up Next"};
+      setRow(r,names[at],at==0?String(playlist_isFavourite(audio_currentTrack())?"Remove":"Add"):at==4?String(g_settings.eqOn?"On":"Off"):at==5?(audio_upNextLen()?String(audio_upNextLen())+" queued":String("Empty")):String(),at>=3);break;}
+    case Mode::UpNext:
+      if(at==0){setRow(r,"Clear Up Next",audio_upNextLen()?String(audio_upNextLen())+" queued. Hold a song to remove it":String("Hold any song to queue it"),false,!audio_upNextLen());break;}
+      {String title,artist;const int id=audio_upNextAt(at-1);if(id>=0&&storage_trackSummary(id,title,artist)){setRow(r,title.c_str(),artist);r.track=id;}else setRow(r,"Track unavailable",String(),false,true);}
+      break;
     case Mode::Refresh:setRow(r,at==0?"Rebuild and restart":"Cancel",at==0?String("Music files are preserved"):String());break;
     default:break;
   }
@@ -715,6 +862,7 @@ void playerVolume(){
   shownVolume=level;
 }
 void playerOutput(){
+  if(!L::playerHasOutput(tft.width()))return;  // portrait: the volume track has the row
   const Palette& p=theme();const Rect r=L::outputFace<Rect>(tft.width(),tft.height());
   const bool lit=playerPressed==Output;const uint16_t bg=lit?p.pressed:p.band;
   tft.fillRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,bg);tft.drawRoundRect(r.x,r.y,r.w,r.h,L::PlayerChipRadius,p.outline);
@@ -735,13 +883,16 @@ void playerTrack(){
 #endif
   const int dy=L::playerTextOffset(tft.height()),width=tft.width()-2*L::PlayerTextInset;
   tft.fillRect(0,L::PlayerTextTop,tft.width(),L::PlayerTextH+dy,p.bg);
-  playerText(playingInfo.title,tft.width()/2,L::PlayerTitleY+dy,Face::Title,width,p.text,p.bg);
-  playerText(playingInfo.artist,tft.width()/2,L::PlayerArtistY+dy,Face::Label,width,p.dim,p.bg);
-  playerText(playingInfo.album,tft.width()/2,L::PlayerAlbumY+dy,Face::Label,width,p.dim,p.bg);
+  marqueeReset();
+  playerText(playingInfo.title,tft.width()/2,L::PlayerTitleY+dy,Face::Title,width,p.text,p.bg);marqueeMeasure(0);
+  playerText(playingInfo.artist,tft.width()/2,L::PlayerArtistY+dy,Face::Label,width,p.dim,p.bg);marqueeMeasure(1);
+  playerText(playingInfo.album,tft.width()/2,L::PlayerAlbumY+dy,Face::Label,width,p.dim,p.bg);marqueeMeasure(2);
+  marqueeStart();
   shownProgress=shownSecond=-1;shownSerial=audio_trackSerial();playerHeader();
 }
 void playerTick(uint32_t now){
   if(shownVolume!=audio_volume())playerVolume();
+  if(shownSerial==audio_trackSerial())marqueeTick(now); // a new track first repaints through playerTrack
   if(lastPlayer&&now-lastPlayer<250&&!seekPreview)return;lastPlayer=now;
   const Palette& p=theme();if(shownSerial!=audio_trackSerial())playerTrack();if(shownPlaying!=audio_isPlaying())playerTransport();
   const uint32_t pos=seekPreview?seekMs:audio_positionMs(),duration=audio_durationMs();
@@ -800,7 +951,7 @@ void enter(){
   rowUtf8.reserve(128);
 #endif
   finishFling(inputNow());claimPending=false;
-  seekPreview=false;playerPressed=tilePressed=-1;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
+  seekPreview=false;playerPressed=tilePressed=eqPressed=-1;eqDragged=false;ready=highlight=dimmed=-1;gesture=cydclassic::Gesture{};listDragging=listPress=thumbDrag=viewportPending=thumbVisible=false;
   motionPainted=motionFetched=false;motionOffset=page().offsetPx;motionDirection=0;
   if(page().mode==Mode::SourceSongs){
     if(!previewMatches(page().source)){
@@ -819,6 +970,7 @@ void enter(){
   if(page().mode==Mode::Keyboard){keyboardPaint();searchShownCount=searchShownProgress=-1;}
   else if(page().mode==Mode::Player){playerTrack();playerTransport(true);playerBottom();lastPlayer=0;playerTick(millis());}
   else if(page().mode==Mode::Home)paintTiles();
+  else if(page().mode==Mode::Equalizer)eqPaint();
   else if(page().mode==Mode::Message){
     // Bounded, word-wrapped ASCII status text; music labels use cached UTF-8 strips.
     tft.setTextColor(theme().text,theme().bg);tft.setTextFont(2);tft.setTextWrap(true);tft.setCursor(14,80);
@@ -831,7 +983,7 @@ void enter(){
 void leave(){
   finishFling(inputNow());claimPending=false;
   flushScrollLines();
-  seekPreview=false;armVolumeSave();flushSettings();dirty=0;titles_release();
+  seekPreview=false;armVolumeSave();flushSettings();dirty=0;marqueeReset();titles_release();
   // ui_go calls leave after a navigation push/pop: current() is the destination.
   // Retain only for this source page or its Player (including mini-player return).
   const Page* source=page().mode==Mode::SourceSongs?&page():page().mode==Mode::Player?
@@ -848,11 +1000,83 @@ void feedListSample(){
   if(!listPress||!touch_rawPosition(rx,ry))return;
   touch_livePosition(lx,ly);listSample(touch_lastSeenMs(),ly,ry);
 }
+// ---------------------------------------------------------------------------
+// Hold a song, album or artist: Play next / Add to queue (Up Next, audio.h)
+// ---------------------------------------------------------------------------
+// The menu opens once the finger has rested 600 ms on a row it has not dragged
+// or strayed from. The press is then claimed, so its release does nothing.
+struct HoldTarget { int track=-1,upIndex=-1; CatalogView view{}; bool isView=false; };
+HoldTarget held;
+// A row's whole-list view to queue: album rows, artist rows (all their songs), All Songs.
+bool queueView(const Row& r,CatalogView& out){
+  if(!r.navigates)return false;
+  switch(r.child.kind){
+    case CatalogKind::ArtistAlbums:out={CatalogKind::ArtistSongs,r.child.group};return true;
+    case CatalogKind::AlbumSongs:case CatalogKind::ArtistSongs:case CatalogKind::ArtistAlbumSongs:out=r.child;return true;
+    default:return false;
+  }
+}
+bool holdTarget(int at,HoldTarget& out){
+  if(at<0||at>=count)return false;
+  const Row& r=cachedRow(at);
+  if(r.absolute!=at||!r.valid||r.disabled)return false;
+  out=HoldTarget{};
+  switch(page().mode){
+    case Mode::Catalog:
+      if(queueView(r,out.view)){out.isView=true;return true;}
+      if(!r.navigates&&r.track>=0){out.track=r.track;return true;}
+      return false;
+    case Mode::Search:if(at>=1&&r.track>=0){out.track=r.track;return true;}return false;
+    case Mode::SourceSongs:if(r.track>=0){out.track=r.track;return true;}return false;
+    case Mode::UpNext:if(at>=1&&r.track>=0){out.track=r.track;out.upIndex=at-1;return true;}return false;
+    default:return false;
+  }
+}
+bool holdDue(){
+  if(!touch_isDown()||highlight<0||gesture.claimed||gesture.strayed||listDragging||thumbDrag||gesture.target<0)return false;
+  if(touch_heldMs()<TOUCH_LONG_MS)return false;
+  HoldTarget probe;return holdTarget(gesture.target,probe);
+}
+// Up to the free Up Next slots, in list order.
+void queueHeld(bool front){
+  uint16_t ids[AUDIO_UP_NEXT_CAP];int n=0,total=1;
+  const int room=AUDIO_UP_NEXT_CAP-audio_upNextLen();
+  if(room<=0){ui_toast("Up Next is full (64 songs).");return;}
+  if(held.isView){
+    total=storage_browseCount(held.view);
+    n=total>0?storage_browseTrackIds(held.view,0,ids,min(room,total)):0;
+    if(n<=0){ui_toast("Unable to read these songs. Check SD card.");return;}
+  }else if(held.track>=0){ids[0]=uint16_t(held.track);n=1;}
+  const int added=audio_upNextAdd(ids,n,front);
+  char text[64];
+  if(added<=0)snprintf(text,sizeof(text),"Up Next is full (64 songs).");
+  else if(added<total)snprintf(text,sizeof(text),"Queued %d of %d songs (Up Next is full).",added,total);
+  else if(added==1)snprintf(text,sizeof(text),"%s",front?"Playing next.":"Added to queue.");
+  else snprintf(text,sizeof(text),front?"%d songs playing next.":"%d songs added to queue.",added);
+  if(page().mode==Mode::UpNext||page().mode==Mode::Options){count=rowCount();invalidate();}
+  ui_toast(text);
+}
+void holdPlayNext(){queueHeld(true);}
+void holdAddToQueue(){queueHeld(false);}
+void holdPlayNow(){if(audio_upNextPlay(held.upIndex))show(Mode::Player);else ui_toast("Unable to play this song.");}
+void holdRemove(){if(audio_upNextRemove(held.upIndex)){count=rowCount();invalidate();}}
+void clearUpNext(){audio_upNextClear();}
+void openHold(){
+  if(!holdTarget(gesture.target,held))return;
+  const Row& r=cachedRow(gesture.target);
+  gesture.claimed=true;ui_claimPress();
+  if(highlight>=0)paintRow(highlight,false);
+  highlight=dimmed=ready=-1;
+  Serial.printf("cmd: hold row %d screen %u\n",gesture.target,unsigned(page().mode));
+  if(held.upIndex>=0)ui_choice(String(r.label),T_PLAY_NOW,T_REMOVE,holdPlayNow,holdRemove);
+  else ui_choice(String(r.label),T_PLAY_NEXT,T_ADD_TO_QUEUE,holdPlayNext,holdAddToQueue);
+}
 void tick(uint32_t now){
   screenNow=now;
   if(previewKey.source>=0&&(previewKey.crc!=storage_libraryCrc()||previewKey.tracks!=storage_trackCount()))freePreview();
   feedListSample();
   advanceFling(now);
+  if(holdDue()){openHold();return;}
   if(musicList()&&((listPress&&listDragging)||thumbDrag||flingActive)){
     tickMotion(now);
     return;
@@ -982,6 +1206,7 @@ void activate(int at){
       break;
     case Mode::Playback:
       if(at==0)cycleShuffle();else if(at==1)cycleRepeat();
+      else if(at==4)show(Mode::Equalizer);
       else if(at==2){g_settings.screenTimeout=(g_settings.screenTimeout+1)%4;settings_save();invalidate();}
       else {sleep_setTimer((g_settings.sleepTimer+1)%5,screenNow);settings_save();invalidate();}break;
     case Mode::Display:
@@ -1003,7 +1228,11 @@ void activate(int at){
         invalidate();header();}break;
     case Mode::Options:
       if(at==0)toggleFavourite();
-      else if(at==1)cycleShuffle();else if(at==2)cycleRepeat();else show(Mode::Output);break;
+      else if(at==1)cycleShuffle();else if(at==2)cycleRepeat();else if(at==3)show(Mode::Output);else if(at==4)show(Mode::Equalizer);else show(Mode::UpNext);break;
+    case Mode::UpNext:
+      if(at==0)ui_confirm(T_UP_NEXT_CLEAR_Q,T_UP_NEXT_CLEAR_1,T_COUNT,T_CLEAR,clearUpNext);
+      else if(audio_upNextPlay(at-1))show(Mode::Player);else ui_toast("Unable to play this song.");
+      break;
     case Mode::Refresh:
       if(at==1)back();else if(storage_refreshNextBoot()){g_settings.lastTrack=audio_currentTrack();g_settings.lastPath=storage_trackPath(audio_currentTrack());g_settings.lastPosMs=audio_positionMs();settings_save();ESP.restart();}
       else message("Cannot write refresh request. Check SD card.");break;
@@ -1037,6 +1266,11 @@ int targetAt(int x,int y){
     return L::mini<Rect>(tft.width(),tft.height(),0).contains(x,y)?Play:L::mini<Rect>(tft.width(),tft.height(),2).contains(x,y)?Next:Now;
   }
   if(page().mode==Mode::Home){for(int i=0;i<L::TileCount;++i)if(L::tile<Rect>(tft.width(),tft.height(),i).contains(x,y))return TileBase-i;return -1;}
+  if(page().mode==Mode::Equalizer){
+    for(int i=0;i<L::EqControls;++i)if(L::eqControl<Rect>(tft.width(),i).contains(x,y))return i==0?EqToggle:i==1?EqPreset:EqReset;
+    for(int b=0;b<cydeq::Bands;++b)if(L::eqColumn<Rect>(tft.width(),tft.height(),b,cydeq::Bands).contains(x,y))return EqBandBase-b;
+    return -1;
+  }
   if(browse()&&L::strip<Rect>(tft.width(),tft.height()).contains(x,y))return count>rows()?Thumb:-1;
   const int local=y-L::HeaderH;const int at=(local+page().offsetPx)/L::RowH;
   return local>=0&&local<rows()*L::RowH&&at<count?at:-1;
@@ -1065,7 +1299,7 @@ void transportDown(int target){
   lastPlayer=0; // repaint the transport and track now, not on the next 250 ms tick
 }
 // Swipe-back is a shortcut for the Back button on browse pages, started in the body (not header, mini-player or strip).
-bool swipeable(){return browse()&&navigation.depth>1&&gesture.target!=Slider&&gesture.y>=L::HeaderH&&gesture.y<L::miniY(tft.height())&&gesture.x<tft.width()-L::StripW;}
+bool swipeable(){return browse()&&navigation.depth>1&&gesture.target!=Slider&&eqBandOf(gesture.target)<0&&gesture.y>=L::HeaderH&&gesture.y<L::miniY(tft.height())&&gesture.x<tft.width()-L::StripW;}
 bool press(PressPhase phase,int x,int y){
   const int hit=targetAt(x,y);
   if(phase==PRESS_DOWN){
@@ -1092,6 +1326,7 @@ bool press(PressPhase phase,int x,int y){
     }
     if(page().mode==Mode::Keyboard&&hit>=KeyBase){editQuery(hit);gesture.claimed=true;return true;}
     if(hit==Slider){volumeChanged=false;volumeAt(x);return true;}
+    if(eqBandOf(hit)>=0){eqBandAt(eqBandOf(hit),y);return true;}
     if(hit==Seek){
       seekCancelled=!audio_canSeek();seekPreview=!seekCancelled;
       seekDuration=audio_durationMs();seekSerial=audio_trackSerial();seekPreviewAt(x);return true;
@@ -1102,12 +1337,14 @@ bool press(PressPhase phase,int x,int y){
       if(gesture.claimed)return true;
     }
     if(tileOf(hit)>=0){tilePressed=tileOf(hit);paintTile(tilePressed,true);return false;}
+    if(eqButtonOf(hit)>=0){eqPressed=eqButtonOf(hit);eqButton(eqPressed,true);return false;}
     highlight=hit>=0&&page().mode!=Mode::Keyboard?hit-topRow():-1;if(highlight>=0&&highlight<rows()&&cachedRow(hit).absolute==hit&&cachedRow(hit).valid)paintRow(highlight,true);
     return false;
   }
   if(page().mode==Mode::Keyboard&&gesture.target>=KeyBase)return true; // captured character: no slide/release/hold repeat
   if(phase==PRESS_MOVE){
     if(gesture.target==Slider){volumeAt(x);return true;}
+    if(eqBandOf(gesture.target)>=0){eqBandAt(eqBandOf(gesture.target),y);return true;}
     if(gesture.target==Seek){
       if(abs(y-gesture.y)>cydclassic::Gesture::SlopFar||seekSerial!=audio_trackSerial())seekCancelled=true;
       if(!seekCancelled)seekPreviewAt(x);return true;
@@ -1129,6 +1366,7 @@ bool press(PressPhase phase,int x,int y){
     // Show what a release would do: lit while within the slop, plain once outside, lit again on return.
     const bool inside=!gesture.claimed&&!gesture.strayed&&within(x,y,cydclassic::Gesture::SlopNear);
     if(tileOf(gesture.target)>=0){const int want=inside?tileOf(gesture.target):-1;if(want!=tilePressed){tilePressed=want;paintTile(tileOf(gesture.target),inside);}return gesture.claimed||gesture.strayed;}
+    if(eqButtonOf(gesture.target)>=0){const int want=inside?eqButtonOf(gesture.target):-1;if(want!=eqPressed){eqPressed=want;eqButton(eqButtonOf(gesture.target),inside);}return gesture.claimed||gesture.strayed;}
     if(page().mode==Mode::Player){const int pressed=inside?gesture.target:-1;if(pressed!=playerPressed){playerPressed=pressed;playerTransport();playerHeader();playerOutput();}return claimed;}
     if(!inside&&highlight>=0){paintRow(highlight,false);dimmed=highlight;highlight=-1;}
     else if(inside&&highlight<0&&dimmed>=0){highlight=dimmed;dimmed=-1;paintRow(highlight,true);}
@@ -1160,7 +1398,9 @@ bool press(PressPhase phase,int x,int y){
           s.stillMs=uint16_t(restNow-diag.restMs);s.coastRows=s.remRows=0;s.aborted=false;
           if(listTracker.up(releasedAt,listCoast,float(offset),0,float(limit),-scrollGain,restNow)){
             // The estimator judged the release at the last sample time; the content animates forward from now (no backdating).
-            listCoast.start(float(offset),-scrollGain*listTracker.releaseVelocity(),0,float(limit),now);
+            // A quiet UI (bt_diag.h) lets the list stop where the finger lifts:
+            // a fling repaints the whole list for seconds.
+            listCoast.start(float(offset),btlink_quietUi()?0.f:-scrollGain*listTracker.releaseVelocity(),0,float(limit),now);
             flingActive=true;++s.flings;flingUnderruns=audio_underruns();
             coastStartPx=coastLastPx=offset;coastPlannedRows=fabsf(listCoast.finalY()-float(offset))/float(L::RowH);
             s.coastRows=coastPlannedRows;s.reject="none";
@@ -1174,6 +1414,7 @@ bool press(PressPhase phase,int x,int y){
         viewportPending=true;thumbUntil=inputNow()+L::ThumbHoldMs;gesture.claimed=true;ready=-1;highlight=dimmed=-1;return true;}
     }
     if(gesture.target==Slider){armVolumeSave();gesture.target=-1;return true;}
+    if(eqBandOf(gesture.target)>=0){eqRelease();gesture.target=-1;return true;}
     if(gesture.target==Seek){
       seekPreview=false;shownProgress=shownSecond=-1;lastPlayer=0;
       if(!seekCancelled&&within(x,y,cydclassic::Gesture::SlopNear)&&seekSerial==audio_trackSerial()){
@@ -1185,6 +1426,7 @@ bool press(PressPhase phase,int x,int y){
     if(browse()&&(gesture.target==Play||gesture.target==Next)&&int32_t(screenNow-miniPressUntil)>=0){playerPressed=-1;miniPlayer();}
     if(gesture.target==Prev||gesture.target==Play||gesture.target==Next)return true; // already acted on touch-down
     if(tilePressed>=0){const int lit=tilePressed;tilePressed=-1;if(page().mode==Mode::Home)paintTile(lit,false);}
+    if(eqPressed>=0){const int lit=eqPressed;eqPressed=-1;if(page().mode==Mode::Equalizer)eqButton(lit,false);}
     if(swipeable()&&gesture.swipeBack(x,y)){ready=-1;highlight=dimmed=-1;back();return true;}
     const bool ok=gesture.activate(within(x,y,cydclassic::Gesture::SlopNear));
     ready=ok?gesture.target:-1;
@@ -1203,6 +1445,7 @@ void touch(TouchEvent ev,int,int){
   if(page().mode==Mode::Keyboard&&target!=Back&&target!=-1){if(target==KeyDone){if(searchSession.pending||searchSession.state==SearchState::Error)scheduleSearch(0);back();}else editQuery(target);return;}
   if(target>=0){activate(target);return;}
   if(tileOf(target)>=0){openTile(tileOf(target));return;}
+  if(eqButtonOf(target)>=0){eqActivate(eqButtonOf(target));return;}
   switch(target){
     case Back:back();break;
     case Home:classic_home();ui_go(SCR_CLASSIC);break;
@@ -1264,8 +1507,8 @@ const PlaylistQueue* classic_previewCursor(){return &preview;}
 unsigned classic_depth(){return navigation.depth;}
 unsigned classic_mode(){return unsigned(page().mode);}
 const char* classic_modeName(unsigned m){
-  static const char* const names[]={"Home","Playlists","Catalog","Sources","SourceSongs","Player","Settings","Playback","Display","Output","Options","About","Refresh","Message","Search","Keyboard","System"};
-  static_assert(sizeof(names)/sizeof(names[0])==unsigned(Mode::System)+1,"mode name table matches Mode");
+  static const char* const names[]={"Home","Playlists","Catalog","Sources","SourceSongs","Player","Settings","Playback","Display","Output","Options","About","Refresh","Message","Search","Keyboard","System","Equalizer","UpNext"};
+  static_assert(sizeof(names)/sizeof(names[0])==unsigned(Mode::UpNext)+1,"mode name table matches Mode");
   return m<sizeof(names)/sizeof(names[0])?names[m]:"?";
 }
 int classic_top(){return topRow();}

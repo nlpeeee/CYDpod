@@ -31,6 +31,9 @@
 #include "storage.h"
 #include "audio.h"
 #include "bt.h"
+#ifndef CYD_UPLOADER
+#include "bt_diag.h"
+#endif
 #include "boot_plan.h"
 #include <esp32-hal-bt.h>
 #include "speaker.h"
@@ -45,7 +48,9 @@
 #include "catalog.h"
 #include "classic_screen.h"
 #include "sleep_mode.h"
+#include "power.h"
 #include "cpu_stats.h" // DIAG-CPU: loop-only diagnostics
+#include "eq.h"
 #include <esp_system.h>
 
 // The loop task (which also runs setup: calibration, title rendering) measured
@@ -54,9 +59,9 @@
 SET_LOOP_TASK_STACK_SIZE(5 * 1024);
 
 #ifdef CYD_UPLOADER
-static const char* FIRMWARE_LABEL = FIRMWARE_VERSION " uploader";
+static const char* FIRMWARE_LABEL = "v" FIRMWARE_VERSION " uploader";
 #else
-static const char* FIRMWARE_LABEL = FIRMWARE_VERSION;
+static const char* FIRMWARE_LABEL = "v" FIRMWARE_VERSION;
 static bool bluetoothStarted = false;
 static bool bluetoothPlanned = false;
 #endif
@@ -140,7 +145,7 @@ extern void (*storage_bootTick)();
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.printf("\n=== CYD MP3 player %s ===\n", FIRMWARE_LABEL);
+  Serial.printf("\n=== CYDpod %s ===\n", FIRMWARE_LABEL);
   cydPrintBanner();
 
   settings_begin();
@@ -221,6 +226,8 @@ void loop() {}
   uint32_t ms;
   resumePoint(track, ms);
   splash_progress("Starting audio", -1);
+  eq_begin();  // before the decoder task exists: self-test and measure the EQ loop
+  eq_apply(g_settings.eqOn, g_settings.eqGain);
   audio_begin(track, ms, g_settings.volume, g_settings.shuffle, g_settings.repeat);
   playlist_restore(track);
   audio_start();
@@ -284,6 +291,18 @@ static void persistResume(uint32_t now) {
                           (bt_connected() ? "bt" : "no-bt"))
 #endif
 
+#ifndef CYD_UPLOADER
+// `gapless on|off`: A/B the gapless hand-off (RAM only, until reboot).
+static bool gaplessCommand(const char* line) {
+  if (strncmp(line, "gapless", 7) != 0 || (line[7] != 0 && line[7] != ' ')) return false;
+  const char* a = line[7] ? line + 8 : "";
+  if (!strcmp(a, "on")) audio_setGapless(true);
+  else if (!strcmp(a, "off")) audio_setGapless(false);
+  else Serial.printf("cmd: gapless is %s (gapless on|off)\n", audio_gapless() ? "on" : "off");
+  return true;
+}
+#endif
+
 // Debug command line (CY-108): `scroll ...` knobs. One short line at a time, never blocks; an overlong line is dropped.
 static void serialCommands() {
   static char line[48];
@@ -291,7 +310,11 @@ static void serialCommands() {
   static bool over = false;
   while (Serial.available()) {
     const int c = Serial.read();
-    if (c == '\n' || c == '\r') { if (n && !over) { line[n] = 0; classic_command(line); } n = 0; over = false; }
+    if (c == '\n' || c == '\r') { if (n && !over) { line[n] = 0; if (!power_command(line)
+#ifndef CYD_UPLOADER
+          && !btdiag_command(line) && !gaplessCommand(line)
+#endif
+          ) classic_command(line); } n = 0; over = false; }
     else if (n < sizeof(line) - 1) line[n++] = (char)c;
     else over = true;
   }
@@ -320,6 +343,7 @@ void loop() {
   }
 
   ui_tick(millis());
+  power_tick(millis(), bluetoothStarted);
 
   static uint32_t lastStat = 0;
   const bool report = now - lastStat >= 10000 && !touch_isDown() &&
@@ -369,6 +393,19 @@ void loop() {
     const AudioPcmStats pcm=audio_pcmStats();
     Serial.printf("stat: pcm input %lu output 44100 pumpMaxMs %lu yields %lu resampleBlockUs %lu resampleMaxUs %lu taps 32 phases 256\n",
                   (unsigned long)pcm.inputRate,(unsigned long)pcm.maxPumpMs,(unsigned long)pcm.yields,(unsigned long)pcm.blockUs,(unsigned long)pcm.maxBlockUs);
+    // EQ-5BAND: measured EQ cost on the decoder core over this window (cycle counter).
+    {
+      static EqStats eqPrev;
+      const EqStats e = eq_stats();
+      const uint32_t frames = e.frames - eqPrev.frames, cycles = e.cycles - eqPrev.cycles;
+      const uint32_t perFrame = frames ? cycles / frames : 0;
+      const uint32_t tenths = uint32_t(uint64_t(perFrame) * 441 / (getCpuFrequencyMhz() * 100));
+      Serial.printf("stat: eq on %d bands %u levelCdB %d kernel %s frames %lu cycPerFrame %lu cpu %lu.%lu%% limited %lu\n",
+                    int(e.on), unsigned(e.bands), int(e.preGainCentiDb), e.xtensa ? "xtensa" : "c++",
+                    (unsigned long)frames, (unsigned long)perFrame, (unsigned long)(tenths / 10), (unsigned long)(tenths % 10),
+                    (unsigned long)(e.limited - eqPrev.limited));
+      eqPrev = e;
+    }
     // CY-119: stutter evidence. nextMax = SD read + whole-frame decode; the ring holds audio_ringFrames() frames.
     Serial.printf("stat: audio in %lu Hz ringLow %u/%u nextMax %u ms underruns %u\n",
                   (unsigned long)pcm.inputRate, (unsigned)audio_takeRingLow(), (unsigned)audio_ringFrames(), (unsigned)nextMaxMs, (unsigned)audio_underruns());
@@ -380,7 +417,7 @@ void loop() {
     ts.maxGapMs = 0;
     lastStat = now;
   }
-  delay(2);
+  delay(power_loopDelayMs());  // 2 ms; 20 ms while the screen is off (power.h)
 }
 
 #endif  // CYD_UPLOADER

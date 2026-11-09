@@ -93,11 +93,13 @@ struct Mp3State {
       if(!WavState::readAt(f,at,input,frameBytes)){error="mp3_read";return -1;}
       at+=frameBytes;
       if(first) {
+        first=false;
         const bool v1=((input[1]>>3)&3)==3;
         const unsigned x=4+((input[1]&1)?0:2)+(v1?(channels==1?17:32):(channels==1?9:17));
-        if(x+12<=frameBytes && (!memcmp(input+x,"Xing",4)||!memcmp(input+x,"Info",4)) && (be32(input+x+4)&1))
-          total=uint64_t(be32(input+x+8))*samples;
-        first=false;
+        if(x+8<=frameBytes && (!memcmp(input+x,"Xing",4)||!memcmp(input+x,"Info",4))) {
+          if(x+12<=frameBytes && (be32(input+x+4)&1)) total=uint64_t(be32(input+x+8))*samples;
+          continue; // the tag frame holds no audio: decoding it would add a frame of silence (gapless)
+        }
       }
       unsigned char* p=input; int left=frameBytes;
       const int rc=MP3Decode(&core.decoder,&p,&left,pcm,0);

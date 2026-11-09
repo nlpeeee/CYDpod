@@ -1,6 +1,6 @@
 # Up Next queue and gapless playback
 
-Status: implemented on `main` after 0.5.5; host-checked, not yet board-run. Evidence: `docs/research/up-next-and-gapless.md`.
+Status: released in 0.6.0; host-checked, not yet board-run. Evidence: `docs/research/up-next-and-gapless.md`.
 
 ## Up Next
 

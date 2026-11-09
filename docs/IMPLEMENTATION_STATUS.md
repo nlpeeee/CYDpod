@@ -1,3 +1,12 @@
+## 0.6.0 release checkpoint — 9 November 2026
+
+Version 0.6.0 ships two boards, the JC2432W328C and the ESP32-2432S028R, and adds:
+- Up Next: hold a song, album or artist for Play next / Add to queue (64 songs, RAM only);
+- gapless playback: a natural track end opens the next file behind the playing tail, and MP3s skip the tag frame and trim the encoder delay and padding;
+- a vivid `#FFC800` splash background.
+
+`tools/release/Package-Release.ps1` now packages both boards. Host suites and both compiles PASS; neither image has been board-run as a whole. See [0.6.0 release notes](releases/0.6.0.md).
+
 ## Wired-only image retired — 9 November 2026
 
 The owner confirmed a wired I2S DAC on the 0.5.5 Bluetooth build through Settings → Audio Output → Headphones. The `cydpod-player-wired` job (CY-71, `-DCYD_DEFAULT_OUT_ROUTE=2`) is removed from `tools/check.ps1`; from the next release the player image is the only firmware for the JC2432W328C.

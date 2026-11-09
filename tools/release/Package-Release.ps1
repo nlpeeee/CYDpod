@@ -60,6 +60,10 @@ try {
     $tagCommit = (& git rev-parse --verify --quiet "$tag^{commit}")
     if ($LASTEXITCODE -ne 0 -or !$tagCommit -or $tagCommit.Trim() -ne $commit) { throw "Tag $tag must exist and point at HEAD ($commit)." }
     if (& git status --porcelain --untracked-files=no) { throw 'Tracked files have uncommitted changes: package only a committed, tagged tree.' }
+    $declared = Select-String -LiteralPath 'firmware/cydpod_player/app/firmware.h' -Pattern '#define FIRMWARE_VERSION "([^"]+)"'
+    if (!$declared -or $declared.Matches[0].Groups[1].Value -ne $Version) {
+        throw "firmware.h FIRMWARE_VERSION is not $Version (the splash shows it): bump it in the release commit."
+    }
     $notes = Join-Path $root "docs/releases/$Version.md"
     if (!(Test-Path $notes)) { throw "Missing release notes docs/releases/$Version.md." }
     $prev = Join-Path $root "releases/$Previous"

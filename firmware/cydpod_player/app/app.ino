@@ -59,9 +59,9 @@
 SET_LOOP_TASK_STACK_SIZE(5 * 1024);
 
 #ifdef CYD_UPLOADER
-static const char* FIRMWARE_LABEL = FIRMWARE_VERSION " uploader";
+static const char* FIRMWARE_LABEL = "v" FIRMWARE_VERSION " uploader";
 #else
-static const char* FIRMWARE_LABEL = FIRMWARE_VERSION;
+static const char* FIRMWARE_LABEL = "v" FIRMWARE_VERSION;
 static bool bluetoothStarted = false;
 static bool bluetoothPlanned = false;
 #endif
@@ -145,7 +145,7 @@ extern void (*storage_bootTick)();
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.printf("\n=== CYD MP3 player %s ===\n", FIRMWARE_LABEL);
+  Serial.printf("\n=== CYDpod %s ===\n", FIRMWARE_LABEL);
   cydPrintBanner();
 
   settings_begin();

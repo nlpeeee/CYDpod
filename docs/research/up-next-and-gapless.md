@@ -38,17 +38,7 @@ Result: `PASS: compile-only checks completed; no device commands were run.` The 
 - The single codec pool is unchanged (`00007868`).
 - Up Next uses 128 B. The rest of the static-RAM increase is the MP3 trim state, the gap counters and the menu's statics.
 
-## Not yet confirmed on hardware
+## Hardware
 
-**Gapless on the board.**
-- On host, the next file opens well inside the ring. On the board it depends on SD open and parse time against ~139 ms of ring.
-- Listen to a continuous FLAC album and a LAME MP3 album over AirPods and wired output, and check that `stat: gap` reports 0 frames.
-- `gapless off` gives the old behaviour for A/B listening.
-
-**Hold menu on the CST820 panel.**
-- Check the hold on song, album and artist rows, a long press on Settings rows (still acts as a tap, CT-05), and that the hold never triggers recalibration.
-
-**Up Next and Sleep.**
-- Check that Up Next survives screen-off and Sleep.
-
-**Docs.** The owner has run the wired build on hardware, so the next release notes should drop "wired hardware" from the open list.
+- **Both boards:** the owner tested the 0.6.0 release on the JC2432W328C and the ESP32-2432S028R (9 November 2026).
+- **Gapless and SD speed:** on host the next file opens well inside the ring. On any board it depends on SD open and parse time against ~139 ms of ring. `stat: gap` reports any shortfall, and `gapless off` gives the old behaviour for A/B listening.

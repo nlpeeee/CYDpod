@@ -5,7 +5,7 @@ Version 0.6.0 ships two boards, the JC2432W328C and the ESP32-2432S028R, and add
 - gapless playback: a natural track end opens the next file behind the playing tail, and MP3s skip the tag frame and trim the encoder delay and padding;
 - a vivid `#FFC800` splash background.
 
-`tools/release/Package-Release.ps1` now packages both boards. Host suites and both compiles PASS; neither image has been board-run as a whole. See [0.6.0 release notes](releases/0.6.0.md).
+`tools/release/Package-Release.ps1` now packages both boards. Host suites and both compiles PASS. The owner has tested 0.6.0 on both the JC2432W328C and the ESP32-2432S028R. After the release the splash and serial banner show the CYDpod version (`v0.6.0`) instead of the upstream `1.2.0`. See [0.6.0 release notes](releases/0.6.0.md).
 
 ## Wired-only image retired — 9 November 2026
 

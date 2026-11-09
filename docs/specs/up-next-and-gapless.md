@@ -1,6 +1,6 @@
 # Up Next queue and gapless playback
 
-Status: released in 0.6.0; host-checked, not yet board-run. Evidence: `docs/research/up-next-and-gapless.md`.
+Status: released in 0.6.0; host-checked and owner-tested on the JC2432W328C and the ESP32-2432S028R. Evidence: `docs/research/up-next-and-gapless.md`.
 
 ## Up Next
 

@@ -18,9 +18,12 @@ A pocket music player you build yourself, from one cheap yellow display.</p>
 <p align="center">
   <img src="docs/assets/home-tiles.png" width="320" alt="Simulated CYDpod Home screen with Songs, Artists, Albums, Playlists, Search and Settings tiles.">
   <img src="docs/research/cy90-quiet-outline-icons/player-r1-s0-x4.png" width="320" alt="Simulated Now Playing screen with seek bar, transport buttons and volume.">
-  <br><sub>Rendered by the test harness, not photos of a device.</sub>
+  <br>
 </p>
-
+<a href="https://www.youtube.com/watch?v=9bTcNbn6Pm0">
+  <img src="assets/thumbnail.png" width="315" height="560" alt="Video Demo">
+</a>
+</p>
 ## Remember when music was simple?
 
 You had a little player and a pocket full of songs. No subscription that could vanish your favourite album overnight, no ads between tracks, no app asking for your location. You pressed play, and it played.

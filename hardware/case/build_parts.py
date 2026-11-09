@@ -7,6 +7,7 @@ assembly.step, assembly/*.stl (assembly pose) and parts-report.json. Prints
 CASE_V5_PARTS_PASS or CASE_V5_PARTS_FAIL per variant.
 """
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -21,7 +22,6 @@ from cydcase import checks, envelope, params, parts, printcheck  # noqa: E402
 PRINTED = ("Tub", "Chassis", "Lid")
 ALLOWED = {
     ("Spacer", "ScrewShort-39-2"),                   # bore = keep-out diameter
-    ("Tub", "Lid"), ("Chassis", "Lid"),              # face contact at the rim / plate (checked as volume anyway)
 }
 
 
@@ -30,6 +30,7 @@ def run(variant):
     built = parts.build_parts(env)
     if variant == "no-audio":
         built["Coupon"] = parts.coupon(env, built["Tub"])
+        built.update(parts.clip_coupons(env, built["Tub"], built["Lid"]))
     out = HERE / "out" / variant
     (out / "print").mkdir(parents=True, exist_ok=True)
     (out / "assembly").mkdir(parents=True, exist_ok=True)
@@ -37,9 +38,10 @@ def run(variant):
     solids = {k: len(v.solids()) for k, v in built.items()}
     valid = {k: bool(v.is_valid) for k, v in built.items()}
     keep = {k: v for k, v in env.parts.items() if not k.startswith("Tube")}
-    keep.update({k: v for k, v in built.items() if k != "Coupon"})
+    keep.update({k: v for k, v in built.items() if not k.startswith("Coupon")})
     ov = checks.overlaps(keep)
-    ov = {k: v for k, v in ov.items() if tuple(k.split("|")) not in ALLOWED}
+    ov = {k: v for k, v in ov.items() if tuple(k.split("|")) not in ALLOWED
+          and not (k.startswith("Clip") and k.endswith("|Lid"))}   # the clip keep-outs hold the lid's own arms
 
     pr = {}
     for name, shape in built.items():
@@ -52,12 +54,12 @@ def run(variant):
         pr[name]["zmin"] = round(bb.min.Z, 3)
         pr[name]["volume_cm3"] = round(shape.volume / 1000, 2)
     export_step(Compound(list(built.values())), str(out / "assembly.step"))
-    ready = HERE / "out" / "print-ready"
+    ready = HERE / "stl"                      # tracked: the print-ready files are published in Git
     ready.mkdir(exist_ok=True)
     for name in built:
         tag = "noaudio" if variant == "no-audio" else "audio"
         (ready / f"CYDpod-case-v5-{tag}-{name}.stl").write_bytes((out / "print" / f"{name}.stl").read_bytes())
-    ctx = [v for k, v in env.parts.items() if k in ("PCB", "Cell", "Module", "BattPlug") or k.startswith("C_")]
+    ctx = [v for k, v in env.parts.items() if k in ("PCB", "Cell", "Module", "BattPlug", "Headers") or k.startswith("C_")]
     export_stl(Compound(ctx), str(out / "assembly" / "context.stl"), tolerance=0.02, angular_tolerance=0.3)
 
     ok = (not ov and all(v == 1 for v in solids.values()) and all(valid.values())
@@ -76,7 +78,11 @@ def main():
     ap.add_argument("--variant", default="both", choices=list(params.VARIANTS) + ["both"])
     a = ap.parse_args()
     variants = params.VARIANTS if a.variant == "both" else (a.variant,)
-    sys.exit(0 if all([run(v) for v in variants]) else 1)
+    ok = all([run(v) for v in variants])
+    stl = HERE / "stl"
+    sums = [f"{hashlib.sha256(f.read_bytes()).hexdigest()} *{f.name}" for f in sorted(stl.glob("*.stl"))]
+    (stl / "SHA256SUMS.txt").write_bytes(("\n".join(sums) + "\n").encode())
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

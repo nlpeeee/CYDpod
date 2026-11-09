@@ -14,3 +14,7 @@ fixtures/*.m4a -text
 *.sh text eol=lf
 patches/**/*.patch -text
 *.sh text eol=lf
+
+# Print-ready case STLs are binary and checksummed.
+hardware/case/stl/*.stl -text
+hardware/case/renders/*.png -text

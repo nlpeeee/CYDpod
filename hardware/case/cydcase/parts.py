@@ -3,7 +3,7 @@
 Print orientations (see print_transform):
   Tub      as modelled: screen face on the bed.
   Chassis  flipped about X: the lid-side plate on the bed.
-  Lid      as modelled, shifted down: inner face on the bed.
+  Lid      flipped about X: the outer (back) face on the bed, clips pointing up.
 """
 from math import cos, pi, sin
 
@@ -11,7 +11,7 @@ from build123d import (Axis, Box, Circle, Ellipse, Location, Plane, Polygon, Pos
                        RectangleRounded, Sphere, Align, extrude, fillet, chamfer, loft, Compound)
 
 from . import params as P
-from .envelope import box, cyl_z, rrect_prism
+from .envelope import box, clip_keepout, cyl_z, rrect_prism, wall_box, wall_frame
 
 K, F, B = P.CASE, P.FASTENERS, P.BOARD
 CX = 0.0
@@ -63,6 +63,39 @@ def round_cut(origin, normal, d, depth, leadin=0.5):
     pin = wall_plane((origin[0] - nx * leadin, origin[1] - ny * leadin, origin[2]), normal)
     cut += extrude(pin * Circle(d / 2), amount=leadin + 1.5, taper=-45)
     return cut
+
+
+# ---------------------------------------------------------------- snap clips
+def _wall_profile(wall, s, w, pts):
+    """Extrude a (d, Z) profile over width w centred at s along a wall; d = depth inward from its face."""
+    (px, py), (nx, ny) = wall_frame(wall, s)
+    tx, ty = ny, -nx                                   # n x Z: makes the plane's local y = +Z
+    pl = Plane(origin=(px - tx * w / 2, py - ty * w / 2, 0), x_dir=(nx, ny, 0), z_dir=(tx, ty, 0))
+    return extrude(pl * Polygon(*pts, align=None), amount=w, dir=(tx, ty, 0))   # dir: winding-independent
+
+
+def _clip_z(zt):
+    c = P.CLIPS
+    return zt - c["arm_l"] + 0.3 + c["barb"]           # barb tip top; the lead-in ends at the arm tip
+
+
+def clip_arm(wall, s, zt):
+    c = P.CLIPS
+    g, t, b, L, gu = c["gap"], c["arm_t"], c["barb"], c["arm_l"], c["gusset"]
+    zc = _clip_z(zt)
+    arm = [(g + t, zt + 0.01), (g, zt + 0.01), (g, zc + b), (g - b, zc), (g - b, zc - 0.3), (g, zt - L), (g + t, zt - L)]
+    root = [(g + t - 0.01, zt + 0.01), (g + t + gu, zt + 0.01), (g + t - 0.01, zt - gu - 0.01)]
+    return _wall_profile(wall, s, c["arm_w"], arm) + _wall_profile(wall, s, c["arm_w"], root)
+
+
+def clip_recess(wall, s, zt):
+    c = P.CLIPS
+    g, b, cl = c["gap"], c["barb"], c["recess_clear"]
+    zc = _clip_z(zt)
+    r = b - g + cl
+    top = zc + (b - g) + 1.5 * cl                      # 45 deg ceiling, ~cl clear of the catch face
+    pts = [(0.05, top + 0.05), (-r, top - r), (-r, zc - 0.3 - 1.5 * cl), (0.05, zc - 0.3 - 1.5 * cl - r - 0.05)]
+    return _wall_profile(wall, s, c["arm_w"] + 2 * 0.5, pts)
 
 
 # ---------------------------------------------------------------- tub
@@ -118,6 +151,10 @@ def tub(env):
         body -= box(m["jack_x"] - r * 0.7071, m["jack_x"] + r * 0.7071, yj - 2, K["cavity_y0"] + 0.5,
                     m["jack_z"] + r * 0.7071, zt + 1)
     body = flexure(body, zt)
+    for wall, s in P.CLIPS["at"]:
+        body -= clip_recess(wall, s, zt)
+    pr = P.PRY
+    body -= wall_box(pr["wall"], pr["s0"], pr["s1"], -5.0, 0.5, zt - pr["depth"], zt + 1)
     return body
 
 
@@ -143,7 +180,7 @@ def flexure(body, zt):
     pk = [(y_pocket, zt_at(y_pocket)), (y_in + 0.01, zt_at(y_in + 0.01)), (y_in + 0.01, z1), (y_pocket, z1)]
     body -= extrude(Plane.YZ.offset(x_free) * Polygon(*pk, align=None), amount=x_hinge - x_free)
     # Nub with a 45 deg underside, 0.15 mm off the actuator face.
-    y_tip = s["face_y"] - P.FASTENERS.get("sw_gap", 0.15)
+    y_tip = s["face_y"] - s["gap"]
     nz0, nz1, nw = 7.0, 9.6, 4.0
     run = y_tip - y_pocket
     prof = [(y_pocket - 0.01, nz0 - run), (y_tip, nz0), (y_tip, nz1), (y_pocket - 0.01, nz1)]
@@ -191,13 +228,11 @@ def chassis(env):
         - box(*inner, cradle_z0 - 1, zt + 1)
     audio = env.variant == "audio"
     short = tuple(B["holes"][0]) if audio else None
-    for x, y in B["holes"]:
-        if (x, y) == short:
-            continue
-        part += cyl_z(x, y, F["tube_od"], B["z_back"], zt)
-    if audio:
-        lx, ly = F["lid_screw_audio"]
-        part += cyl_z(lx, ly, F["boss_d"], zt - 6.2, zt)
+    seat = env.z["head_seat"]
+    tubes = [(x, y) for x, y in B["holes"] if (x, y) != short]
+    for x, y in tubes:
+        part += cyl_z(x, y, F["tube_od"], B["z_back"], seat)
+        part += cyl_z(x, y, F["collar_d"], zt - F["collar_h"], zt)     # joins the tube top to the plate
     part = part & clip
 
     # Keep-outs (components and plug grow upward through anything above them only to their top + 0.3).
@@ -209,6 +244,8 @@ def chassis(env):
     bx0, bx1, by0, by1, bz0, bz1 = P.BATT_PLUG
     part -= box(bx0 - 0.3, bx1 + 0.3, by0 - 0.3, by1 + 0.3, bz0 - 1, bz1 + 0.3)
     if audio:
+        hb = env.parts["Headers"].bounding_box()      # header + Duponts, with room for the wires to turn
+        part -= box(hb.min.X - 0.3, max(hb.max.X + 0.3, inner[0]), hb.min.Y - 0.3, hb.max.Y + 0.3, B["z_back"] - 1, hb.max.Z + 0.3)
         outs, board = _module_keepouts(env, plate_z=zt - plate_t)
         for o in outs:
             part -= o
@@ -216,13 +253,15 @@ def chassis(env):
             part -= board
         sx, sy = B["holes"][0]
         part -= cyl_z(sx, sy, F["btn_head_d"] + 1.0, P.MODULE["face_z"] - 0.1, P.MODULE["face_z"] + F["btn_head_h"] + 0.6)
-        part -= cyl_z(lx, ly, F["insert_hole_d"], zt - F["insert_len"], zt + 0.1)
-        part -= cyl_z(lx, ly, F["screw_clear_d"], zt - 7.0, zt)
         # Stay clear of the whole module footprint: no slivers between its parts.
         mb = env.info["module_bbox"]
         part -= box(-50, mb[1] + 0.4, mb[2] - 3, mb[3] + 0.5, B["z_back"] - 1, zt + 1)
+    for wall, s in P.CLIPS["at"]:
+        ko = clip_keepout(wall, s, zt, margin=0.6).bounding_box()     # arm + flex room + 0.6, through the plate
+        part -= box(ko.min.X, ko.max.X, ko.min.Y, ko.max.Y, ko.min.Z, zt + 1)
     for x, y in B["holes"]:
         part -= cyl_z(x, y, F["screw_clear_d"], B["z_back"] - 1, zt + 1)
+        part -= cyl_z(x, y, F["head_hole_d"], seat, zt + 1)
     return part
 
 
@@ -232,15 +271,9 @@ def lid(env):
     we = K["wall_edge"]
     plate = outline_prism(we, zt, zl)
     top_edges = plate.edges().group_by(Axis.Z)[-1]
-    plate = fillet(top_edges, radius=1.4)
-    bot_edges = plate.edges().group_by(Axis.Z)[0]
-    plate = chamfer(bot_edges, length=0.3)
-    holes = [h for h in B["holes"] if not (env.variant == "audio" and tuple(h) == tuple(B["holes"][0]))]
-    if env.variant == "audio":
-        holes.append(F["lid_screw_audio"])
-    for x, y in holes:
-        plate -= cyl_z(x, y, F["screw_clear_d"], zt - 1, zl + 1)
-        plate -= cyl_z(x, y, F["cbore_d"], zl - F["cbore_depth"], zl + 1)
+    plate = chamfer(top_edges, length=P.LID["edge_chamfer"])
+    for wall, s in P.CLIPS["at"]:
+        plate += clip_arm(wall, s, zt)
     if env.variant == "audio":
         m = P.MODULE
         y0 = K["cavity_y0"] - 5
@@ -252,6 +285,13 @@ def lid(env):
 def coupon(env, tub_shape):
     """Quick test print: the power-button flexure plus the (39,-2) insert boss and corner."""
     return tub_shape & box(15.0, 50.0, -15.0, 3.5, -1, env.z["lid_under"] + 1)
+
+
+def clip_coupons(env, tub_shape, lid_shape):
+    """Snap test pair: the tub's +X wall around its clip and pry notch, and the matching lid corner."""
+    zt = env.z["lid_under"]
+    win = box(36.0, 50.0, -12.0, 18.0, zt - 8.5, zt + 5)        # starts past the button flexure
+    return dict(CouponClipTub=tub_shape & win, CouponClipLid=lid_shape & win)
 
 
 def spacer(env):
@@ -272,8 +312,10 @@ def print_transform(name, env):
     zt, zl = env.z["lid_under"], env.z["lid_top"]
     if name == "Chassis":
         return Pos(0, 0, zt) * Rot(180, 0, 0)          # Z' = zt - Z
-    if name == "Lid":
-        return Pos(0, 0, -zt)
+    if name in ("Lid", "CouponClipLid"):
+        return Pos(0, 0, zl) * Rot(180, 0, 0)            # Z' = zl - Z: back face on the bed
+    if name == "CouponClipTub":
+        return Pos(0, 0, -(zt - 8.5))
     if name == "Coupon":
         return Location()
     if name == "Spacer":

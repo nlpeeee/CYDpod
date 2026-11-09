@@ -4,7 +4,7 @@ from itertools import combinations
 # Pairs that touch or nest by design (zero volume is still required where it matters).
 ALLOWED = {
     ("PCB", "Screw"), ("PCB", "ScrewShort"), ("Module", "ScrewShort"),            # shanks pass the Ø3.2 holes; Ø3.4 keep-out bites 0.1 mm
-    ("Screw", "Tube"), ("ScrewShort", "ScrewHeadShort"), ("Screw", "ScrewHead"), ("ScrewLid", "ScrewHeadLid"),
+    ("Screw", "Tube"), ("ScrewShort", "ScrewHeadShort"), ("Screw", "ScrewHead"),
     ("ScrewHead", "Tube"),
     ("Cell", "CellSwellFoam"),
     ("C_TF", "SDTravel"),                                # the card enters the socket
@@ -14,7 +14,7 @@ LEAVES_CAVITY = ("Screw", "SDTravel", "Module")   # module: jack nose enters the
 
 
 def _kind(name):
-    for prefix in ("ScrewHeadShort", "ScrewHeadLid", "ScrewHead", "ScrewShort", "ScrewLid", "Screw", "Tube"):
+    for prefix in ("ScrewHeadShort", "ScrewHead", "ScrewShort", "Screw", "Tube"):
         if name.startswith(prefix):
             return prefix
     return name

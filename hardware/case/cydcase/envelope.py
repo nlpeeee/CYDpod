@@ -61,6 +61,32 @@ def module(info: dict):
     return placed, bb
 
 
+def wall_frame(wall, s):
+    """Point on the cavity wall at position s, and the inward normal."""
+    k = P.CASE
+    return {"-Y": ((s, k["cavity_y0"]), (0, 1)), "+Y": ((s, k["cavity_y1"]), (0, -1)),
+            "-X": ((-k["cavity_x"], s), (1, 0)), "+X": ((k["cavity_x"], s), (-1, 0))}[wall]
+
+
+def wall_box(wall, s0, s1, d0, d1, z0, z1):
+    """Box between positions s0..s1 along a wall and depths d0..d1 inward from its inner face."""
+    (px, py), (nx, ny) = wall_frame(wall, 0)
+    if nx == 0:
+        y0, y1 = sorted((py + ny * d0, py + ny * d1))
+        return box(s0, s1, y0, y1, z0, z1)
+    x0, x1 = sorted((px + nx * d0, px + nx * d1))
+    return box(x0, x1, s0, s1, z0, z1)
+
+
+def clip_keepout(wall, s, zt, margin=0.3):
+    """Space an arm needs, including its inward flex while the barb passes the rim."""
+    c = P.CLIPS
+    flex = c["barb"] - c["gap"]
+    hw = c["arm_w"] / 2 + margin
+    return wall_box(wall, s - hw, s + hw, 0.0, c["gap"] + c["arm_t"] + flex + margin,
+                    zt - c["arm_l"] - margin, zt)
+
+
 def cell_base(footprint, extra=(), comps=None):
     """Lowest cell base Z over the parts under its footprint."""
     x0, x1, y0, y1 = footprint
@@ -88,10 +114,10 @@ def build(variant: str, cell_x0=None, cell_y0=-1.6, remove_ext_io=None) -> Envel
     comps = {n: v for n, v in P.COMPONENTS.items() if not (remove_ext_io and n in P.EXT_IO)}
 
     parts["PCB"] = pcb()
+    wire_cuts = []                 # free space the chassis tubes are trimmed back from
     for name, (x0, x1, y0, y1, h) in comps.items():
         parts["C_" + name] = box(x0, x1, y0, y1, b["z_back"], b["z_back"] + h)
     parts["BattPlug"] = box(*P.BATT_PLUG)
-    wire_cuts = []
     for name, g in P.WIRE_CLEAR.items():
         if name in comps:
             x0, x1, y0, y1, h = comps[name]
@@ -103,6 +129,13 @@ def build(variant: str, cell_x0=None, cell_y0=-1.6, remove_ext_io=None) -> Envel
     if audio:
         parts["Module"], mbb = module(info)
         jack_top = mbb.max.Z
+        # Right-angle header + Dupont housings under the module, lying on the ESP32 shield.
+        h = P.HEADERS
+        hz0 = b["z_back"] + P.COMPONENTS["ESP-WROOM-32"][4]
+        under = box(h["x0"], h["x1"], h["y0"], mbb.max.Y, hz0, hz0 + h["plastic"])
+        beyond = box(h["x0"], h["x1"], mbb.max.Y, h["y1"], hz0, hz0 + h["plastic"] + 0.5)
+        parts["Headers"] = under + beyond
+        wire_cuts.append(box(h["x0"], h["x1"], h["y0"], h["y1"] + 0.3, hz0, hz0 + h["plastic"] + 0.8))
 
     # Cell: plan size with wrap, PCM fold at +X.
     cl = c["l"] + c["pcm"] + 2 * c["wrap"]
@@ -120,9 +153,9 @@ def build(variant: str, cell_x0=None, cell_y0=-1.6, remove_ext_io=None) -> Envel
     lid_under = max(z_cell_top + c["swell"] + c["foam"], jack_top + P.STACK["jack_clear"] if audio else 0)
     lid_top = lid_under + P.STACK["lid"]
 
-    # Fasteners: shank keep-out from the insert floor to the lid top; chassis tubes over the PCB.
+    # Fasteners (internal): shank from the insert floor to the head seat; heads sit in the chassis tube tops.
     insert_floor = f["insert_floor_z"]
-    head_seat = lid_top - f["cbore_depth"]
+    head_seat = lid_under - f["head_gap"] - f["head_h"]
     short_corner = tuple(b["holes"][0]) if audio else None    # (-39,-2) sits under the module
     screws = {}
     for x, y in b["holes"]:
@@ -134,18 +167,15 @@ def build(variant: str, cell_x0=None, cell_y0=-1.6, remove_ext_io=None) -> Envel
             parts["ScrewHeadShort" + tag] = cyl_z(x, y, f["btn_head_d"] + 0.4, head_z0, head_z0 + f["btn_head_h"] + 0.2)
             screws[tag] = round(head_z0 - insert_floor, 2)
         else:
-            parts["Screw" + tag] = cyl_z(x, y, f["screw_clear_d"], insert_floor, lid_top)
-            parts["ScrewHead" + tag] = cyl_z(x, y, f["head_d"] + 0.2, head_seat, lid_top)
-            tube = cyl_z(x, y, f["tube_od"], b["z_back"], lid_under)
+            parts["Screw" + tag] = cyl_z(x, y, f["screw_clear_d"], insert_floor, head_seat)
+            parts["ScrewHead" + tag] = cyl_z(x, y, f["head_d"] + 0.2, head_seat, lid_under - f["head_gap"])
+            tube = cyl_z(x, y, f["tube_od"], b["z_back"], head_seat)
             for w in wire_cuts:
                 tube = tube - w
             parts["Tube" + tag] = tube
             screws[tag] = round(head_seat - insert_floor, 2)
-    if audio:
-        x, y = f["lid_screw_audio"]
-        parts["ScrewLid"] = cyl_z(x, y, f["screw_clear_d"], lid_under - 5.9, lid_top)
-        parts["ScrewHeadLid"] = cyl_z(x, y, f["head_d"] + 0.2, head_seat, lid_top)
-        screws["lid4"] = round(head_seat - (lid_under - 5.9), 2)
+    for wall, s in P.CLIPS["at"]:
+        parts[f"Clip{wall}{s:+.0f}"] = clip_keepout(wall, s, lid_under)
     env.z = dict(lid_under=lid_under, lid_top=lid_top, head_seat=head_seat, insert_floor=insert_floor)
 
     parts["SDTravel"] = box(*P.SD_TRAVEL)

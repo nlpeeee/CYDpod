@@ -17,11 +17,11 @@
 
 | | No-audio | Audio (WeAct module) |
 |---|---|---|
-| Thickness at centre | 20.5 mm (Phase 1 envelope, set by the 4.5 mm Extended IO JSTs under the cell) | 20.5 mm (same; jack top would allow 20.3) |
+| Thickness at centre | 20.5 mm (Phase 1 envelope, set by the 4.5 mm Extended IO JSTs under the cell) | 21.2 mm since 2026-11-08: the module sits 0.9 mm higher on its right-angle header plastic, and the jack sets the lid height |
 | Thickness felt at the edge | ~13 mm (rolled rear edge) | ~14 mm |
 | Footprint | ≤ 91 × 57 mm (≤ 1 mm per side larger than v4, buys the edge roll) | same |
 | Printed parts | Tub, Chassis, Lid | Tub, Chassis (with module mount), Lid |
-| Fasteners | 4 × M3 button-head screws, 4 × M3 × 4 heat-set inserts | same, plus one short M3 under the module and an M2 for the module itself |
+| Fasteners | 4 × M3 × 16 internal screws, 4 × M3 × 4 heat-set inserts; snap-on back (owner 2026-11-08, supersedes the through-lid screws below) | 3 × M3 × 16 internal + M3 × 12 through the module; snap-on back |
 | Supports needed | none | none |
 
 ### Thickness stack (to confirm once the cell and jack are measured)
@@ -36,7 +36,7 @@
 | Lid plate | 1.8 | 1.8 |
 | **Total** | **17.9–18.9** | **18.8–19.8**, but the jack top (module face Z 13.1 + jack body ≈ 5) + lid gives ≈ 20 |
 
-The module's 8.2 mm male header pins (top at Z 21.3) must go: remove them and solder wires straight to the pads.
+The module's 8.2 mm male header pins (top at Z 21.3) must go: remove them and solder wires straight to the pads. **Superseded 2026-11-08 (owner):** a right-angle header goes on the module's underside instead. Its plastic rests on the ESP32 shield and Dupont leads run toward P6 (`HEADERS` in `params.py`).
 
 ## Architecture: tub + chassis + lid
 
